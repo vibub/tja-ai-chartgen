@@ -27,6 +27,12 @@ Rule-based draft:
 tja-ai-chartgen generate song.mp3 --title "Song Title"
 ```
 
+Generate only the first N bars for quick checks:
+
+```bash
+tja-ai-chartgen generate song.mp3 --title "Song Title" --max-bars 16
+```
+
 AI-assisted draft:
 
 ```bash
@@ -56,4 +62,5 @@ output/
 - Assumes 4/4 time signature.
 - Generated charts are drafts and require human review.
 - OFFSET may need manual adjustment in OpenTaiko or another simulator.
+- `--max-bars` is intended for quick draft checks and truncates the generated chart to the first N bars.
 - MVP does not support BPM changes, branches, drumrolls, balloons, or scroll gimmicks.

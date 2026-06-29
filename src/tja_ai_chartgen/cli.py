@@ -34,11 +34,15 @@ def generate(
     course: str = typer.Option("Oni", help="TJA course name."),
     level: int = typer.Option(10, help="TJA difficulty level."),
     style: str = typer.Option("technical", help="Draft generation style."),
+    max_bars: int | None = typer.Option(None, help="Only generate the first N bars."),
     use_ai: bool = typer.Option(False, help="Use AI generation before falling back to rules."),
     model: str | None = typer.Option(None, help="Optional LiteLLM model name."),
 ) -> None:
     load_dotenv()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if max_bars is not None and max_bars < 1:
+        _fail("--max-bars must be greater than or equal to 1.")
 
     safe_stem = input_audio.stem
     ogg_path = output_dir / f"{safe_stem}.ogg"
@@ -48,12 +52,16 @@ def generate(
     ai_output_path = output_dir / "ai_output.json"
     report_path = output_dir / "report.txt"
 
-    console.print(f"Converting audio: {input_audio} -> {ogg_path}")
-    convert_to_ogg(input_audio, ogg_path)
+    try:
+        console.print(f"Converting audio: {input_audio} -> {ogg_path}")
+        convert_to_ogg(input_audio, ogg_path)
 
-    console.print("Analyzing audio...")
-    raw = analyze_audio(ogg_path)
-    bars = assign_sections(build_bar_features(raw))
+        console.print("Analyzing audio...")
+        raw = analyze_audio(ogg_path)
+        bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
+    except Exception as error:  # noqa: BLE001 - CLI boundary should hide tracebacks.
+        _write_failure_report(report_path, str(error))
+        _fail(str(error))
 
     analysis = SongAnalysis(
         title=title,
@@ -108,6 +116,19 @@ def generate(
 
     if any(issue.level == "error" for issue in issues):
         raise typer.Exit(1)
+
+
+def _fail(message: str) -> None:
+    console.print(f"[red]Error:[/] {message}")
+    raise typer.Exit(1)
+
+
+def _write_failure_report(report_path: Path, message: str) -> Path:
+    report_path.write_text(
+        "\n".join(["TJA AI Chart Generator Report", "", f"Error: {message}"]) + "\n",
+        encoding="utf-8",
+    )
+    return report_path
 
 
 def _write_report(

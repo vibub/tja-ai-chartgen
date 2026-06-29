@@ -33,6 +33,77 @@ def test_generate_without_ai_writes_outputs(tmp_path, monkeypatch):
     assert (output_dir / "report.txt").exists()
 
 
+def test_generate_with_max_bars_limits_output_bars(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch, duration=6.0)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--max-bars",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    chart_lines = [line for line in tja_text.splitlines() if line.endswith(",")]
+    assert len(chart_lines) == 2
+    assert '"index": 1' in (output_dir / "analysis.json").read_text(encoding="utf-8")
+    assert '"index": 2' not in (output_dir / "analysis.json").read_text(encoding="utf-8")
+
+
+def test_generate_reports_missing_input_without_traceback(tmp_path):
+    output_dir = tmp_path / "output"
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(tmp_path / "missing.mp3"),
+            "--title",
+            "Missing Song",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: Input audio file not found" in result.output
+    assert "Traceback" not in result.output
+    assert "Error: Input audio file not found" in (output_dir / "report.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_generate_rejects_non_positive_max_bars(tmp_path):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--max-bars",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--max-bars must be greater than or equal to 1" in result.output
+
+
 def test_generate_with_ai_failure_falls_back_to_rules(tmp_path, monkeypatch):
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")
@@ -67,7 +138,7 @@ def test_generate_with_ai_failure_falls_back_to_rules(tmp_path, monkeypatch):
     assert (output_dir / "ai_output.json").exists()
 
 
-def _patch_audio_pipeline(monkeypatch):
+def _patch_audio_pipeline(monkeypatch, duration=2.0):
     def fake_convert_to_ogg(input_path, output_path):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake ogg")
@@ -79,7 +150,7 @@ def _patch_audio_pipeline(monkeypatch):
             beat_times=[0, 0.5, 1.0, 1.5, 2.0],
             onset_times=[0.0, 0.5, 1.0, 1.5],
             onset_strengths=[],
-            duration=2.0,
+            duration=duration,
             offset=0.0,
         )
 
