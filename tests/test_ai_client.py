@@ -1,6 +1,7 @@
 import json
 
 from tja_ai_chartgen.ai.client import generate_chart_bars_with_ai, sanitize_ai_bars
+from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 
 
@@ -16,6 +17,23 @@ def test_sanitize_ai_bars_normalizes_count_length_and_characters():
     assert sanitized[0].notes == "1200000000000000"
     assert sanitized[1].notes == "1234012340123401"
     assert sanitized[2].notes == "1000100010001000"
+
+
+def test_build_chart_generation_payload_includes_density():
+    analysis = SongAnalysis(
+        title="Song Title",
+        artist=None,
+        audio_file="song.mp3",
+        ogg_file="song.ogg",
+        bpm=120,
+        offset=0,
+        bars=[BarFeature(index=0, start_time=0, end_time=2, energy=0.5)],
+    )
+
+    payload = build_chart_generation_payload(analysis, "Oni", 10, "technical", "high")
+
+    assert payload["density"] == "high"
+    assert payload["style"] == "technical"
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):

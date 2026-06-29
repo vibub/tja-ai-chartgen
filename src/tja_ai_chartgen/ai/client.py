@@ -16,10 +16,11 @@ def generate_chart_bars_with_ai(
     course: str,
     level: int,
     style: str,
+    density: str = "auto",
     model: str | None = None,
 ) -> tuple[list[ChartBar], dict[str, Any]]:
     model_name = model or os.getenv("LITELLM_MODEL", "openai/gpt-4o-mini")
-    prompt = build_chart_generation_prompt(analysis, course, level, style)
+    prompt = build_chart_generation_prompt(analysis, course, level, style, density)
 
     response = completion(
         model=model_name,

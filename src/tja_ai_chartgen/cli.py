@@ -10,7 +10,7 @@ from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_override
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.sections import assign_sections
-from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
+from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
 from tja_ai_chartgen.tja.model import ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.validator import ValidationIssue, validate_tja_text
 from tja_ai_chartgen.tja.writer import render_tja
@@ -34,6 +34,10 @@ def generate(
     course: str = typer.Option("Oni", help="TJA course name."),
     level: int = typer.Option(10, help="TJA difficulty level."),
     style: str = typer.Option("technical", help="Draft generation style."),
+    density: str = typer.Option(
+        "auto",
+        help="Draft density: auto, low, medium, high, or max.",
+    ),
     max_bars: int | None = typer.Option(None, help="Only generate the first N bars."),
     bpm: float | None = typer.Option(None, help="Override analyzed BPM."),
     offset: float | None = typer.Option(None, help="Override analyzed OFFSET."),
@@ -47,6 +51,10 @@ def generate(
         _fail("--max-bars must be greater than or equal to 1.")
     if bpm is not None and bpm <= 0:
         _fail("--bpm must be greater than 0.")
+    try:
+        validate_density(density)
+    except ValueError as error:
+        _fail(str(error))
 
     safe_stem = input_audio.stem
     ogg_path = output_dir / f"{safe_stem}.ogg"
@@ -87,8 +95,15 @@ def generate(
             from tja_ai_chartgen.ai.client import generate_chart_bars_with_ai, sanitize_ai_bars
             from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
 
-            write_json(ai_input_path, build_chart_generation_payload(analysis, course, level, style))
-            ai_bars, ai_output = generate_chart_bars_with_ai(analysis, course, level, style, model)
+            write_json(ai_input_path, build_chart_generation_payload(analysis, course, level, style, density))
+            ai_bars, ai_output = generate_chart_bars_with_ai(
+                analysis,
+                course,
+                level,
+                style,
+                density,
+                model,
+            )
             write_json(ai_output_path, ai_output)
             chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars))
         except Exception as error:  # noqa: BLE001 - CLI must keep producing a usable draft.
@@ -97,7 +112,7 @@ def generate(
             write_json(ai_output_path, {"error": ai_failure})
 
     if chart_bars is None:
-        chart_bars = generate_fallback_chart_bars(bars, style=style)
+        chart_bars = generate_fallback_chart_bars(bars, style=style, density=density)
 
     chart = TjaChart(
         metadata=ChartMetadata(

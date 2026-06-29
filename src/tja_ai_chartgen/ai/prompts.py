@@ -9,6 +9,7 @@ def build_chart_generation_payload(
     course: str,
     level: int,
     style: str,
+    density: str = "auto",
 ) -> dict[str, Any]:
     return {
         "title": analysis.title,
@@ -19,6 +20,7 @@ def build_chart_generation_payload(
         "course": course,
         "level": level,
         "style": style,
+        "density": density,
         "bars": [bar.model_dump() for bar in analysis.bars],
     }
 
@@ -28,8 +30,9 @@ def build_chart_generation_prompt(
     course: str,
     level: int,
     style: str,
+    density: str = "auto",
 ) -> str:
-    payload = build_chart_generation_payload(analysis, course, level, style)
+    payload = build_chart_generation_payload(analysis, course, level, style, density)
 
     return f"""
 You are a Taiko no Tatsujin TJA chart draft generator.
@@ -46,8 +49,9 @@ Rules:
 7. Do not make every bar full density.
 8. Low energy bars should have more rests.
 9. High energy bars can use denser patterns.
-10. For Oni 10, use technical but playable patterns.
-11. Avoid repeating the exact same pattern for too many consecutive bars.
+10. Respect the requested density: auto follows bar energy; low is sparse; medium is balanced; high is dense; max is the densest playable MVP draft.
+11. For Oni 10, use technical but playable patterns.
+12. Avoid repeating the exact same pattern for too many consecutive bars.
 
 Input:
 {json.dumps(payload, ensure_ascii=False)}

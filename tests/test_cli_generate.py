@@ -61,6 +61,54 @@ def test_generate_with_max_bars_limits_output_bars(tmp_path, monkeypatch):
     assert '"index": 2' not in (output_dir / "analysis.json").read_text(encoding="utf-8")
 
 
+def test_generate_with_density_controls_fallback_patterns(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch, duration=4.0)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--max-bars",
+            "2",
+            "--density",
+            "low",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    assert "1000100010001000," in tja_text
+    assert "1000200010002000," in tja_text
+
+
+def test_generate_rejects_invalid_density(tmp_path):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--density",
+            "extreme",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid density: extreme" in result.output
+
+
 def test_generate_with_bpm_and_offset_overrides_outputs_metadata(tmp_path, monkeypatch):
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")

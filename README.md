@@ -33,6 +33,14 @@ Generate only the first N bars for quick checks:
 tja-ai-chartgen generate song.mp3 --title "Song Title" --max-bars 16
 ```
 
+Control rule-based draft density:
+
+```bash
+tja-ai-chartgen generate song.mp3 --title "Song Title" --density high
+```
+
+Allowed density values are `auto`, `low`, `medium`, `high`, and `max`. `auto` follows analyzed bar energy.
+
 Override analyzed BPM and OFFSET when manual calibration is needed:
 
 ```bash
@@ -74,4 +82,5 @@ output/
 - OFFSET may need manual adjustment in OpenTaiko or another simulator.
 - `--max-bars` is intended for quick draft checks and truncates the generated chart to the first N bars.
 - `--bpm` and `--offset` override automatic analysis results for manual calibration.
+- `--density auto|low|medium|high|max` controls rule-based draft density and is passed into the AI prompt when `--use-ai` is enabled.
 - MVP does not support BPM changes, branches, drumrolls, balloons, or scroll gimmicks.
