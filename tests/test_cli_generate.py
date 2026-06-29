@@ -88,6 +88,7 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "offset_override": 0.25,
         "time_signature": None,
         "use_beatnet": False,
+        "special_notes": False,
         "use_ai": False,
         "model": None,
         "ai_repair_retries": 2,
@@ -309,6 +310,38 @@ def test_generate_with_density_controls_fallback_patterns(tmp_path, monkeypatch)
     assert "1000200010002000," in tja_text
 
 
+def test_generate_with_special_notes_outputs_balloon_header(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch, duration=16.0)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--density",
+            "high",
+            "--special-notes",
+            "--max-bars",
+            "8",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    assert "5000000080000000," in tja_text
+    assert "BALLOON:8" in tja_text
+    assert "7000000080000000," in tja_text
+    assert saved_config["special_notes"] is True
+
+
 def test_generate_rejects_invalid_density(tmp_path):
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")
@@ -446,6 +479,7 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
         api_base,
         api_key,
         max_repair_attempts,
+        special_notes,
     ):
         assert model == "openai/custom-model"
         assert api_base == "https://llm.example.com/v1"
@@ -507,6 +541,7 @@ def test_generate_with_ai_records_default_model(tmp_path, monkeypatch):
         api_base,
         api_key,
         max_repair_attempts,
+        special_notes,
     ):
         assert model == "openai/gpt-4o-mini"
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
@@ -553,6 +588,7 @@ def test_generate_with_ai_records_model_from_environment(tmp_path, monkeypatch):
         api_base,
         api_key,
         max_repair_attempts,
+        special_notes,
     ):
         assert model == "openai/env-model"
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}

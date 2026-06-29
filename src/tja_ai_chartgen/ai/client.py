@@ -7,7 +7,7 @@ from litellm import completion
 from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 
-ALLOWED_AI_NOTES = set("01234")
+ALLOWED_AI_NOTES = set("01234578")
 FALLBACK_AI_PATTERN = "1000100010001000"
 DEFAULT_AI_REPAIR_RETRIES = 2
 
@@ -34,12 +34,20 @@ def generate_chart_bars_with_ai(
     api_base: str | None = None,
     api_key: str | None = None,
     max_repair_attempts: int = DEFAULT_AI_REPAIR_RETRIES,
+    special_notes: bool = False,
 ) -> tuple[list[ChartBar], dict[str, Any]]:
     model_name = model or os.getenv("MODEL", "openai/gpt-4o-mini")
     resolved_api_base = api_base or os.getenv("OPENAI_BASE_URL")
     resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
     repair_attempts = max(0, max_repair_attempts)
-    prompt = build_chart_generation_prompt(analysis, course, level, style, density)
+    prompt = build_chart_generation_prompt(
+        analysis,
+        course,
+        level,
+        style,
+        density,
+        special_notes=special_notes,
+    )
     messages = [{"role": "user", "content": prompt}]
     attempts: list[dict[str, Any]] = []
 
@@ -56,7 +64,7 @@ def generate_chart_bars_with_ai(
 
         try:
             data = _parse_ai_json(content)
-            bars = _validate_ai_data(data, analysis=analysis)
+            bars = _validate_ai_data(data, analysis=analysis, special_notes=special_notes)
         except _AiOutputValidationError as error:
             issues = error.issues
         except json.JSONDecodeError as error:
@@ -93,7 +101,11 @@ def generate_chart_bars_with_ai(
             messages.append(
                 {
                     "role": "user",
-                    "content": _build_repair_prompt(issues, analysis=analysis),
+                    "content": _build_repair_prompt(
+                        issues,
+                        analysis=analysis,
+                        special_notes=special_notes,
+                    ),
                 }
             )
 
@@ -127,15 +139,19 @@ def sanitize_ai_bars(
         if index < len(bars):
             notes = bars[index].notes
             time_signature = bars[index].time_signature
+            balloon_counts = bars[index].balloon_counts
         else:
             notes = FALLBACK_AI_PATTERN
             time_signature = expected_time_signature
+            balloon_counts = []
 
+        cleaned_notes = _sanitize_notes(notes, expected_length)
         sanitized.append(
             ChartBar(
                 index=index,
-                notes=_sanitize_notes(notes, expected_length),
+                notes=cleaned_notes,
                 time_signature=time_signature,
+                balloon_counts=balloon_counts[: cleaned_notes.count("7")],
             )
         )
 
@@ -170,7 +186,11 @@ def _parse_ai_json(content: str) -> dict[str, Any]:
     return data
 
 
-def _validate_ai_data(data: dict[str, Any], analysis: SongAnalysis) -> list[ChartBar]:
+def _validate_ai_data(
+    data: dict[str, Any],
+    analysis: SongAnalysis,
+    special_notes: bool,
+) -> list[ChartBar]:
     raw_bars = data.get("bars")
     issues: list[str] = []
 
@@ -198,13 +218,39 @@ def _validate_ai_data(data: dict[str, Any], analysis: SongAnalysis) -> list[Char
                 f"bars[{index}].notes must be exactly {expected_length} characters, got {len(notes)}"
             )
 
-        illegal_characters = sorted(set(notes) - ALLOWED_AI_NOTES)
+        allowed_notes = _allowed_ai_notes(special_notes)
+        illegal_characters = sorted(set(notes) - allowed_notes)
         if illegal_characters:
             joined = "".join(illegal_characters)
             issues.append(f"bars[{index}].notes contains illegal character(s): {joined}")
 
+        balloon_count = notes.count("7")
+        raw_balloon_counts = item.get("balloon_counts", [])
+        if raw_balloon_counts is None:
+            raw_balloon_counts = []
+        if not isinstance(raw_balloon_counts, list):
+            issues.append(f"bars[{index}].balloon_counts must be a list")
+            raw_balloon_counts = []
+        parsed_balloon_counts: list[int] = []
+        for count_index, raw_count in enumerate(raw_balloon_counts):
+            if not isinstance(raw_count, int) or raw_count < 1:
+                issues.append(f"bars[{index}].balloon_counts[{count_index}] must be a positive integer")
+                continue
+            parsed_balloon_counts.append(raw_count)
+        if balloon_count and len(parsed_balloon_counts) != balloon_count:
+            issues.append(
+                f"bars[{index}].balloon_counts must contain exactly {balloon_count} item(s)"
+            )
+
         time_signature = _bar_time_signature(analysis, index)
-        bars.append(ChartBar(index=index, notes=notes, time_signature=time_signature))
+        bars.append(
+            ChartBar(
+                index=index,
+                notes=notes,
+                time_signature=time_signature,
+                balloon_counts=parsed_balloon_counts,
+            )
+        )
 
     if issues:
         raise _AiOutputValidationError(issues)
@@ -212,8 +258,13 @@ def _validate_ai_data(data: dict[str, Any], analysis: SongAnalysis) -> list[Char
     return bars
 
 
-def _build_repair_prompt(issues: list[str], analysis: SongAnalysis) -> str:
+def _build_repair_prompt(
+    issues: list[str],
+    analysis: SongAnalysis,
+    special_notes: bool,
+) -> str:
     lengths = [_expected_note_length(analysis, index) for index in range(len(analysis.bars))]
+    allowed = ", ".join(sorted(_allowed_ai_notes(special_notes)))
     return f"""
 Your previous output was invalid and cannot be used as a TJA chart draft.
 
@@ -232,7 +283,8 @@ Required schema:
 Rules:
 - bars must contain exactly {len(analysis.bars)} item(s).
 - Notes length per bar must match the input bar grids: {lengths}.
-- Allowed notes characters: 0, 1, 2, 3, 4.
+- Allowed notes characters: {allowed}.
+- If using balloon note 7, include one positive integer in balloon_counts for each 7 in that bar.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()
 
@@ -259,6 +311,12 @@ def _build_ai_output(
 def _sanitize_notes(notes: str, expected_length: int) -> str:
     cleaned = "".join(character if character in ALLOWED_AI_NOTES else "0" for character in notes)
     return cleaned[:expected_length].ljust(expected_length, "0")
+
+
+def _allowed_ai_notes(special_notes: bool) -> set[str]:
+    if special_notes:
+        return ALLOWED_AI_NOTES
+    return set("01234")
 
 
 def _expected_note_length(analysis: SongAnalysis, index: int) -> int:

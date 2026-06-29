@@ -127,6 +127,26 @@ def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
     assert "Fix the output" in captured_messages[1][-1]["content"]
 
 
+def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(monkeypatch):
+    payload = {"bars": [{"bar": 1, "notes": "7000000080000000", "balloon_counts": [8]}]}
+
+    def fake_completion(model, messages, temperature):
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, _ = generate_chart_bars_with_ai(
+        _analysis(),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        special_notes=True,
+    )
+
+    assert bars == [ChartBar(index=0, notes="7000000080000000", balloon_counts=[8])]
+
+
 def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "100010001000"}]}
     analysis = SongAnalysis(

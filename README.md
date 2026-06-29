@@ -43,6 +43,17 @@ tja-ai-chartgen generate song.mp3 --title "Song Title" --density high
 
 `--density` 可选值为 `auto`、`low`、`medium`、`high`、`max`。`auto` 会根据分析得到的小节能量自动选择密度。
 
+允许规则生成器和 AI 使用简单滚奏、气球音符：
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --density high \
+  --special-notes
+```
+
+启用后规则生成器会在高能量小节中少量使用 `5...8` 滚奏和 `7...8` 气球，并在 `.tja` 中输出对应 `BALLOON:` 头。
+
 在需要人工校准时覆盖自动分析得到的 BPM 和 OFFSET：
 
 ```bash
@@ -142,7 +153,7 @@ output/
 
 ## 可复现性
 
-每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、拍号覆盖值、BeatNet 开关、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、拍号覆盖值、BeatNet 开关、特殊音符开关、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
 
 ## 限制
 
@@ -154,9 +165,10 @@ output/
 - `--bpm` 和 `--offset` 会覆盖自动分析结果，用于人工校准。
 - `--time-signature 4/4|3/4|6/8` 会覆盖分析得到的拍号，并影响小节长度、AI prompt 和 `.tja` 的 `#MEASURE` 输出。
 - `--density auto|low|medium|high|max` 会控制规则生成器密度；启用 `--use-ai` 时也会传入 AI prompt。
+- `--special-notes` 会允许简单滚奏和气球音符；当前只做少量模板化插入，仍不支持复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
-- MVP 不支持 BPM 变化、分歧谱面、滚奏、气球音符或滚动演出等复杂语法。
+- MVP 不支持 BPM 变化、分歧谱面、复杂滚奏演出、滚动演出等复杂语法。
 
 ## 后续版本规划
 
@@ -177,7 +189,7 @@ output/
   - meter
   - 更准的小节开始
 - 支持 `3/4`、`6/8`。✅ 已通过 `--time-signature`、BeatNet meter、12 格小节和 `#MEASURE` 输出实现。
-- 支持简单滚奏和气球。
+- 支持简单滚奏和气球。✅ 已通过 `--special-notes`、`BALLOON:` 输出和 5/7/8 音符校验实现。
 
 ### v0.4
 

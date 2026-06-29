@@ -54,6 +54,11 @@ def generate(
         "--use-beatnet",
         help="Try optional BeatNet analysis for downbeat, meter, and bar start detection.",
     ),
+    special_notes: bool = typer.Option(
+        False,
+        "--special-notes",
+        help="Allow simple drumroll and balloon notes in generated drafts.",
+    ),
     use_ai: bool = typer.Option(False, help="Use AI generation before falling back to rules."),
     model: str | None = typer.Option(None, help="Optional LiteLLM model name."),
     ai_base_url: str | None = typer.Option(
@@ -86,6 +91,7 @@ def generate(
         offset=offset,
         time_signature=time_signature,
         use_beatnet=use_beatnet,
+        special_notes=special_notes,
         use_ai=use_ai,
         model=model,
         ai_base_url=ai_base_url,
@@ -113,6 +119,7 @@ def generate_from_config(config_path: Path) -> None:
             offset=_optional_float(config.get("offset_override"), "offset_override"),
             time_signature=_optional_str(config.get("time_signature")),
             use_beatnet=_optional_bool(config.get("use_beatnet", False), "use_beatnet"),
+            special_notes=_optional_bool(config.get("special_notes", False), "special_notes"),
             use_ai=_optional_bool(config.get("use_ai", False), "use_ai"),
             model=_optional_str(config.get("model")),
             ai_base_url=None,
@@ -142,6 +149,7 @@ def run_generate(
     offset: float | None,
     time_signature: str | None,
     use_beatnet: bool,
+    special_notes: bool,
     use_ai: bool,
     model: str | None,
     ai_base_url: str | None,
@@ -192,6 +200,7 @@ def run_generate(
         offset=offset,
         time_signature=time_signature,
         use_beatnet=use_beatnet,
+        special_notes=special_notes,
         use_ai=use_ai,
         model=resolved_model,
         ai_repair_retries=ai_repair_retries,
@@ -236,7 +245,17 @@ def run_generate(
             )
             from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
 
-            write_json(ai_input_path, build_chart_generation_payload(analysis, course, level, style, density))
+            write_json(
+                ai_input_path,
+                build_chart_generation_payload(
+                    analysis,
+                    course,
+                    level,
+                    style,
+                    density,
+                    special_notes=special_notes,
+                ),
+            )
             ai_bars, ai_output = generate_chart_bars_with_ai(
                 analysis,
                 course,
@@ -247,6 +266,7 @@ def run_generate(
                 api_base=ai_base_url,
                 api_key=ai_api_key,
                 max_repair_attempts=ai_repair_retries,
+                special_notes=special_notes,
             )
             write_json(ai_output_path, ai_output)
             chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars), expected_bars=bars)
@@ -260,7 +280,12 @@ def run_generate(
             write_json(ai_output_path, {"error": ai_failure})
 
     if chart_bars is None:
-        chart_bars = generate_fallback_chart_bars(bars, style=style, density=density)
+        chart_bars = generate_fallback_chart_bars(
+            bars,
+            style=style,
+            density=density,
+            special_notes=special_notes,
+        )
 
     chart = TjaChart(
         metadata=ChartMetadata(
@@ -363,6 +388,7 @@ def _build_generation_config(
     offset: float | None,
     time_signature: str | None,
     use_beatnet: bool,
+    special_notes: bool,
     use_ai: bool,
     model: str | None,
     ai_repair_retries: int,
@@ -381,6 +407,7 @@ def _build_generation_config(
         "offset_override": offset,
         "time_signature": time_signature,
         "use_beatnet": use_beatnet,
+        "special_notes": special_notes,
         "use_ai": use_ai,
         "model": model,
         "ai_repair_retries": ai_repair_retries,

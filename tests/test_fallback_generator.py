@@ -57,3 +57,16 @@ def test_generate_fallback_chart_bars_trims_patterns_for_three_four():
 
     assert chart_bars[0].notes == "100010001000"
     assert chart_bars[0].time_signature == "3/4"
+
+
+def test_generate_fallback_chart_bars_can_emit_rolls_and_balloons():
+    bars = [
+        BarFeature(index=index, start_time=index * 2, end_time=(index + 1) * 2, energy=0.9)
+        for index in range(8)
+    ]
+
+    chart_bars = generate_fallback_chart_bars(bars, density="high", special_notes=True)
+
+    assert chart_bars[3].notes == "5000000080000000"
+    assert chart_bars[7].notes == "7000000080000000"
+    assert chart_bars[7].balloon_counts == [8]

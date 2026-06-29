@@ -39,6 +39,7 @@ class ChartBar(BaseModel):
     index: int
     notes: str
     time_signature: str = "4/4"
+    balloon_counts: list[int] = Field(default_factory=list)
 
 
 class TjaChart(BaseModel):

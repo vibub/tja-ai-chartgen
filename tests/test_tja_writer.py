@@ -40,3 +40,20 @@ def test_render_tja_outputs_measure_for_three_four_bars():
 
     assert "#MEASURE 3/4\n100010001000," in text
     assert "100010001000,\n#MEASURE 1/1\n#END" in text
+
+
+def test_render_tja_outputs_balloon_header():
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title="Song Title",
+            wave="song.ogg",
+            bpm=120.0,
+            offset=0.0,
+        ),
+        bars=[ChartBar(index=0, notes="7000000080000000", balloon_counts=[8])],
+    )
+
+    text = render_tja(chart)
+
+    assert "BALLOON:8" in text
+    assert "7000000080000000," in text
