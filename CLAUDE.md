@@ -48,7 +48,7 @@ tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --max-bars 16 --b
 - **TJA 层**：`tja/writer.py` 只负责把 `TjaChart` 渲染为文本；`tja/validator.py` 做 MVP 级格式检查。
 - **工具层**：`utils/paths.py` 集中处理 UTF-8 JSON 写入和 Pydantic 模型序列化。
 
-`generate` 当前数据流：输入音频 → `output/<stem>.ogg` → `analysis.json` → AI 或 fallback `ChartBar` → `song.tja` → `report.txt`。`--bpm` / `--offset` 会在音频分析后覆盖 raw analysis，并影响小节网格、`analysis.json` 和最终 `.tja`；`--max-bars N` 会在小节特征阶段只保留前 N 小节，便于用真实音频快速验证；`--density auto|low|medium|high|max` 控制规则生成器密度，并在启用 AI 时写入 prompt payload。
+`generate` 当前数据流：输入音频 → `generation_config.json` → `output/<stem>.ogg` → `analysis.json` → AI 或 fallback `ChartBar` → `song.tja` → `report.txt`。`generation_config.json` 记录输入参数、难度、风格、density、max-bars、BPM/OFFSET 覆盖、AI 开关和模型名，用于复现生成结果；`--bpm` / `--offset` 会在音频分析后覆盖 raw analysis，并影响小节网格、`analysis.json` 和最终 `.tja`；`--max-bars N` 会在小节特征阶段只保留前 N 小节，便于用真实音频快速验证；`--density auto|low|medium|high|max` 控制规则生成器密度，并在启用 AI 时写入 prompt payload。
 
 ## 工程约束
 

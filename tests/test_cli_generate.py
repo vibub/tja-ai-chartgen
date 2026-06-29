@@ -1,3 +1,5 @@
+import json
+
 from typer.testing import CliRunner
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
@@ -30,7 +32,65 @@ def test_generate_without_ai_writes_outputs(tmp_path, monkeypatch):
     assert "#START" in tja_path.read_text(encoding="utf-8")
     assert "#END" in tja_path.read_text(encoding="utf-8")
     assert (output_dir / "analysis.json").exists()
+    assert (output_dir / "generation_config.json").exists()
     assert (output_dir / "report.txt").exists()
+    assert "Generation config:" in (output_dir / "report.txt").read_text(encoding="utf-8")
+
+
+def test_generate_writes_generation_config(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch, duration=4.0)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--artist",
+            "Artist Name",
+            "--output-dir",
+            str(output_dir),
+            "--course",
+            "Oni",
+            "--level",
+            "10",
+            "--style",
+            "technical",
+            "--density",
+            "low",
+            "--max-bars",
+            "2",
+            "--bpm",
+            "240.1234",
+            "--offset",
+            "0.25",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    assert config == {
+        "input_audio": str(input_audio),
+        "title": "Song Title",
+        "artist": "Artist Name",
+        "output_dir": str(output_dir),
+        "course": "Oni",
+        "level": 10,
+        "style": "technical",
+        "density": "low",
+        "max_bars": 2,
+        "bpm_override": 240.1234,
+        "offset_override": 0.25,
+        "use_ai": False,
+        "model": None,
+    }
+    assert f"Generation config: {output_dir / 'generation_config.json'}" in (
+        output_dir / "report.txt"
+    ).read_text(encoding="utf-8")
 
 
 def test_generate_with_max_bars_limits_output_bars(tmp_path, monkeypatch):
@@ -160,9 +220,10 @@ def test_generate_reports_missing_input_without_traceback(tmp_path):
     assert result.exit_code == 1
     assert "Error: Input audio file not found" in result.output
     assert "Traceback" not in result.output
-    assert "Error: Input audio file not found" in (output_dir / "report.txt").read_text(
-        encoding="utf-8"
-    )
+    assert (output_dir / "generation_config.json").exists()
+    report_text = (output_dir / "report.txt").read_text(encoding="utf-8")
+    assert "Generation config:" in report_text
+    assert "Error: Input audio file not found" in report_text
 
 
 def test_generate_rejects_non_positive_max_bars(tmp_path):

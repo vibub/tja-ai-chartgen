@@ -69,10 +69,15 @@ output/
 ├─ song.ogg
 ├─ song.tja
 ├─ analysis.json
+├─ generation_config.json
 ├─ ai_input.json
 ├─ ai_output.json
 └─ report.txt
 ```
+
+## Reproducibility
+
+Each `generate` run writes `generation_config.json` next to the TJA output. It records the input path, metadata, difficulty, style, density, `--max-bars`, BPM/OFFSET overrides, AI flag, and model name so a useful draft can be reproduced later.
 
 ## Limitations
 

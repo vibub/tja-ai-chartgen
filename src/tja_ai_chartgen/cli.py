@@ -60,9 +60,27 @@ def generate(
     ogg_path = output_dir / f"{safe_stem}.ogg"
     tja_path = output_dir / f"{safe_stem}.tja"
     analysis_path = output_dir / "analysis.json"
+    generation_config_path = output_dir / "generation_config.json"
     ai_input_path = output_dir / "ai_input.json"
     ai_output_path = output_dir / "ai_output.json"
     report_path = output_dir / "report.txt"
+
+    generation_config = _build_generation_config(
+        input_audio=input_audio,
+        title=title,
+        artist=artist,
+        output_dir=output_dir,
+        course=course,
+        level=level,
+        style=style,
+        density=density,
+        max_bars=max_bars,
+        bpm=bpm,
+        offset=offset,
+        use_ai=use_ai,
+        model=model,
+    )
+    write_json(generation_config_path, generation_config)
 
     try:
         console.print(f"Converting audio: {input_audio} -> {ogg_path}")
@@ -73,7 +91,7 @@ def generate(
         raw = apply_analysis_overrides(raw, bpm=bpm, offset=offset)
         bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
     except Exception as error:  # noqa: BLE001 - CLI boundary should hide tracebacks.
-        _write_failure_report(report_path, str(error))
+        _write_failure_report(report_path, str(error), generation_config_path)
         _fail(str(error))
 
     analysis = SongAnalysis(
@@ -130,9 +148,9 @@ def generate(
     issues = validate_tja_text(tja_text)
 
     tja_path.write_text(tja_text, encoding="utf-8")
-    _write_report(report_path, tja_path, analysis_path, issues, ai_failure)
+    _write_report(report_path, tja_path, analysis_path, generation_config_path, issues, ai_failure)
 
-    _print_result(tja_path, analysis_path, report_path, issues)
+    _print_result(tja_path, analysis_path, generation_config_path, report_path, issues)
 
     if any(issue.level == "error" for issue in issues):
         raise typer.Exit(1)
@@ -143,11 +161,50 @@ def _fail(message: str) -> None:
     raise typer.Exit(1)
 
 
-def _write_failure_report(report_path: Path, message: str) -> Path:
-    report_path.write_text(
-        "\n".join(["TJA AI Chart Generator Report", "", f"Error: {message}"]) + "\n",
-        encoding="utf-8",
-    )
+def _build_generation_config(
+    *,
+    input_audio: Path,
+    title: str,
+    artist: str | None,
+    output_dir: Path,
+    course: str,
+    level: int,
+    style: str,
+    density: str,
+    max_bars: int | None,
+    bpm: float | None,
+    offset: float | None,
+    use_ai: bool,
+    model: str | None,
+) -> dict[str, Any]:
+    return {
+        "input_audio": str(input_audio),
+        "title": title,
+        "artist": artist,
+        "output_dir": str(output_dir),
+        "course": course,
+        "level": level,
+        "style": style,
+        "density": density,
+        "max_bars": max_bars,
+        "bpm_override": bpm,
+        "offset_override": offset,
+        "use_ai": use_ai,
+        "model": model,
+    }
+
+
+def _write_failure_report(
+    report_path: Path,
+    message: str,
+    generation_config_path: Path | None = None,
+) -> Path:
+    lines = ["TJA AI Chart Generator Report", ""]
+    if generation_config_path is not None:
+        lines.extend([f"Generation config: {generation_config_path}", ""])
+    lines.append(f"Error: {message}")
+
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_path
 
 
@@ -155,6 +212,7 @@ def _write_report(
     report_path: Path,
     tja_path: Path,
     analysis_path: Path,
+    generation_config_path: Path,
     issues: list[ValidationIssue],
     ai_failure: str | None,
 ) -> Path:
@@ -163,6 +221,7 @@ def _write_report(
         "",
         f"TJA: {tja_path}",
         f"Analysis: {analysis_path}",
+        f"Generation config: {generation_config_path}",
         "",
     ]
 
@@ -184,12 +243,14 @@ def _write_report(
 def _print_result(
     tja_path: Path,
     analysis_path: Path,
+    generation_config_path: Path,
     report_path: Path,
     issues: list[ValidationIssue],
 ) -> None:
     console.print("Generated files:")
     console.print(f"- {tja_path}")
     console.print(f"- {analysis_path}")
+    console.print(f"- {generation_config_path}")
     console.print(f"- {report_path}")
 
     for issue in issues:
