@@ -1,47 +1,49 @@
 # tja-ai-chartgen
 
-AI-assisted TJA chart draft generator for Taiko simulators.
+用于太鼓模拟器的 AI 辅助 TJA 谱面草稿生成器。
 
-## Requirements
+英文版文档见：[READEME_EN.md](README_EN.md)。
+
+## 环境要求
 
 - Python 3.11+
 - ffmpeg
 
-## Install
+## 安装
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-## Usage
+## 使用方式
 
-Check the installed CLI version:
+查看已安装的 CLI 版本：
 
 ```bash
 tja-ai-chartgen version
 ```
 
-Rule-based draft:
+生成规则谱面草稿：
 
 ```bash
 tja-ai-chartgen generate song.mp3 --title "Song Title"
 ```
 
-Generate only the first N bars for quick checks:
+只生成前 N 小节，便于快速检查：
 
 ```bash
 tja-ai-chartgen generate song.mp3 --title "Song Title" --max-bars 16
 ```
 
-Control rule-based draft density:
+控制规则谱面草稿密度：
 
 ```bash
 tja-ai-chartgen generate song.mp3 --title "Song Title" --density high
 ```
 
-Allowed density values are `auto`, `low`, `medium`, `high`, and `max`. `auto` follows analyzed bar energy.
+`--density` 可选值为 `auto`、`low`、`medium`、`high`、`max`。`auto` 会根据分析得到的小节能量自动选择密度。
 
-Override analyzed BPM and OFFSET when manual calibration is needed:
+在需要人工校准时覆盖自动分析得到的 BPM 和 OFFSET：
 
 ```bash
 tja-ai-chartgen generate song.mp3 \
@@ -51,7 +53,7 @@ tja-ai-chartgen generate song.mp3 \
   --offset 0.725
 ```
 
-AI-assisted draft:
+启用 AI 辅助生成：
 
 ```bash
 tja-ai-chartgen generate song.mp3 \
@@ -62,13 +64,13 @@ tja-ai-chartgen generate song.mp3 \
   --use-ai
 ```
 
-Re-run a saved generation config:
+通过已保存的生成配置复跑：
 
 ```bash
 tja-ai-chartgen generate-from-config output/generation_config.json
 ```
 
-## Output
+## 输出文件
 
 ```txt
 output/
@@ -81,50 +83,50 @@ output/
 └─ report.txt
 ```
 
-## Reproducibility
+## 可复现性
 
-Each `generate` run writes `generation_config.json` next to the TJA output. It records the input path, metadata, difficulty, style, density, `--max-bars`, BPM/OFFSET overrides, AI flag, and model name so a useful draft can be reproduced later. Use `generate-from-config` to run the same generation parameters again.
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、AI 开关和模型名。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。
 
-## Limitations
+## 限制
 
-- Best for songs with stable BPM.
-- Assumes 4/4 time signature.
-- Generated charts are drafts and require human review.
-- OFFSET may need manual adjustment in OpenTaiko or another simulator.
-- `--max-bars` is intended for quick draft checks and truncates the generated chart to the first N bars.
-- `--bpm` and `--offset` override automatic analysis results for manual calibration.
-- `--density auto|low|medium|high|max` controls rule-based draft density and is passed into the AI prompt when `--use-ai` is enabled.
-- MVP does not support BPM changes, branches, drumrolls, balloons, or scroll gimmicks.
+- 更适合 BPM 稳定的歌曲。
+- 当前默认按 `4/4` 拍处理。
+- 生成结果是谱面草稿，仍需要人工检查和调整。
+- OFFSET 可能需要在 OpenTaiko 或其他模拟器中继续微调。
+- `--max-bars` 主要用于快速检查，会将生成谱面截断到前 N 小节。
+- `--bpm` 和 `--offset` 会覆盖自动分析结果，用于人工校准。
+- `--density auto|low|medium|high|max` 会控制规则生成器密度；启用 `--use-ai` 时也会传入 AI prompt。
+- MVP 不支持 BPM 变化、分歧谱面、滚奏、气球音符或滚动演出等复杂语法。
 
-## Roadmap
+## 后续版本规划
 
-These items are planned for later versions and are not part of the MVP scope.
+以下内容计划在后续版本中实现，不属于 MVP 范围。
 
 ### v0.2
 
-- Support manual BPM override. ✅ Implemented in MVP iteration via `--bpm`.
-- Support manual OFFSET override. ✅ Implemented in MVP iteration via `--offset`.
-- Support `--max-bars` to generate only the first N bars for easier testing. ✅ Implemented in MVP iteration.
-- Add automatic AI output repair and retry.
-- Add `--density low|medium|high|max`. ✅ Implemented in MVP iteration via `--density auto|low|medium|high|max`.
+- 支持用户手动指定 BPM。✅ 已在 MVP 迭代中通过 `--bpm` 实现。
+- 支持用户手动指定 OFFSET。✅ 已在 MVP 迭代中通过 `--offset` 实现。
+- 支持 `--max-bars` 只生成前 N 小节，方便测试。✅ 已在 MVP 迭代中实现。
+- AI 输出自动修复重试。
+- 加入 `--density low|medium|high|max`。✅ 已在 MVP 迭代中通过 `--density auto|low|medium|high|max` 实现。
 
 ### v0.3
 
-- Try integrating BeatNet for:
-  - downbeat detection
-  - meter detection
-  - more accurate bar starts
-- Support `3/4` and `6/8` time signatures.
-- Support simple drumrolls and balloons.
+- 尝试集成 BeatNet：
+  - downbeat
+  - meter
+  - 更准的小节开始
+- 支持 `3/4`、`6/8`。
+- 支持简单滚奏和气球。
 
 ### v0.4
 
-- Support multiple difficulties:
+- 支持多难度：
   - Easy
   - Normal
   - Hard
   - Oni
-- Support style templates:
+- 支持风格模板：
   - technical
   - stamina
   - hybrid
@@ -132,8 +134,8 @@ These items are planned for later versions and are not part of the MVP scope.
 
 ### v0.5
 
-- Build a Web UI.
-- Upload audio files.
-- Preview analysis results online.
-- Manually adjust BPM / OFFSET.
-- Regenerate selected bars.
+- 做 Web UI。
+- 上传音频。
+- 在线预览分析结果。
+- 手动调 BPM / OFFSET。
+- 重新生成指定小节。
