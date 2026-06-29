@@ -35,9 +35,9 @@ def generate_chart_bars_with_ai(
     api_key: str | None = None,
     max_repair_attempts: int = DEFAULT_AI_REPAIR_RETRIES,
 ) -> tuple[list[ChartBar], dict[str, Any]]:
-    model_name = model or os.getenv("LITELLM_MODEL", "openai/gpt-4o-mini")
-    resolved_api_base = api_base or os.getenv("LITELLM_API_BASE") or os.getenv("OPENAI_BASE_URL")
-    resolved_api_key = api_key or os.getenv("LITELLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    model_name = model or os.getenv("MODEL", "openai/gpt-4o-mini")
+    resolved_api_base = api_base or os.getenv("OPENAI_BASE_URL")
+    resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
     repair_attempts = max(0, max_repair_attempts)
     prompt = build_chart_generation_prompt(analysis, course, level, style, density)
     messages = [{"role": "user", "content": prompt}]

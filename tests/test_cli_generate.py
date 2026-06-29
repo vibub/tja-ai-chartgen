@@ -403,6 +403,99 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
     assert "secret-key" not in (output_dir / "generation_config.json").read_text(encoding="utf-8")
 
 
+def test_generate_with_ai_records_default_model(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch)
+    monkeypatch.setattr("tja_ai_chartgen.cli.load_dotenv", lambda: None)
+    monkeypatch.delenv("MODEL", raising=False)
+
+    def fake_generate_chart_bars_with_ai(
+        analysis,
+        course,
+        level,
+        style,
+        density,
+        model,
+        *,
+        api_base,
+        api_key,
+        max_repair_attempts,
+    ):
+        assert model == "openai/gpt-4o-mini"
+        return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--use-ai",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    assert saved_config["model"] == "openai/gpt-4o-mini"
+
+
+
+def test_generate_with_ai_records_model_from_environment(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch)
+    monkeypatch.setenv("MODEL", "openai/env-model")
+
+    def fake_generate_chart_bars_with_ai(
+        analysis,
+        course,
+        level,
+        style,
+        density,
+        model,
+        *,
+        api_base,
+        api_key,
+        max_repair_attempts,
+    ):
+        assert model == "openai/env-model"
+        return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--use-ai",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    assert saved_config["model"] == "openai/env-model"
+
+
+
 def test_generate_rejects_negative_ai_repair_retries(tmp_path):
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")

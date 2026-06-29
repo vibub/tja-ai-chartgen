@@ -50,7 +50,7 @@ tja-ai-chartgen generate-from-config output/generation_config.json
 - **TJA 层**：`tja/writer.py` 只负责把 `TjaChart` 渲染为文本；`tja/validator.py` 做 MVP 级格式检查。
 - **工具层**：`utils/paths.py` 集中处理 UTF-8 JSON 写入和 Pydantic 模型序列化。
 
-`generate` 当前数据流：输入音频 → `generation_config.json` → `output/<stem>.ogg` → `analysis.json` → AI 或 fallback `ChartBar` → `song.tja` → `report.txt`。`generation_config.json` 记录输入参数、难度、风格、density、max-bars、BPM/OFFSET 覆盖、AI 开关、模型名和修复重试次数；`generate-from-config` 读取该文件并复跑同一组生成参数，但 API key 和 base URL 不写入配置文件，复跑 AI 生成时仍需通过 `.env`、环境变量或命令参数提供。`--bpm` / `--offset` 会在音频分析后覆盖 raw analysis，并影响小节网格、`analysis.json` 和最终 `.tja`；`--max-bars N` 会在小节特征阶段只保留前 N 小节，便于用真实音频快速验证；`--density auto|low|medium|high|max` 控制规则生成器密度，并在启用 AI 时写入 prompt payload。启用 `--use-ai` 时，AI 输出必须通过 JSON、bar 数量、notes 长度和合法字符校验；不合格时默认最多自动修复重试 2 次，仍失败则记录 `ai_output.json` 并回退到规则生成器。
+`generate` 当前数据流：输入音频 → `generation_config.json` → `output/<stem>.ogg` → `analysis.json` → AI 或 fallback `ChartBar` → `song.tja` → `report.txt`。`generation_config.json` 记录输入参数、难度、风格、density、max-bars、BPM/OFFSET 覆盖、AI 开关、最终解析使用的模型名和修复重试次数；`generate-from-config` 读取该文件并复跑同一组生成参数，但 API key 和 base URL 不写入配置文件，复跑 AI 生成时仍需通过 `.env`、环境变量或命令参数提供。AI 环境变量只使用 `MODEL`、`OPENAI_BASE_URL` 和 `OPENAI_API_KEY`。`--bpm` / `--offset` 会在音频分析后覆盖 raw analysis，并影响小节网格、`analysis.json` 和最终 `.tja`；`--max-bars N` 会在小节特征阶段只保留前 N 小节，便于用真实音频快速验证；`--density auto|low|medium|high|max` 控制规则生成器密度，并在启用 AI 时写入 prompt payload。启用 `--use-ai` 时，AI 输出必须通过 JSON、bar 数量、notes 长度和合法字符校验；不合格时默认最多自动修复重试 2 次，仍失败则记录 `ai_output.json` 并回退到规则生成器。
 
 ## 工程约束
 

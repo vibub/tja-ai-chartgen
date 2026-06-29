@@ -77,6 +77,27 @@ def test_generate_chart_bars_with_ai_passes_openai_compatible_connection_options
     assert raw["api_key_provided"] is True
 
 
+def test_generate_chart_bars_with_ai_reads_openai_env_names(monkeypatch):
+    payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    monkeypatch.setenv("MODEL", "openai/env-model")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://env.example.com/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
+
+    def fake_completion(**kwargs):
+        assert kwargs["model"] == "openai/env-model"
+        assert kwargs["api_base"] == "https://env.example.com/v1"
+        assert kwargs["api_key"] == "env-key"
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    _, raw = generate_chart_bars_with_ai(_analysis(), "Oni", 10, "technical")
+
+    assert raw["model"] == "openai/env-model"
+    assert raw["api_base"] == "https://env.example.com/v1"
+    assert raw["api_key_provided"] is True
+
+
 def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
     responses = [
         {"bars": [{"bar": 1, "notes": "12x"}]},

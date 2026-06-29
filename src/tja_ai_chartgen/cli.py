@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,7 @@ def generate(
     ai_api_key: str | None = typer.Option(
         None,
         "--ai-api-key",
-        help="OpenAI-compatible API key. Prefer LITELLM_API_KEY or OPENAI_API_KEY in .env.",
+        help="OpenAI-compatible API key. Prefer OPENAI_API_KEY in .env."
     ),
     ai_repair_retries: int = typer.Option(
         2,
@@ -99,8 +100,8 @@ def generate_from_config(config_path: Path) -> None:
             offset=_optional_float(config.get("offset_override"), "offset_override"),
             use_ai=_optional_bool(config.get("use_ai", False), "use_ai"),
             model=_optional_str(config.get("model")),
-            ai_base_url=_optional_str(config.get("ai_base_url")),
-            ai_api_key=_optional_str(config.get("ai_api_key")),
+            ai_base_url=None,
+            ai_api_key=None,
             ai_repair_retries=_optional_int(
                 config.get("ai_repair_retries", 2),
                 "ai_repair_retries",
@@ -144,6 +145,8 @@ def run_generate(
     except ValueError as error:
         _fail(str(error))
 
+    resolved_model = model or (os.getenv("MODEL", "openai/gpt-4o-mini") if use_ai else None)
+
     safe_stem = input_audio.stem
     ogg_path = output_dir / f"{safe_stem}.ogg"
     tja_path = output_dir / f"{safe_stem}.tja"
@@ -166,7 +169,7 @@ def run_generate(
         bpm=bpm,
         offset=offset,
         use_ai=use_ai,
-        model=model,
+        model=resolved_model,
         ai_repair_retries=ai_repair_retries,
     )
     write_json(generation_config_path, generation_config)
@@ -213,7 +216,7 @@ def run_generate(
                 level,
                 style,
                 density,
-                model,
+                resolved_model,
                 api_base=ai_base_url,
                 api_key=ai_api_key,
                 max_repair_attempts=ai_repair_retries,

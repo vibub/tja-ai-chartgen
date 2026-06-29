@@ -64,7 +64,7 @@ tja-ai-chartgen generate song.mp3 \
   --use-ai
 ```
 
-AI 调用通过 LiteLLM 接入。默认读取 `LITELLM_MODEL`，也可以通过 `--model` 指定模型。使用 OpenAI 兼容接口时，模型名通常需要使用 LiteLLM 的 `openai/` 前缀，并传入自定义 base URL 和 API key：
+AI 调用通过 LiteLLM 接入。默认读取 `MODEL`，也可以通过 `--model` 指定模型。使用 OpenAI 兼容接口时，模型名通常需要使用 LiteLLM 的 `openai/` 前缀，并传入自定义 base URL 和 API key：
 
 ```bash
 tja-ai-chartgen generate song.mp3 \
@@ -78,9 +78,9 @@ tja-ai-chartgen generate song.mp3 \
 也可以在 `.env` 中配置，避免把 API key 写进命令历史：
 
 ```env
-LITELLM_MODEL=openai/custom-model
-LITELLM_API_BASE=https://llm.example.com/v1
-LITELLM_API_KEY=sk-...
+MODEL=openai/custom-model
+OPENAI_BASE_URL=https://llm.example.com/v1
+OPENAI_API_KEY=sk-...
 ```
 
 AI 输出会先做严格格式校验；如果 JSON、bar 数量、notes 长度或字符不符合 MVP 约束，CLI 会自动向模型发送修复提示并重试。默认最多修复重试 2 次，可以用 `--ai-repair-retries` 调整。修复仍失败时会回退到规则生成器。
@@ -106,7 +106,7 @@ output/
 
 ## 可复现性
 
-每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、AI 开关、模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
 
 ## 限制
 
