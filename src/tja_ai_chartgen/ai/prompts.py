@@ -68,7 +68,10 @@ Rules:
 10. Respect the requested density: auto follows bar energy; low is sparse; medium is balanced; high is dense; max is the densest playable MVP draft.
 11. For Oni 10, use technical but playable patterns.
 12. Avoid repeating the exact same pattern for too many consecutive bars.
-13. If special_notes is true and you use a balloon note 7, include balloon_counts with one positive integer per balloon note in that bar.
+13. Use each bar's grid_features to align notes: onset=true marks likely playable hits, accent=true/downbeat=true marks stronger positions, strength is normalized 0.0-1.0.
+14. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density asks for more.
+15. Use beat_grids, downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
+16. If special_notes is true and you use a balloon note 7, include balloon_counts with one positive integer per balloon note in that bar.
 
 Input:
 {json.dumps(payload, ensure_ascii=False)}

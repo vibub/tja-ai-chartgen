@@ -1,6 +1,15 @@
 from pydantic import BaseModel, Field
 
 
+class GridFeature(BaseModel):
+    grid: int
+    onset: bool = False
+    accent: bool = False
+    beat: int | None = None
+    downbeat: bool = False
+    strength: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class BarFeature(BaseModel):
     index: int
     start_time: float
@@ -10,6 +19,11 @@ class BarFeature(BaseModel):
     grids_per_bar: int = 16
     onset_16: list[int] = Field(default_factory=list)
     accent_16: list[int] = Field(default_factory=list)
+    grid_features: list[GridFeature] = Field(default_factory=list)
+    beat_grids: list[int] = Field(default_factory=list)
+    downbeat_grid: int | None = None
+    phrase_position: str = "unknown"
+    fill_candidate: bool = False
     section: str = "unknown"
 
 

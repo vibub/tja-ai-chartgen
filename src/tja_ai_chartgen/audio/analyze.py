@@ -13,6 +13,8 @@ class AudioAnalysisRaw(BaseModel):
     onset_strengths: list[float]
     duration: float
     offset: float
+    sample_rate: int | None = None
+    hop_length: int = 512
     downbeat_times: list[float] = Field(default_factory=list)
     beat_numbers: list[int] = Field(default_factory=list)
     time_signature: str = "4/4"
@@ -81,6 +83,7 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         onset_strengths=[float(value) for value in onset_env.tolist()],
         duration=duration,
         offset=offset,
+        sample_rate=int(sr),
     )
 
     if not use_beatnet:

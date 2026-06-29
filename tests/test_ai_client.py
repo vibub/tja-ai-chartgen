@@ -33,6 +33,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density"] == "high"
     assert payload["style"] == "technical"
     assert payload["bars"][0]["grids_per_bar"] == 16
+    assert "grid_features" in payload["bars"][0]
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
