@@ -106,7 +106,7 @@ output/
 
 ## 可复现性
 
-每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、AI 开关、模型名、AI base URL 和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量、命令参数或手动配置文件提供密钥。
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、AI 开关、模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
 
 ## 限制
 

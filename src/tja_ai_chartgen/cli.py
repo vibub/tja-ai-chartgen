@@ -167,7 +167,6 @@ def run_generate(
         offset=offset,
         use_ai=use_ai,
         model=model,
-        ai_base_url=ai_base_url,
         ai_repair_retries=ai_repair_retries,
     )
     write_json(generation_config_path, generation_config)
@@ -334,7 +333,6 @@ def _build_generation_config(
     offset: float | None,
     use_ai: bool,
     model: str | None,
-    ai_base_url: str | None,
     ai_repair_retries: int,
 ) -> dict[str, Any]:
     return {
@@ -351,7 +349,6 @@ def _build_generation_config(
         "offset_override": offset,
         "use_ai": use_ai,
         "model": model,
-        "ai_base_url": ai_base_url,
         "ai_repair_retries": ai_repair_retries,
     }
 

@@ -88,7 +88,6 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "offset_override": 0.25,
         "use_ai": False,
         "model": None,
-        "ai_base_url": None,
         "ai_repair_retries": 2,
     }
     assert f"Generation config: {output_dir / 'generation_config.json'}" in (
@@ -135,7 +134,7 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     assert "1000100010001000," in tja_text
     assert saved_config["density"] == "low"
     assert saved_config["max_bars"] == 2
-    assert saved_config["ai_base_url"] == "https://llm.example.com/v1"
+    assert "ai_base_url" not in saved_config
     assert saved_config["ai_repair_retries"] == 1
 
 
@@ -398,7 +397,7 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
     assert result.exit_code == 0, result.output
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     assert saved_config["model"] == "openai/custom-model"
-    assert saved_config["ai_base_url"] == "https://llm.example.com/v1"
+    assert "ai_base_url" not in saved_config
     assert saved_config["ai_repair_retries"] == 1
     assert "ai_api_key" not in saved_config
     assert "secret-key" not in (output_dir / "generation_config.json").read_text(encoding="utf-8")
