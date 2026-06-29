@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+from tja_ai_chartgen.rules.styles import get_style_template
 from tja_ai_chartgen.tja.model import SongAnalysis
 
 
@@ -12,6 +13,7 @@ def build_chart_generation_payload(
     density: str = "auto",
     special_notes: bool = False,
 ) -> dict[str, Any]:
+    template = get_style_template(style)
     return {
         "title": analysis.title,
         "artist": analysis.artist,
@@ -21,6 +23,10 @@ def build_chart_generation_payload(
         "course": course,
         "level": level,
         "style": style,
+        "style_template": {
+            "name": template.name,
+            "description": template.description,
+        },
         "density": density,
         "special_notes": special_notes,
         "bars": [bar.model_dump() for bar in analysis.bars],

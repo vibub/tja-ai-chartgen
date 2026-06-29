@@ -38,10 +38,10 @@ def test_build_chart_generation_payload_includes_density():
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
 
-    def fake_completion(model, messages, temperature):
-        assert model == "fake/model"
-        assert messages[0]["role"] == "user"
-        assert temperature == 0.7
+    def fake_completion(**kwargs):
+        assert kwargs["model"] == "fake/model"
+        assert kwargs["messages"][0]["role"] == "user"
+        assert kwargs["temperature"] == 0.7
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
     monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
@@ -106,8 +106,8 @@ def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
     ]
     captured_messages = []
 
-    def fake_completion(model, messages, temperature):
-        captured_messages.append(messages.copy())
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
         payload = responses.pop(0)
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
@@ -130,7 +130,7 @@ def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
 def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "7000000080000000", "balloon_counts": [8]}]}
 
-    def fake_completion(model, messages, temperature):
+    def fake_completion(**kwargs):
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
     monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
@@ -169,7 +169,7 @@ def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeyp
         ],
     )
 
-    def fake_completion(model, messages, temperature):
+    def fake_completion(**kwargs):
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
     monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
@@ -182,7 +182,7 @@ def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeyp
 def test_generate_chart_bars_with_ai_raises_with_attempt_log_after_failed_repairs(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "12x"}]}
 
-    def fake_completion(model, messages, temperature):
+    def fake_completion(**kwargs):
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
     monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)

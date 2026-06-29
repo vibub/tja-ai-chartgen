@@ -34,6 +34,19 @@ def test_generate_fallback_chart_bars_density_overrides_energy():
     assert [bar.notes for bar in max_bars] == ["1122112233441122", "1211221211223344"]
 
 
+def test_generate_fallback_chart_bars_applies_style_templates():
+    bars = [
+        BarFeature(index=0, start_time=0, end_time=2, energy=0.95),
+        BarFeature(index=1, start_time=2, end_time=4, energy=0.95),
+    ]
+
+    performance_bars = generate_fallback_chart_bars(bars, style="performance", density="low")
+    stamina_bars = generate_fallback_chart_bars(bars, style="stamina", density="medium")
+
+    assert [bar.notes for bar in performance_bars] == ["3000400030004000", "1000300010004000"]
+    assert [bar.notes for bar in stamina_bars] == ["2220222022202220", "1110111011101110"]
+
+
 def test_generate_fallback_chart_bars_rejects_invalid_density():
     bars = [BarFeature(index=0, start_time=0, end_time=2, energy=0.5)]
 

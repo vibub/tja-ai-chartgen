@@ -393,6 +393,26 @@ def test_generate_rejects_invalid_density(tmp_path):
     assert "Invalid density: extreme" in result.output
 
 
+def test_generate_rejects_invalid_style(tmp_path):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--style",
+            "random",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid style: random" in result.output
+
+
 def test_generate_with_bpm_and_offset_overrides_outputs_metadata(tmp_path, monkeypatch):
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")

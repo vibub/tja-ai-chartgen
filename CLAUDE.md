@@ -28,8 +28,8 @@ ruff check .
 ```bash
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title"
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --max-bars 16
-tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --density high
-tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --density high --special-notes
+tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --density high --style hybrid
+tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --density high --style performance --special-notes
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --all-courses
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --max-bars 16 --bpm 220.588 --offset 0.725
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --time-signature 3/4
@@ -50,7 +50,7 @@ tja-ai-chartgen generate-from-config output/generation_config.json
 - **音频层**：`audio/convert.py` 通过 `ffmpeg` 转 `.ogg`；`audio/analyze.py` 默认通过 `librosa` 提取 BPM、beat、onset、duration 和初步 offset，也可通过可选 `--use-beatnet` 尝试用 BeatNet 增强 downbeat、meter 和小节起点，BeatNet 不可用或失败时保留 librosa 结果。
 - **特征层**：`features/meter.py` 定义 `4/4`、`3/4`、`6/8` 的小节网格和 `#MEASURE` 映射；`features/bars.py` 将 raw analysis 映射为对应拍号的 `BarFeature`（4/4 为 16 格，3/4 和 6/8 为 12 格）；`features/sections.py` 根据位置和 energy 标记 intro / outro / chorus / verse / break。
 - **数据模型层**：`tja/model.py` 定义 `SongAnalysis`、`BarFeature`、`ChartMetadata`、`ChartBar`、`TjaChart`，是 JSON 输出、AI 输入和 TJA writer 之间的稳定中间表示。
-- **谱面生成层**：`rules/fallback_generator.py` 提供不依赖 AI 的规则生成器，并可通过 `--special-notes` 少量插入简单滚奏和气球；`ai/prompts.py` 和 `ai/client.py` 提供 LiteLLM prompt、OpenAI 兼容调用入口、AI 输出校验、自动修复重试和输出清洗，AI 失败或修复耗尽时 CLI 必须回退到规则生成器。
+- **谱面生成层**：`rules/styles.py` 定义 technical / stamina / hybrid / performance 风格模板；`rules/fallback_generator.py` 提供不依赖 AI 的规则生成器，并可通过 `--special-notes` 少量插入简单滚奏和气球；`ai/prompts.py` 和 `ai/client.py` 提供 LiteLLM prompt、OpenAI 兼容调用入口、AI 输出校验、自动修复重试和输出清洗，AI 失败或修复耗尽时 CLI 必须回退到规则生成器。
 - **TJA 层**：`tja/writer.py` 只负责把 `TjaChart` 渲染为文本，为非 4/4 小节输出 `#MEASURE 3/4` 后再复位，并在存在气球音符时输出 `BALLOON:`；`tja/validator.py` 做 MVP 级格式检查。
 - **工具层**：`utils/paths.py` 集中处理 UTF-8 JSON 写入和 Pydantic 模型序列化。
 

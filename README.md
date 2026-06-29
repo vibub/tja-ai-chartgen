@@ -35,13 +35,13 @@ tja-ai-chartgen generate song.mp3 --title "Song Title"
 tja-ai-chartgen generate song.mp3 --title "Song Title" --max-bars 16
 ```
 
-控制规则谱面草稿密度：
+控制规则谱面草稿密度和风格模板：
 
 ```bash
-tja-ai-chartgen generate song.mp3 --title "Song Title" --density high
+tja-ai-chartgen generate song.mp3 --title "Song Title" --density high --style hybrid
 ```
 
-`--density` 可选值为 `auto`、`low`、`medium`、`high`、`max`。`auto` 会根据分析得到的小节能量自动选择密度。
+`--density` 可选值为 `auto`、`low`、`medium`、`high`、`max`。`auto` 会根据分析得到的小节能量自动选择密度。`--style` 可选值为 `technical`、`stamina`、`hybrid`、`performance`，会影响规则模板和 AI prompt。
 
 允许规则生成器和 AI 使用简单滚奏、气球音符：
 
@@ -174,6 +174,7 @@ output/
 - `--time-signature 4/4|3/4|6/8` 会覆盖分析得到的拍号，并影响小节长度、AI prompt 和 `.tja` 的 `#MEASURE` 输出。
 - `--all-courses` 会分别输出 `<stem>_easy.tja`、`<stem>_normal.tja`、`<stem>_hard.tja`、`<stem>_oni.tja`，并使用内置等级与密度预设。
 - `--density auto|low|medium|high|max` 会控制规则生成器密度；启用 `--use-ai` 时也会传入 AI prompt。
+- `--style technical|stamina|hybrid|performance` 会选择风格模板，影响规则谱面模式、特殊音符插入节奏和 AI prompt。
 - `--special-notes` 会允许简单滚奏和气球音符；当前只做少量模板化插入，仍不支持复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
@@ -207,7 +208,7 @@ output/
   - Normal
   - Hard
   - Oni
-- 支持风格模板：
+- 支持风格模板：✅ 已通过 `--style technical|stamina|hybrid|performance` 接入规则生成和 AI payload。
   - technical
   - stamina
   - hybrid

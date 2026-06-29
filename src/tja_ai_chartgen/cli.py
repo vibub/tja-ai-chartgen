@@ -14,6 +14,7 @@ from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.meter import validate_time_signature
 from tja_ai_chartgen.features.sections import assign_sections
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
+from tja_ai_chartgen.rules.styles import validate_style
 from tja_ai_chartgen.tja.model import ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.validator import ValidationIssue, validate_tja_text
 from tja_ai_chartgen.tja.writer import render_tja
@@ -188,6 +189,7 @@ def run_generate(
         _fail("--ai-repair-retries must be greater than or equal to 0.")
     try:
         validate_density(density)
+        validate_style(style)
     except ValueError as error:
         _fail(str(error))
 
