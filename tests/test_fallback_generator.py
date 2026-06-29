@@ -39,3 +39,21 @@ def test_generate_fallback_chart_bars_rejects_invalid_density():
 
     with pytest.raises(ValueError, match="Invalid density"):
         generate_fallback_chart_bars(bars, density="extreme")
+
+
+def test_generate_fallback_chart_bars_trims_patterns_for_three_four():
+    bars = [
+        BarFeature(
+            index=0,
+            start_time=0,
+            end_time=1.5,
+            energy=0.5,
+            time_signature="3/4",
+            grids_per_bar=12,
+        )
+    ]
+
+    chart_bars = generate_fallback_chart_bars(bars, density="low")
+
+    assert chart_bars[0].notes == "100010001000"
+    assert chart_bars[0].time_signature == "3/4"

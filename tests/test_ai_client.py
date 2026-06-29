@@ -32,6 +32,7 @@ def test_build_chart_generation_payload_includes_density():
 
     assert payload["density"] == "high"
     assert payload["style"] == "technical"
+    assert payload["bars"][0]["grids_per_bar"] == 16
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
@@ -124,6 +125,38 @@ def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
     assert bars == [ChartBar(index=0, notes="1000100010001000")]
     assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
     assert "Fix the output" in captured_messages[1][-1]["content"]
+
+
+def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeypatch):
+    payload = {"bars": [{"bar": 1, "notes": "100010001000"}]}
+    analysis = SongAnalysis(
+        title="Song Title",
+        artist=None,
+        audio_file="song.mp3",
+        ogg_file="song.ogg",
+        bpm=120,
+        offset=0,
+        time_signature="3/4",
+        bars=[
+            BarFeature(
+                index=0,
+                start_time=0,
+                end_time=1.5,
+                energy=0.5,
+                time_signature="3/4",
+                grids_per_bar=12,
+            )
+        ],
+    )
+
+    def fake_completion(model, messages, temperature):
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, _ = generate_chart_bars_with_ai(analysis, "Oni", 10, "technical", model="fake/model")
+
+    assert bars == [ChartBar(index=0, notes="100010001000", time_signature="3/4")]
 
 
 def test_generate_chart_bars_with_ai_raises_with_attempt_log_after_failed_repairs(monkeypatch):

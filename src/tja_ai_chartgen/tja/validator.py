@@ -2,6 +2,7 @@ from pydantic import BaseModel
 
 REQUIRED_HEADERS = ["TITLE:", "BPM:", "WAVE:", "OFFSET:", "COURSE:", "LEVEL:"]
 ALLOWED_CHART_CHARS = set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz, \t")
+ALLOWED_MEASURE_RATIOS = {"1/1", "3/4"}
 
 
 class ValidationIssue(BaseModel):
@@ -43,6 +44,9 @@ def validate_tja_text(text: str) -> list[ValidationIssue]:
                 stripped = line.strip()
                 if not stripped:
                     continue
+                if stripped.startswith("#MEASURE"):
+                    _validate_measure_line(stripped, line_number, issues)
+                    continue
                 invalid_chars = sorted(set(stripped) - ALLOWED_CHART_CHARS)
                 if invalid_chars:
                     issues.append(
@@ -62,3 +66,30 @@ def validate_tja_text(text: str) -> list[ValidationIssue]:
                     )
 
     return issues
+
+
+def _validate_measure_line(
+    line: str,
+    line_number: int,
+    issues: list[ValidationIssue],
+) -> None:
+    parts = line.split()
+    if len(parts) != 2 or parts[0] != "#MEASURE":
+        issues.append(
+            ValidationIssue(
+                level="error",
+                message="#MEASURE must be followed by one ratio",
+                line=line_number,
+            )
+        )
+        return
+
+    if parts[1] not in ALLOWED_MEASURE_RATIOS:
+        allowed = ", ".join(sorted(ALLOWED_MEASURE_RATIOS))
+        issues.append(
+            ValidationIssue(
+                level="error",
+                message=f"Invalid #MEASURE ratio: {parts[1]}. Expected one of: {allowed}",
+                line=line_number,
+            )
+        )

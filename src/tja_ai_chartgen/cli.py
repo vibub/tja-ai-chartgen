@@ -11,6 +11,7 @@ from tja_ai_chartgen import __version__
 from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
+from tja_ai_chartgen.features.meter import validate_time_signature
 from tja_ai_chartgen.features.sections import assign_sections
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
 from tja_ai_chartgen.tja.model import ChartMetadata, SongAnalysis, TjaChart
@@ -43,6 +44,11 @@ def generate(
     max_bars: int | None = typer.Option(None, help="Only generate the first N bars."),
     bpm: float | None = typer.Option(None, help="Override analyzed BPM."),
     offset: float | None = typer.Option(None, help="Override analyzed OFFSET."),
+    time_signature: str | None = typer.Option(
+        None,
+        "--time-signature",
+        help="Override analyzed meter: 4/4, 3/4, or 6/8.",
+    ),
     use_beatnet: bool = typer.Option(
         False,
         "--use-beatnet",
@@ -78,6 +84,7 @@ def generate(
         max_bars=max_bars,
         bpm=bpm,
         offset=offset,
+        time_signature=time_signature,
         use_beatnet=use_beatnet,
         use_ai=use_ai,
         model=model,
@@ -104,6 +111,7 @@ def generate_from_config(config_path: Path) -> None:
             max_bars=_optional_int(config.get("max_bars"), "max_bars"),
             bpm=_optional_float(config.get("bpm_override"), "bpm_override"),
             offset=_optional_float(config.get("offset_override"), "offset_override"),
+            time_signature=_optional_str(config.get("time_signature")),
             use_beatnet=_optional_bool(config.get("use_beatnet", False), "use_beatnet"),
             use_ai=_optional_bool(config.get("use_ai", False), "use_ai"),
             model=_optional_str(config.get("model")),
@@ -132,6 +140,7 @@ def run_generate(
     max_bars: int | None,
     bpm: float | None,
     offset: float | None,
+    time_signature: str | None,
     use_beatnet: bool,
     use_ai: bool,
     model: str | None,
@@ -146,6 +155,11 @@ def run_generate(
         _fail("--max-bars must be greater than or equal to 1.")
     if bpm is not None and bpm <= 0:
         _fail("--bpm must be greater than 0.")
+    if time_signature is not None:
+        try:
+            validate_time_signature(time_signature)
+        except ValueError as error:
+            _fail(str(error))
     if ai_repair_retries < 0:
         _fail("--ai-repair-retries must be greater than or equal to 0.")
     try:
@@ -176,6 +190,7 @@ def run_generate(
         max_bars=max_bars,
         bpm=bpm,
         offset=offset,
+        time_signature=time_signature,
         use_beatnet=use_beatnet,
         use_ai=use_ai,
         model=resolved_model,
@@ -190,6 +205,8 @@ def run_generate(
         console.print("Analyzing audio...")
         raw = analyze_audio(ogg_path, use_beatnet=use_beatnet)
         raw = apply_analysis_overrides(raw, bpm=bpm, offset=offset)
+        if time_signature is not None:
+            raw = raw.model_copy(update={"time_signature": time_signature})
         bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
     except Exception as error:  # noqa: BLE001 - CLI boundary should hide tracebacks.
         _write_failure_report(report_path, str(error), generation_config_path)
@@ -232,7 +249,7 @@ def run_generate(
                 max_repair_attempts=ai_repair_retries,
             )
             write_json(ai_output_path, ai_output)
-            chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars))
+            chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars), expected_bars=bars)
         except AiOutputRepairError as error:
             ai_failure = str(error)
             console.print("AI generation failed. Falling back to rule-based generator.")
@@ -344,6 +361,7 @@ def _build_generation_config(
     max_bars: int | None,
     bpm: float | None,
     offset: float | None,
+    time_signature: str | None,
     use_beatnet: bool,
     use_ai: bool,
     model: str | None,
@@ -361,6 +379,7 @@ def _build_generation_config(
         "max_bars": max_bars,
         "bpm_override": bpm,
         "offset_override": offset,
+        "time_signature": time_signature,
         "use_beatnet": use_beatnet,
         "use_ai": use_ai,
         "model": model,

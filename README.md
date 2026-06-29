@@ -53,6 +53,16 @@ tja-ai-chartgen generate song.mp3 \
   --offset 0.725
 ```
 
+覆盖或增强拍号分析，支持 `4/4`、`3/4` 和 `6/8`：
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --time-signature 3/4
+```
+
+`3/4` 和 `6/8` 会以 12 格小节生成，并在 `.tja` 中通过 `#MEASURE 3/4` 输出；`4/4` 仍使用默认 16 格小节。
+
 尝试使用可选 BeatNet 增强 downbeat、meter 和小节起点分析：
 
 ```bash
@@ -132,16 +142,17 @@ output/
 
 ## 可复现性
 
-每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、BeatNet 开关、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、拍号覆盖值、BeatNet 开关、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
 
 ## 限制
 
 - 更适合 BPM 稳定的歌曲。
-- 当前默认按 `4/4` 拍处理。
+- 当前默认按 `4/4` 拍处理；可通过 `--time-signature 3/4|6/8` 或 `--use-beatnet` 使用非 4/4 小节。
 - 生成结果是谱面草稿，仍需要人工检查和调整。
 - OFFSET 可能需要在 OpenTaiko 或其他模拟器中继续微调。
 - `--max-bars` 主要用于快速检查，会将生成谱面截断到前 N 小节。
 - `--bpm` 和 `--offset` 会覆盖自动分析结果，用于人工校准。
+- `--time-signature 4/4|3/4|6/8` 会覆盖分析得到的拍号，并影响小节长度、AI prompt 和 `.tja` 的 `#MEASURE` 输出。
 - `--density auto|low|medium|high|max` 会控制规则生成器密度；启用 `--use-ai` 时也会传入 AI prompt。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
@@ -165,7 +176,7 @@ output/
   - downbeat
   - meter
   - 更准的小节开始
-- 支持 `3/4`、`6/8`。
+- 支持 `3/4`、`6/8`。✅ 已通过 `--time-signature`、BeatNet meter、12 格小节和 `#MEASURE` 输出实现。
 - 支持简单滚奏和气球。
 
 ### v0.4

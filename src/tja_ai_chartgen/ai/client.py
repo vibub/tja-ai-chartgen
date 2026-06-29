@@ -5,7 +5,7 @@ from typing import Any
 from litellm import completion
 
 from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
-from tja_ai_chartgen.tja.model import ChartBar, SongAnalysis
+from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 
 ALLOWED_AI_NOTES = set("01234")
 FALLBACK_AI_PATTERN = "1000100010001000"
@@ -56,7 +56,7 @@ def generate_chart_bars_with_ai(
 
         try:
             data = _parse_ai_json(content)
-            bars = _validate_ai_data(data, expected_count=len(analysis.bars))
+            bars = _validate_ai_data(data, analysis=analysis)
         except _AiOutputValidationError as error:
             issues = error.issues
         except json.JSONDecodeError as error:
@@ -93,7 +93,7 @@ def generate_chart_bars_with_ai(
             messages.append(
                 {
                     "role": "user",
-                    "content": _build_repair_prompt(issues, expected_count=len(analysis.bars)),
+                    "content": _build_repair_prompt(issues, analysis=analysis),
                 }
             )
 
@@ -112,16 +112,32 @@ def generate_chart_bars_with_ai(
     )
 
 
-def sanitize_ai_bars(bars: list[ChartBar], expected_count: int) -> list[ChartBar]:
+def sanitize_ai_bars(
+    bars: list[ChartBar],
+    expected_count: int,
+    expected_bars: list[BarFeature] | None = None,
+) -> list[ChartBar]:
     sanitized: list[ChartBar] = []
 
     for index in range(expected_count):
+        expected_length = expected_bars[index].grids_per_bar if expected_bars and index < len(expected_bars) else 16
+        expected_time_signature = (
+            expected_bars[index].time_signature if expected_bars and index < len(expected_bars) else "4/4"
+        )
         if index < len(bars):
             notes = bars[index].notes
+            time_signature = bars[index].time_signature
         else:
             notes = FALLBACK_AI_PATTERN
+            time_signature = expected_time_signature
 
-        sanitized.append(ChartBar(index=index, notes=_sanitize_notes(notes)))
+        sanitized.append(
+            ChartBar(
+                index=index,
+                notes=_sanitize_notes(notes, expected_length),
+                time_signature=time_signature,
+            )
+        )
 
     return sanitized
 
@@ -154,13 +170,14 @@ def _parse_ai_json(content: str) -> dict[str, Any]:
     return data
 
 
-def _validate_ai_data(data: dict[str, Any], expected_count: int) -> list[ChartBar]:
+def _validate_ai_data(data: dict[str, Any], analysis: SongAnalysis) -> list[ChartBar]:
     raw_bars = data.get("bars")
     issues: list[str] = []
 
     if not isinstance(raw_bars, list):
         raise _AiOutputValidationError(["bars must be a list"])
 
+    expected_count = len(analysis.bars)
     if len(raw_bars) != expected_count:
         issues.append(f"bars must contain exactly {expected_count} item(s), got {len(raw_bars)}")
 
@@ -175,15 +192,19 @@ def _validate_ai_data(data: dict[str, Any], expected_count: int) -> list[ChartBa
             issues.append(f"bars[{index}].notes must be a string")
             continue
 
-        if len(notes) != 16:
-            issues.append(f"bars[{index}].notes must be exactly 16 characters, got {len(notes)}")
+        expected_length = _expected_note_length(analysis, index)
+        if len(notes) != expected_length:
+            issues.append(
+                f"bars[{index}].notes must be exactly {expected_length} characters, got {len(notes)}"
+            )
 
         illegal_characters = sorted(set(notes) - ALLOWED_AI_NOTES)
         if illegal_characters:
             joined = "".join(illegal_characters)
             issues.append(f"bars[{index}].notes contains illegal character(s): {joined}")
 
-        bars.append(ChartBar(index=index, notes=notes))
+        time_signature = _bar_time_signature(analysis, index)
+        bars.append(ChartBar(index=index, notes=notes, time_signature=time_signature))
 
     if issues:
         raise _AiOutputValidationError(issues)
@@ -191,7 +212,8 @@ def _validate_ai_data(data: dict[str, Any], expected_count: int) -> list[ChartBa
     return bars
 
 
-def _build_repair_prompt(issues: list[str], expected_count: int) -> str:
+def _build_repair_prompt(issues: list[str], analysis: SongAnalysis) -> str:
+    lengths = [_expected_note_length(analysis, index) for index in range(len(analysis.bars))]
     return f"""
 Your previous output was invalid and cannot be used as a TJA chart draft.
 
@@ -208,8 +230,8 @@ Required schema:
 }}
 
 Rules:
-- bars must contain exactly {expected_count} item(s).
-- Each notes value must be exactly 16 characters long.
+- bars must contain exactly {len(analysis.bars)} item(s).
+- Notes length per bar must match the input bar grids: {lengths}.
 - Allowed notes characters: 0, 1, 2, 3, 4.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()
@@ -234,9 +256,21 @@ def _build_ai_output(
     }
 
 
-def _sanitize_notes(notes: str) -> str:
+def _sanitize_notes(notes: str, expected_length: int) -> str:
     cleaned = "".join(character if character in ALLOWED_AI_NOTES else "0" for character in notes)
-    return cleaned[:16].ljust(16, "0")
+    return cleaned[:expected_length].ljust(expected_length, "0")
+
+
+def _expected_note_length(analysis: SongAnalysis, index: int) -> int:
+    if index < len(analysis.bars):
+        return analysis.bars[index].grids_per_bar
+    return 16
+
+
+def _bar_time_signature(analysis: SongAnalysis, index: int) -> str:
+    if index < len(analysis.bars):
+        return analysis.bars[index].time_signature
+    return analysis.time_signature
 
 
 def _extract_response_content(response: Any) -> str:

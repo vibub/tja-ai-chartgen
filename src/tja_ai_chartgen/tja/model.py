@@ -6,6 +6,8 @@ class BarFeature(BaseModel):
     start_time: float
     end_time: float
     energy: float = Field(ge=0.0, le=1.0)
+    time_signature: str = "4/4"
+    grids_per_bar: int = 16
     onset_16: list[int] = Field(default_factory=list)
     accent_16: list[int] = Field(default_factory=list)
     section: str = "unknown"
@@ -36,6 +38,7 @@ class ChartMetadata(BaseModel):
 class ChartBar(BaseModel):
     index: int
     notes: str
+    time_signature: str = "4/4"
 
 
 class TjaChart(BaseModel):

@@ -86,6 +86,7 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "max_bars": 2,
         "bpm_override": 240.1234,
         "offset_override": 0.25,
+        "time_signature": None,
         "use_beatnet": False,
         "use_ai": False,
         "model": None,
@@ -143,6 +144,39 @@ def test_generate_with_beatnet_passes_flag_and_records_config(tmp_path, monkeypa
     assert analysis["time_signature"] == "4/4"
 
 
+def test_generate_with_time_signature_outputs_measure_and_records_config(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch, duration=3.0)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--time-signature",
+            "3/4",
+            "--max-bars",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    analysis = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
+    assert "#MEASURE 3/4" in tja_text
+    assert "100010001000," in tja_text
+    assert saved_config["time_signature"] == "3/4"
+    assert analysis["time_signature"] == "3/4"
+    assert analysis["bars"][0]["grids_per_bar"] == 12
+
+
 def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")
@@ -162,6 +196,7 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
                 "max_bars": 2,
                 "bpm_override": 240.1234,
                 "offset_override": 0.25,
+                "time_signature": "3/4",
                 "use_ai": False,
                 "model": None,
                 "ai_base_url": "https://llm.example.com/v1",
@@ -179,9 +214,11 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     assert "BPM:240.123" in tja_text
     assert "OFFSET:0.25" in tja_text
-    assert "1000100010001000," in tja_text
+    assert "#MEASURE 3/4" in tja_text
+    assert "100010001000," in tja_text
     assert saved_config["density"] == "low"
     assert saved_config["max_bars"] == 2
+    assert saved_config["time_signature"] == "3/4"
     assert "ai_base_url" not in saved_config
     assert saved_config["ai_repair_retries"] == 1
 

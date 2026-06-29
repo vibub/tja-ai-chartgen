@@ -43,7 +43,7 @@ Rules:
 1. Output JSON only.
 2. Do not include markdown.
 3. Output exactly one notes string per input bar.
-4. Each notes string must be exactly 16 characters long.
+4. Each notes string length must equal that input bar's grids_per_bar value.
 5. Allowed note characters for MVP: 0, 1, 2, 3, 4.
 6. Do not use drumrolls, balloons, branches, BPM changes, delays, or scroll changes.
 7. Do not make every bar full density.

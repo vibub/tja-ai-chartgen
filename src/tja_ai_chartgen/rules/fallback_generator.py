@@ -36,7 +36,7 @@ def choose_pattern(
 ) -> str:
     patterns = _select_patterns(bar, density)
     style_offset = 1 if style == "stamina" else 0
-    return patterns[(bar.index + style_offset) % len(patterns)]
+    return _fit_pattern_to_grid(patterns[(bar.index + style_offset) % len(patterns)], bar.grids_per_bar)
 
 
 def generate_fallback_chart_bars(
@@ -45,7 +45,14 @@ def generate_fallback_chart_bars(
     density: str = "auto",
 ) -> list[ChartBar]:
     validate_density(density)
-    return [ChartBar(index=bar.index, notes=choose_pattern(bar, style, density)) for bar in bars]
+    return [
+        ChartBar(
+            index=bar.index,
+            notes=choose_pattern(bar, style, density),
+            time_signature=bar.time_signature,
+        )
+        for bar in bars
+    ]
 
 
 def validate_density(density: str) -> None:
@@ -67,3 +74,9 @@ def _select_patterns(bar: BarFeature, density: str) -> list[str]:
     if bar.energy < 0.80:
         return HIGH_PATTERNS
     return PEAK_PATTERNS
+
+
+def _fit_pattern_to_grid(pattern: str, grids_per_bar: int) -> str:
+    if grids_per_bar <= len(pattern):
+        return pattern[:grids_per_bar]
+    return pattern.ljust(grids_per_bar, "0")
