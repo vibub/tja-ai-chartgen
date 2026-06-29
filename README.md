@@ -146,6 +146,14 @@ AI 输出会先做严格格式校验；如果 JSON、bar 数量、notes 长度�
 tja-ai-chartgen generate-from-config output/generation_config.json
 ```
 
+启动 Web UI MVP：
+
+```bash
+tja-ai-chartgen web
+```
+
+Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则谱面片段。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。
+
 ## 输出文件
 
 ```txt
@@ -156,7 +164,11 @@ output/
 ├─ generation_config.json
 ├─ ai_input.json
 ├─ ai_output.json
-└─ report.txt
+├─ report.txt
+└─ web/
+   └─ <job-id>/
+      ├─ analysis.json
+      └─ regenerated_<start>_<end>.tja
 ```
 
 ## 可复现性
@@ -178,6 +190,7 @@ output/
 - `--special-notes` 会允许简单滚奏和气球音符；当前只做少量模板化插入，仍不支持复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
+- Web UI 是本地 MVP，只提供上传、分析预览、手动覆盖和指定小节范围规则再生成，不提供账号、持久任务管理或在线播放器。
 - MVP 不支持 BPM 变化、分歧谱面、复杂滚奏演出、滚动演出等复杂语法。
 
 ## 后续版本规划
@@ -216,8 +229,8 @@ output/
 
 ### v0.5
 
-- 做 Web UI。
-- 上传音频。
-- 在线预览分析结果。
-- 手动调 BPM / OFFSET。
-- 重新生成指定小节。
+- 做 Web UI。✅ 已通过 `tja-ai-chartgen web` 提供本地 FastAPI MVP。
+- 上传音频。✅ Web UI 支持上传并转换/分析。
+- 在线预览分析结果。✅ Web UI 展示 BPM、OFFSET、拍号、小节 energy 和 section。
+- 手动调 BPM / OFFSET。✅ 上传分析时可覆盖 BPM、OFFSET 和拍号。
+- 重新生成指定小节。✅ Web UI 可按起止小节重新生成规则谱面片段。

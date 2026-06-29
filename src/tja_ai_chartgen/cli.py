@@ -150,6 +150,19 @@ def generate_from_config(config_path: Path) -> None:
         _fail(f"Invalid generation config: {error}")
 
 
+@app.command()
+def web(
+    host: str = typer.Option("127.0.0.1", help="Host for the Web UI server."),
+    port: int = typer.Option(8000, help="Port for the Web UI server."),
+    output_dir: Path = typer.Option(Path("output/web"), help="Directory for Web UI jobs."),
+) -> None:
+    import uvicorn
+
+    from tja_ai_chartgen.web import create_app
+
+    uvicorn.run(create_app(output_dir=output_dir), host=host, port=port)
+
+
 def run_generate(
     *,
     input_audio: Path,
