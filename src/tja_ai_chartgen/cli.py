@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from tja_ai_chartgen import __version__
-from tja_ai_chartgen.audio.analyze import analyze_audio
+from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.sections import assign_sections
@@ -35,6 +35,8 @@ def generate(
     level: int = typer.Option(10, help="TJA difficulty level."),
     style: str = typer.Option("technical", help="Draft generation style."),
     max_bars: int | None = typer.Option(None, help="Only generate the first N bars."),
+    bpm: float | None = typer.Option(None, help="Override analyzed BPM."),
+    offset: float | None = typer.Option(None, help="Override analyzed OFFSET."),
     use_ai: bool = typer.Option(False, help="Use AI generation before falling back to rules."),
     model: str | None = typer.Option(None, help="Optional LiteLLM model name."),
 ) -> None:
@@ -43,6 +45,8 @@ def generate(
 
     if max_bars is not None and max_bars < 1:
         _fail("--max-bars must be greater than or equal to 1.")
+    if bpm is not None and bpm <= 0:
+        _fail("--bpm must be greater than 0.")
 
     safe_stem = input_audio.stem
     ogg_path = output_dir / f"{safe_stem}.ogg"
@@ -58,6 +62,7 @@ def generate(
 
         console.print("Analyzing audio...")
         raw = analyze_audio(ogg_path)
+        raw = apply_analysis_overrides(raw, bpm=bpm, offset=offset)
         bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
     except Exception as error:  # noqa: BLE001 - CLI boundary should hide tracebacks.
         _write_failure_report(report_path, str(error))

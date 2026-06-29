@@ -33,6 +33,16 @@ Generate only the first N bars for quick checks:
 tja-ai-chartgen generate song.mp3 --title "Song Title" --max-bars 16
 ```
 
+Override analyzed BPM and OFFSET when manual calibration is needed:
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --max-bars 16 \
+  --bpm 220.588 \
+  --offset 0.725
+```
+
 AI-assisted draft:
 
 ```bash
@@ -63,4 +73,5 @@ output/
 - Generated charts are drafts and require human review.
 - OFFSET may need manual adjustment in OpenTaiko or another simulator.
 - `--max-bars` is intended for quick draft checks and truncates the generated chart to the first N bars.
+- `--bpm` and `--offset` override automatic analysis results for manual calibration.
 - MVP does not support BPM changes, branches, drumrolls, balloons, or scroll gimmicks.

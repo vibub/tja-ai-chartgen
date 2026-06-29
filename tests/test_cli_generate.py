@@ -61,6 +61,39 @@ def test_generate_with_max_bars_limits_output_bars(tmp_path, monkeypatch):
     assert '"index": 2' not in (output_dir / "analysis.json").read_text(encoding="utf-8")
 
 
+def test_generate_with_bpm_and_offset_overrides_outputs_metadata(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch, duration=4.0)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--max-bars",
+            "2",
+            "--bpm",
+            "240.1234",
+            "--offset",
+            "0.25",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    analysis_text = (output_dir / "analysis.json").read_text(encoding="utf-8")
+    assert "BPM:240.123" in tja_text
+    assert "OFFSET:0.25" in tja_text
+    assert '"bpm": 240.123' in analysis_text
+    assert '"offset": 0.25' in analysis_text
+
+
 def test_generate_reports_missing_input_without_traceback(tmp_path):
     output_dir = tmp_path / "output"
 
@@ -102,6 +135,26 @@ def test_generate_rejects_non_positive_max_bars(tmp_path):
 
     assert result.exit_code == 1
     assert "--max-bars must be greater than or equal to 1" in result.output
+
+
+def test_generate_rejects_non_positive_bpm(tmp_path):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--bpm",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--bpm must be greater than 0" in result.output
 
 
 def test_generate_with_ai_failure_falls_back_to_rules(tmp_path, monkeypatch):

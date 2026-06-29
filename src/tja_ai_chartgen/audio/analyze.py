@@ -25,6 +25,27 @@ def normalize_bpm(bpm: float) -> float:
     return round(bpm, 3)
 
 
+def apply_analysis_overrides(
+    raw: AudioAnalysisRaw,
+    bpm: float | None = None,
+    offset: float | None = None,
+) -> AudioAnalysisRaw:
+    updates: dict[str, float] = {}
+
+    if bpm is not None:
+        if bpm <= 0:
+            raise ValueError(f"BPM must be positive, got {bpm}")
+        updates["bpm"] = round(bpm, 3)
+
+    if offset is not None:
+        updates["offset"] = offset
+
+    if not updates:
+        return raw
+
+    return raw.model_copy(update=updates)
+
+
 def analyze_audio(input_path: Path) -> AudioAnalysisRaw:
     if not input_path.exists():
         raise FileNotFoundError(f"Input audio file not found: {input_path}")
