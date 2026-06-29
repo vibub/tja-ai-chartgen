@@ -81,6 +81,7 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "output_dir": str(output_dir),
         "course": "Oni",
         "level": 10,
+        "all_courses": False,
         "style": "technical",
         "density": "low",
         "max_bars": 2,
@@ -340,6 +341,36 @@ def test_generate_with_special_notes_outputs_balloon_header(tmp_path, monkeypatc
     assert "BALLOON:8" in tja_text
     assert "7000000080000000," in tja_text
     assert saved_config["special_notes"] is True
+
+
+def test_generate_all_courses_writes_four_tja_files(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch, duration=4.0)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--all-courses",
+            "--max-bars",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    assert saved_config["all_courses"] is True
+    for course, level in [("easy", 3), ("normal", 5), ("hard", 7), ("oni", 10)]:
+        tja_text = (output_dir / f"song_{course}.tja").read_text(encoding="utf-8")
+        assert f"COURSE:{course.title() if course != 'oni' else 'Oni'}" in tja_text
+        assert f"LEVEL:{level}" in tja_text
 
 
 def test_generate_rejects_invalid_density(tmp_path):

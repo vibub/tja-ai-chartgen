@@ -22,6 +22,14 @@ from tja_ai_chartgen.utils.paths import write_json
 app = typer.Typer(help="AI-assisted TJA chart draft generator")
 console = Console()
 
+COURSE_PRESETS = {
+    "Easy": {"level": 3, "density": "low"},
+    "Normal": {"level": 5, "density": "medium"},
+    "Hard": {"level": 7, "density": "high"},
+    "Oni": {"level": 10, "density": "max"},
+}
+MULTI_COURSES = tuple(COURSE_PRESETS)
+
 
 @app.command()
 def version() -> None:
@@ -36,6 +44,11 @@ def generate(
     output_dir: Path = typer.Option(Path("output"), help="Directory for generated files."),
     course: str = typer.Option("Oni", help="TJA course name."),
     level: int = typer.Option(10, help="TJA difficulty level."),
+    all_courses: bool = typer.Option(
+        False,
+        "--all-courses",
+        help="Generate Easy, Normal, Hard, and Oni charts as separate TJA files.",
+    ),
     style: str = typer.Option("technical", help="Draft generation style."),
     density: str = typer.Option(
         "auto",
@@ -84,6 +97,7 @@ def generate(
         output_dir=output_dir,
         course=course,
         level=level,
+        all_courses=all_courses,
         style=style,
         density=density,
         max_bars=max_bars,
@@ -112,6 +126,7 @@ def generate_from_config(config_path: Path) -> None:
             output_dir=Path(_required_config_value(config, "output_dir")),
             course=str(config.get("course", "Oni")),
             level=int(config.get("level", 10)),
+            all_courses=_optional_bool(config.get("all_courses", False), "all_courses"),
             style=str(config.get("style", "technical")),
             density=str(config.get("density", "auto")),
             max_bars=_optional_int(config.get("max_bars"), "max_bars"),
@@ -142,6 +157,7 @@ def run_generate(
     output_dir: Path,
     course: str,
     level: int,
+    all_courses: bool,
     style: str,
     density: str,
     max_bars: int | None,
@@ -193,6 +209,7 @@ def run_generate(
         output_dir=output_dir,
         course=course,
         level=level,
+        all_courses=all_courses,
         style=style,
         density=density,
         max_bars=max_bars,
@@ -233,81 +250,98 @@ def run_generate(
     )
     write_json(analysis_path, analysis)
 
-    chart_bars = None
-    ai_failure: str | None = None
+    course_specs = _build_course_specs(course, level, density, all_courses)
+    tja_paths: list[Path] = []
+    all_issues: list[ValidationIssue] = []
+    ai_failures: list[str] = []
 
-    if use_ai:
-        try:
-            from tja_ai_chartgen.ai.client import (
-                AiOutputRepairError,
-                generate_chart_bars_with_ai,
-                sanitize_ai_bars,
-            )
-            from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
+    for course_spec in course_specs:
+        course_name = str(course_spec["course"])
+        course_level = int(course_spec["level"])
+        course_density = str(course_spec["density"])
+        course_tja_path = _course_tja_path(tja_path, course_name, all_courses)
+        course_ai_input_path = _course_sidecar_path(ai_input_path, course_name, all_courses)
+        course_ai_output_path = _course_sidecar_path(ai_output_path, course_name, all_courses)
+        chart_bars = None
+        ai_failure: str | None = None
 
-            write_json(
-                ai_input_path,
-                build_chart_generation_payload(
+        if use_ai:
+            try:
+                from tja_ai_chartgen.ai.client import (
+                    AiOutputRepairError,
+                    generate_chart_bars_with_ai,
+                    sanitize_ai_bars,
+                )
+                from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
+
+                write_json(
+                    course_ai_input_path,
+                    build_chart_generation_payload(
+                        analysis,
+                        course_name,
+                        course_level,
+                        style,
+                        course_density,
+                        special_notes=special_notes,
+                    ),
+                )
+                ai_bars, ai_output = generate_chart_bars_with_ai(
                     analysis,
-                    course,
-                    level,
+                    course_name,
+                    course_level,
                     style,
-                    density,
+                    course_density,
+                    resolved_model,
+                    api_base=ai_base_url,
+                    api_key=ai_api_key,
+                    max_repair_attempts=ai_repair_retries,
                     special_notes=special_notes,
-                ),
-            )
-            ai_bars, ai_output = generate_chart_bars_with_ai(
-                analysis,
-                course,
-                level,
-                style,
-                density,
-                resolved_model,
-                api_base=ai_base_url,
-                api_key=ai_api_key,
-                max_repair_attempts=ai_repair_retries,
+                )
+                write_json(course_ai_output_path, ai_output)
+                chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars), expected_bars=bars)
+            except AiOutputRepairError as error:
+                ai_failure = str(error)
+                console.print(f"AI generation failed for {course_name}. Falling back to rule-based generator.")
+                write_json(course_ai_output_path, {"error": ai_failure, **error.output})
+            except Exception as error:  # noqa: BLE001 - CLI must keep producing a usable draft.
+                ai_failure = str(error)
+                console.print(f"AI generation failed for {course_name}. Falling back to rule-based generator.")
+                write_json(course_ai_output_path, {"error": ai_failure})
+
+        if chart_bars is None:
+            chart_bars = generate_fallback_chart_bars(
+                bars,
+                style=style,
+                density=course_density,
                 special_notes=special_notes,
             )
-            write_json(ai_output_path, ai_output)
-            chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars), expected_bars=bars)
-        except AiOutputRepairError as error:
-            ai_failure = str(error)
-            console.print("AI generation failed. Falling back to rule-based generator.")
-            write_json(ai_output_path, {"error": ai_failure, **error.output})
-        except Exception as error:  # noqa: BLE001 - CLI must keep producing a usable draft.
-            ai_failure = str(error)
-            console.print("AI generation failed. Falling back to rule-based generator.")
-            write_json(ai_output_path, {"error": ai_failure})
 
-    if chart_bars is None:
-        chart_bars = generate_fallback_chart_bars(
-            bars,
-            style=style,
-            density=density,
-            special_notes=special_notes,
+        chart = TjaChart(
+            metadata=ChartMetadata(
+                title=title,
+                artist=artist,
+                wave=ogg_path.name,
+                bpm=analysis.bpm,
+                offset=analysis.offset,
+                course=course_name,
+                level=course_level,
+            ),
+            bars=chart_bars,
         )
+        tja_text = render_tja(chart)
+        issues = validate_tja_text(tja_text)
 
-    chart = TjaChart(
-        metadata=ChartMetadata(
-            title=title,
-            artist=artist,
-            wave=ogg_path.name,
-            bpm=analysis.bpm,
-            offset=analysis.offset,
-            course=course,
-            level=level,
-        ),
-        bars=chart_bars,
-    )
-    tja_text = render_tja(chart)
-    issues = validate_tja_text(tja_text)
+        course_tja_path.write_text(tja_text, encoding="utf-8")
+        tja_paths.append(course_tja_path)
+        all_issues.extend(issues)
+        if ai_failure:
+            ai_failures.append(f"{course_name}: {ai_failure}")
 
-    tja_path.write_text(tja_text, encoding="utf-8")
-    _write_report(report_path, tja_path, analysis_path, generation_config_path, issues, ai_failure)
+    _write_report(report_path, tja_paths, analysis_path, generation_config_path, all_issues, ai_failures)
 
-    _print_result(tja_path, analysis_path, generation_config_path, report_path, issues)
+    _print_result(tja_paths, analysis_path, generation_config_path, report_path, all_issues)
 
-    if any(issue.level == "error" for issue in issues):
+    if any(issue.level == "error" for issue in all_issues):
         raise typer.Exit(1)
 
 
@@ -381,6 +415,7 @@ def _build_generation_config(
     output_dir: Path,
     course: str,
     level: int,
+    all_courses: bool,
     style: str,
     density: str,
     max_bars: int | None,
@@ -400,6 +435,7 @@ def _build_generation_config(
         "output_dir": str(output_dir),
         "course": course,
         "level": level,
+        "all_courses": all_courses,
         "style": style,
         "density": density,
         "max_bars": max_bars,
@@ -412,6 +448,33 @@ def _build_generation_config(
         "model": model,
         "ai_repair_retries": ai_repair_retries,
     }
+
+
+def _build_course_specs(
+    course: str,
+    level: int,
+    density: str,
+    all_courses: bool,
+) -> list[dict[str, str | int]]:
+    if not all_courses:
+        return [{"course": course, "level": level, "density": density}]
+
+    return [
+        {"course": course_name, "level": int(preset["level"]), "density": str(preset["density"])}
+        for course_name, preset in COURSE_PRESETS.items()
+    ]
+
+
+def _course_tja_path(base_path: Path, course: str, all_courses: bool) -> Path:
+    if not all_courses:
+        return base_path
+    return base_path.with_name(f"{base_path.stem}_{course.lower()}{base_path.suffix}")
+
+
+def _course_sidecar_path(base_path: Path, course: str, all_courses: bool) -> Path:
+    if not all_courses:
+        return base_path
+    return base_path.with_name(f"{base_path.stem}_{course.lower()}{base_path.suffix}")
 
 
 def _write_failure_report(
@@ -430,23 +493,30 @@ def _write_failure_report(
 
 def _write_report(
     report_path: Path,
-    tja_path: Path,
+    tja_paths: list[Path],
     analysis_path: Path,
     generation_config_path: Path,
     issues: list[ValidationIssue],
-    ai_failure: str | None,
+    ai_failures: list[str],
 ) -> Path:
     lines: list[str] = [
         "TJA AI Chart Generator Report",
         "",
-        f"TJA: {tja_path}",
-        f"Analysis: {analysis_path}",
-        f"Generation config: {generation_config_path}",
-        "",
+        "TJA:",
     ]
+    lines.extend(f"- {tja_path}" for tja_path in tja_paths)
+    lines.extend(
+        [
+            f"Analysis: {analysis_path}",
+            f"Generation config: {generation_config_path}",
+            "",
+        ]
+    )
 
-    if ai_failure:
-        lines.extend(["AI generation failed. Falling back to rule-based generator.", ai_failure, ""])
+    if ai_failures:
+        lines.append("AI generation failed. Falling back to rule-based generator.")
+        lines.extend(ai_failures)
+        lines.append("")
 
     if issues:
         lines.append("Validation issues:")
@@ -461,14 +531,15 @@ def _write_report(
 
 
 def _print_result(
-    tja_path: Path,
+    tja_paths: list[Path],
     analysis_path: Path,
     generation_config_path: Path,
     report_path: Path,
     issues: list[ValidationIssue],
 ) -> None:
     console.print("Generated files:")
-    console.print(f"- {tja_path}")
+    for tja_path in tja_paths:
+        console.print(f"- {tja_path}")
     console.print(f"- {analysis_path}")
     console.print(f"- {generation_config_path}")
     console.print(f"- {report_path}")

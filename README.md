@@ -84,6 +84,14 @@ tja-ai-chartgen generate song.mp3 \
 
 BeatNet 不是默认依赖。如需启用，请先安装 `BeatNet`；当 BeatNet 未安装或分析失败时，CLI 会继续使用默认 librosa 分析结果。
 
+一次生成 Easy、Normal、Hard、Oni 四个难度：
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --all-courses
+```
+
 启用 AI 辅助生成：
 
 ```bash
@@ -153,7 +161,7 @@ output/
 
 ## 可复现性
 
-每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、拍号覆盖值、BeatNet 开关、特殊音符开关、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、是否生成全难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、拍号覆盖值、BeatNet 开关、特殊音符开关、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
 
 ## 限制
 
@@ -164,6 +172,7 @@ output/
 - `--max-bars` 主要用于快速检查，会将生成谱面截断到前 N 小节。
 - `--bpm` 和 `--offset` 会覆盖自动分析结果，用于人工校准。
 - `--time-signature 4/4|3/4|6/8` 会覆盖分析得到的拍号，并影响小节长度、AI prompt 和 `.tja` 的 `#MEASURE` 输出。
+- `--all-courses` 会分别输出 `<stem>_easy.tja`、`<stem>_normal.tja`、`<stem>_hard.tja`、`<stem>_oni.tja`，并使用内置等级与密度预设。
 - `--density auto|low|medium|high|max` 会控制规则生成器密度；启用 `--use-ai` 时也会传入 AI prompt。
 - `--special-notes` 会允许简单滚奏和气球音符；当前只做少量模板化插入，仍不支持复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
@@ -193,7 +202,7 @@ output/
 
 ### v0.4
 
-- 支持多难度：
+- 支持多难度：✅ 已通过 `--all-courses` 输出四个独立 `.tja` 文件。
   - Easy
   - Normal
   - Hard
