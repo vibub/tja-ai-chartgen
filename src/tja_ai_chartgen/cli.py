@@ -43,6 +43,11 @@ def generate(
     max_bars: int | None = typer.Option(None, help="Only generate the first N bars."),
     bpm: float | None = typer.Option(None, help="Override analyzed BPM."),
     offset: float | None = typer.Option(None, help="Override analyzed OFFSET."),
+    use_beatnet: bool = typer.Option(
+        False,
+        "--use-beatnet",
+        help="Try optional BeatNet analysis for downbeat, meter, and bar start detection.",
+    ),
     use_ai: bool = typer.Option(False, help="Use AI generation before falling back to rules."),
     model: str | None = typer.Option(None, help="Optional LiteLLM model name."),
     ai_base_url: str | None = typer.Option(
@@ -73,6 +78,7 @@ def generate(
         max_bars=max_bars,
         bpm=bpm,
         offset=offset,
+        use_beatnet=use_beatnet,
         use_ai=use_ai,
         model=model,
         ai_base_url=ai_base_url,
@@ -98,6 +104,7 @@ def generate_from_config(config_path: Path) -> None:
             max_bars=_optional_int(config.get("max_bars"), "max_bars"),
             bpm=_optional_float(config.get("bpm_override"), "bpm_override"),
             offset=_optional_float(config.get("offset_override"), "offset_override"),
+            use_beatnet=_optional_bool(config.get("use_beatnet", False), "use_beatnet"),
             use_ai=_optional_bool(config.get("use_ai", False), "use_ai"),
             model=_optional_str(config.get("model")),
             ai_base_url=None,
@@ -125,6 +132,7 @@ def run_generate(
     max_bars: int | None,
     bpm: float | None,
     offset: float | None,
+    use_beatnet: bool,
     use_ai: bool,
     model: str | None,
     ai_base_url: str | None,
@@ -168,6 +176,7 @@ def run_generate(
         max_bars=max_bars,
         bpm=bpm,
         offset=offset,
+        use_beatnet=use_beatnet,
         use_ai=use_ai,
         model=resolved_model,
         ai_repair_retries=ai_repair_retries,
@@ -179,7 +188,7 @@ def run_generate(
         convert_to_ogg(input_audio, ogg_path)
 
         console.print("Analyzing audio...")
-        raw = analyze_audio(ogg_path)
+        raw = analyze_audio(ogg_path, use_beatnet=use_beatnet)
         raw = apply_analysis_overrides(raw, bpm=bpm, offset=offset)
         bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
     except Exception as error:  # noqa: BLE001 - CLI boundary should hide tracebacks.
@@ -193,6 +202,7 @@ def run_generate(
         ogg_file=str(ogg_path),
         bpm=raw.bpm,
         offset=raw.offset,
+        time_signature=raw.time_signature,
         bars=bars,
     )
     write_json(analysis_path, analysis)
@@ -334,6 +344,7 @@ def _build_generation_config(
     max_bars: int | None,
     bpm: float | None,
     offset: float | None,
+    use_beatnet: bool,
     use_ai: bool,
     model: str | None,
     ai_repair_retries: int,
@@ -350,6 +361,7 @@ def _build_generation_config(
         "max_bars": max_bars,
         "bpm_override": bpm,
         "offset_override": offset,
+        "use_beatnet": use_beatnet,
         "use_ai": use_ai,
         "model": model,
         "ai_repair_retries": ai_repair_retries,

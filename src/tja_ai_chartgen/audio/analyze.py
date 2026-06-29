@@ -1,8 +1,9 @@
 from pathlib import Path
+from typing import Any
 
 import librosa
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AudioAnalysisRaw(BaseModel):
@@ -12,6 +13,10 @@ class AudioAnalysisRaw(BaseModel):
     onset_strengths: list[float]
     duration: float
     offset: float
+    downbeat_times: list[float] = Field(default_factory=list)
+    beat_numbers: list[int] = Field(default_factory=list)
+    time_signature: str = "4/4"
+    analyzer: str = "librosa"
 
 
 def normalize_bpm(bpm: float) -> float:
@@ -46,7 +51,7 @@ def apply_analysis_overrides(
     return raw.model_copy(update=updates)
 
 
-def analyze_audio(input_path: Path) -> AudioAnalysisRaw:
+def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisRaw:
     if not input_path.exists():
         raise FileNotFoundError(f"Input audio file not found: {input_path}")
 
@@ -69,8 +74,7 @@ def analyze_audio(input_path: Path) -> AudioAnalysisRaw:
     onset_times_list = [float(value) for value in onset_times]
 
     offset = float(beat_times[0]) if beat_times else 0.0
-
-    return AudioAnalysisRaw(
+    raw = AudioAnalysisRaw(
         bpm=normalize_bpm(tempo_value),
         beat_times=[float(value) for value in beat_times],
         onset_times=onset_times_list,
@@ -78,3 +82,74 @@ def analyze_audio(input_path: Path) -> AudioAnalysisRaw:
         duration=duration,
         offset=offset,
     )
+
+    if not use_beatnet:
+        return raw
+
+    return enhance_with_beatnet(input_path, raw)
+
+
+def enhance_with_beatnet(input_path: Path, raw: AudioAnalysisRaw) -> AudioAnalysisRaw:
+    try:
+        from BeatNet.BeatNet import BeatNet
+    except ImportError:
+        return raw
+
+    try:
+        estimator = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
+        output = estimator.process(str(input_path))
+    except Exception:  # noqa: BLE001 - BeatNet is an optional enhancement.
+        return raw
+
+    return merge_beatnet_output(raw, output)
+
+
+def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw:
+    rows = np.asarray(output)
+    if rows.ndim != 2 or rows.shape[0] == 0 or rows.shape[1] < 2:
+        return raw
+
+    beat_times: list[float] = []
+    beat_numbers: list[int] = []
+    for row in rows:
+        time = float(row[0])
+        beat_number = int(round(float(row[1])))
+        if not np.isfinite(time) or beat_number < 1:
+            continue
+        beat_times.append(time)
+        beat_numbers.append(beat_number)
+
+    if not beat_times:
+        return raw
+
+    downbeat_times = [time for time, number in zip(beat_times, beat_numbers, strict=True) if number == 1]
+    updates: dict[str, Any] = {
+        "beat_times": beat_times,
+        "beat_numbers": beat_numbers,
+        "downbeat_times": downbeat_times,
+        "offset": downbeat_times[0] if downbeat_times else beat_times[0],
+        "time_signature": estimate_time_signature(beat_numbers),
+        "analyzer": "beatnet+librosa",
+    }
+
+    positive_intervals = [
+        later - earlier
+        for earlier, later in zip(beat_times, beat_times[1:], strict=False)
+        if later > earlier
+    ]
+    if positive_intervals:
+        updates["bpm"] = normalize_bpm(60.0 / float(np.mean(positive_intervals)))
+
+    return raw.model_copy(update=updates)
+
+
+def estimate_time_signature(beat_numbers: list[int]) -> str:
+    if not beat_numbers:
+        return "4/4"
+
+    max_beat_number = max(beat_numbers)
+    if max_beat_number == 3:
+        return "3/4"
+    if max_beat_number == 6:
+        return "6/8"
+    return "4/4"

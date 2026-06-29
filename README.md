@@ -53,6 +53,16 @@ tja-ai-chartgen generate song.mp3 \
   --offset 0.725
 ```
 
+尝试使用可选 BeatNet 增强 downbeat、meter 和小节起点分析：
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --use-beatnet
+```
+
+BeatNet 不是默认依赖。如需启用，请先安装 `BeatNet`；当 BeatNet 未安装或分析失败时，CLI 会继续使用默认 librosa 分析结果。
+
 启用 AI 辅助生成：
 
 ```bash
@@ -122,7 +132,7 @@ output/
 
 ## 可复现性
 
-每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、BeatNet 开关、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
 
 ## 限制
 
@@ -133,6 +143,7 @@ output/
 - `--max-bars` 主要用于快速检查，会将生成谱面截断到前 N 小节。
 - `--bpm` 和 `--offset` 会覆盖自动分析结果，用于人工校准。
 - `--density auto|low|medium|high|max` 会控制规则生成器密度；启用 `--use-ai` 时也会传入 AI prompt。
+- `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
 - MVP 不支持 BPM 变化、分歧谱面、滚奏、气球音符或滚动演出等复杂语法。
 
@@ -150,7 +161,7 @@ output/
 
 ### v0.3
 
-- 尝试集成 BeatNet：
+- 尝试集成 BeatNet：✅ 已通过可选 `--use-beatnet` 增强实现，失败时回退到 librosa。
   - downbeat
   - meter
   - 更准的小节开始

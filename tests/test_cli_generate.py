@@ -86,6 +86,7 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "max_bars": 2,
         "bpm_override": 240.1234,
         "offset_override": 0.25,
+        "use_beatnet": False,
         "use_ai": False,
         "model": None,
         "ai_repair_retries": 2,
@@ -93,6 +94,53 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
     assert f"Generation config: {output_dir / 'generation_config.json'}" in (
         output_dir / "report.txt"
     ).read_text(encoding="utf-8")
+
+
+def test_generate_with_beatnet_passes_flag_and_records_config(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+
+    def fake_convert_to_ogg(input_path, output_path):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"fake ogg")
+        return output_path
+
+    def fake_analyze_audio(input_path, use_beatnet=False):
+        assert use_beatnet is True
+        return AudioAnalysisRaw(
+            bpm=120,
+            beat_times=[0, 0.5, 1.0, 1.5],
+            onset_times=[0.0, 0.5, 1.0, 1.5],
+            onset_strengths=[],
+            duration=2.0,
+            offset=0.0,
+            downbeat_times=[0.0],
+            beat_numbers=[1, 2, 3, 4],
+            analyzer="beatnet+librosa",
+        )
+
+    monkeypatch.setattr("tja_ai_chartgen.cli.convert_to_ogg", fake_convert_to_ogg)
+    monkeypatch.setattr("tja_ai_chartgen.cli.analyze_audio", fake_analyze_audio)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--use-beatnet",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    analysis = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
+    assert saved_config["use_beatnet"] is True
+    assert analysis["time_signature"] == "4/4"
 
 
 def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
@@ -557,7 +605,7 @@ def _patch_audio_pipeline(monkeypatch, duration=2.0):
         output_path.write_bytes(b"fake ogg")
         return output_path
 
-    def fake_analyze_audio(input_path):
+    def fake_analyze_audio(input_path, use_beatnet=False):
         return AudioAnalysisRaw(
             bpm=120,
             beat_times=[0, 0.5, 1.0, 1.5, 2.0],
