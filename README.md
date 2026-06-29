@@ -62,6 +62,12 @@ tja-ai-chartgen generate song.mp3 \
   --use-ai
 ```
 
+Re-run a saved generation config:
+
+```bash
+tja-ai-chartgen generate-from-config output/generation_config.json
+```
+
 ## Output
 
 ```txt
@@ -77,7 +83,7 @@ output/
 
 ## Reproducibility
 
-Each `generate` run writes `generation_config.json` next to the TJA output. It records the input path, metadata, difficulty, style, density, `--max-bars`, BPM/OFFSET overrides, AI flag, and model name so a useful draft can be reproduced later.
+Each `generate` run writes `generation_config.json` next to the TJA output. It records the input path, metadata, difficulty, style, density, `--max-bars`, BPM/OFFSET overrides, AI flag, and model name so a useful draft can be reproduced later. Use `generate-from-config` to run the same generation parameters again.
 
 ## Limitations
 

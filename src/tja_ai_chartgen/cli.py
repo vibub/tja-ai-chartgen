@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,63 @@ def generate(
     offset: float | None = typer.Option(None, help="Override analyzed OFFSET."),
     use_ai: bool = typer.Option(False, help="Use AI generation before falling back to rules."),
     model: str | None = typer.Option(None, help="Optional LiteLLM model name."),
+) -> None:
+    run_generate(
+        input_audio=input_audio,
+        title=title,
+        artist=artist,
+        output_dir=output_dir,
+        course=course,
+        level=level,
+        style=style,
+        density=density,
+        max_bars=max_bars,
+        bpm=bpm,
+        offset=offset,
+        use_ai=use_ai,
+        model=model,
+    )
+
+
+@app.command("generate-from-config")
+def generate_from_config(config_path: Path) -> None:
+    config = _load_generation_config(config_path)
+
+    try:
+        run_generate(
+            input_audio=Path(_required_config_value(config, "input_audio")),
+            title=str(_required_config_value(config, "title")),
+            artist=_optional_str(config.get("artist")),
+            output_dir=Path(_required_config_value(config, "output_dir")),
+            course=str(config.get("course", "Oni")),
+            level=int(config.get("level", 10)),
+            style=str(config.get("style", "technical")),
+            density=str(config.get("density", "auto")),
+            max_bars=_optional_int(config.get("max_bars"), "max_bars"),
+            bpm=_optional_float(config.get("bpm_override"), "bpm_override"),
+            offset=_optional_float(config.get("offset_override"), "offset_override"),
+            use_ai=_optional_bool(config.get("use_ai", False), "use_ai"),
+            model=_optional_str(config.get("model")),
+        )
+    except ValueError as error:
+        _fail(f"Invalid generation config: {error}")
+
+
+def run_generate(
+    *,
+    input_audio: Path,
+    title: str,
+    artist: str | None,
+    output_dir: Path,
+    course: str,
+    level: int,
+    style: str,
+    density: str,
+    max_bars: int | None,
+    bpm: float | None,
+    offset: float | None,
+    use_ai: bool,
+    model: str | None,
 ) -> None:
     load_dotenv()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -154,6 +212,63 @@ def generate(
 
     if any(issue.level == "error" for issue in issues):
         raise typer.Exit(1)
+
+
+def _load_generation_config(config_path: Path) -> dict[str, Any]:
+    if not config_path.exists():
+        _fail(f"Generation config not found: {config_path}")
+
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        _fail(f"Invalid generation config JSON: {error.msg}")
+
+    if not isinstance(data, dict):
+        _fail("Generation config must be a JSON object.")
+
+    return data
+
+
+def _required_config_value(config: dict[str, Any], field: str) -> Any:
+    if field not in config:
+        raise ValueError(f"missing required field: {field}")
+    return config[field]
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _optional_int(value: Any, field: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field} must be an integer") from error
+
+
+def _optional_float(value: Any, field: str) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field} must be a number") from error
+
+
+def _optional_bool(value: Any, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    raise ValueError(f"{field} must be a boolean")
 
 
 def _fail(message: str) -> None:

@@ -30,6 +30,7 @@ tja-ai-chartgen generate path/to/song.mp3 --title "Song Title"
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --max-bars 16
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --density high
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --max-bars 16 --bpm 220.588 --offset 0.725
+tja-ai-chartgen generate-from-config output/generation_config.json
 ```
 
 系统依赖：`ffmpeg`，用于把输入音频转换为 `.ogg`。
@@ -40,7 +41,7 @@ tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --max-bars 16 --b
 
 项目围绕“可替换的流水线”组织，而不是把音频分析、AI 提示词、谱面输出耦合在单个脚本中：
 
-- **CLI 编排层**：`src/tja_ai_chartgen/cli.py` 提供 `version` 和 `generate` 命令，负责串联转换、分析、特征、谱面生成、渲染、校验和报告写入。
+- **CLI 编排层**：`src/tja_ai_chartgen/cli.py` 提供 `version`、`generate` 和 `generate-from-config` 命令，负责串联转换、分析、特征、谱面生成、渲染、校验和报告写入。
 - **音频层**：`audio/convert.py` 通过 `ffmpeg` 转 `.ogg`；`audio/analyze.py` 通过 `librosa` 提取 BPM、beat、onset、duration 和初步 offset。
 - **特征层**：`features/bars.py` 将 raw analysis 映射为 4/4、每小节 16 格的 `BarFeature`；`features/sections.py` 根据位置和 energy 标记 intro / outro / chorus / verse / break。
 - **数据模型层**：`tja/model.py` 定义 `SongAnalysis`、`BarFeature`、`ChartMetadata`、`ChartBar`、`TjaChart`，是 JSON 输出、AI 输入和 TJA writer 之间的稳定中间表示。
@@ -48,7 +49,7 @@ tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --max-bars 16 --b
 - **TJA 层**：`tja/writer.py` 只负责把 `TjaChart` 渲染为文本；`tja/validator.py` 做 MVP 级格式检查。
 - **工具层**：`utils/paths.py` 集中处理 UTF-8 JSON 写入和 Pydantic 模型序列化。
 
-`generate` 当前数据流：输入音频 → `generation_config.json` → `output/<stem>.ogg` → `analysis.json` → AI 或 fallback `ChartBar` → `song.tja` → `report.txt`。`generation_config.json` 记录输入参数、难度、风格、density、max-bars、BPM/OFFSET 覆盖、AI 开关和模型名，用于复现生成结果；`--bpm` / `--offset` 会在音频分析后覆盖 raw analysis，并影响小节网格、`analysis.json` 和最终 `.tja`；`--max-bars N` 会在小节特征阶段只保留前 N 小节，便于用真实音频快速验证；`--density auto|low|medium|high|max` 控制规则生成器密度，并在启用 AI 时写入 prompt payload。
+`generate` 当前数据流：输入音频 → `generation_config.json` → `output/<stem>.ogg` → `analysis.json` → AI 或 fallback `ChartBar` → `song.tja` → `report.txt`。`generation_config.json` 记录输入参数、难度、风格、density、max-bars、BPM/OFFSET 覆盖、AI 开关和模型名；`generate-from-config` 读取该文件并复跑同一组生成参数。`--bpm` / `--offset` 会在音频分析后覆盖 raw analysis，并影响小节网格、`analysis.json` 和最终 `.tja`；`--max-bars N` 会在小节特征阶段只保留前 N 小节，便于用真实音频快速验证；`--density auto|low|medium|high|max` 控制规则生成器密度，并在启用 AI 时写入 prompt payload。
 
 ## 工程约束
 

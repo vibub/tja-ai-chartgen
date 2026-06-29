@@ -93,6 +93,75 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
     ).read_text(encoding="utf-8")
 
 
+def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    config_path = tmp_path / "generation_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "input_audio": str(input_audio),
+                "title": "Song Title",
+                "artist": None,
+                "output_dir": str(output_dir),
+                "course": "Oni",
+                "level": 10,
+                "style": "technical",
+                "density": "low",
+                "max_bars": 2,
+                "bpm_override": 240.1234,
+                "offset_override": 0.25,
+                "use_ai": False,
+                "model": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _patch_audio_pipeline(monkeypatch, duration=4.0)
+
+    result = runner.invoke(app, ["generate-from-config", str(config_path)])
+
+    assert result.exit_code == 0, result.output
+    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    assert "BPM:240.123" in tja_text
+    assert "OFFSET:0.25" in tja_text
+    assert "1000100010001000," in tja_text
+    assert saved_config["density"] == "low"
+    assert saved_config["max_bars"] == 2
+
+
+def test_generate_from_config_reports_missing_file(tmp_path):
+    result = runner.invoke(app, ["generate-from-config", str(tmp_path / "missing.json")])
+
+    assert result.exit_code == 1
+    assert "Generation config not found" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_generate_from_config_reports_invalid_json(tmp_path):
+    config_path = tmp_path / "generation_config.json"
+    config_path.write_text("{", encoding="utf-8")
+
+    result = runner.invoke(app, ["generate-from-config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert "Invalid generation config JSON" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_generate_from_config_reports_missing_required_field(tmp_path):
+    config_path = tmp_path / "generation_config.json"
+    config_path.write_text(json.dumps({"title": "Song Title"}), encoding="utf-8")
+
+    result = runner.invoke(app, ["generate-from-config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert "missing required field: input_audio" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_generate_with_max_bars_limits_output_bars(tmp_path, monkeypatch):
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")
