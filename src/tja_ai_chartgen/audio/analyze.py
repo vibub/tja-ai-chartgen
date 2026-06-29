@@ -15,6 +15,9 @@ class AudioAnalysisRaw(BaseModel):
 
 
 def normalize_bpm(bpm: float) -> float:
+    if bpm <= 0:
+        raise ValueError(f"BPM must be positive, got {bpm}")
+
     while bpm < 100:
         bpm *= 2
     while bpm > 220:

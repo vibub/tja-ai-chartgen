@@ -33,18 +33,19 @@ tja-ai-chartgen generate path/to/song.mp3 --title "Song Title"
 
 不要在本文件中保留已经失效的命令；命令变更时必须同步更新。
 
-## 预期架构方向
+## 当前架构
 
-项目应围绕“可替换的流水线”设计，而不是把音频分析、AI 提示词、谱面输出耦合在单个脚本中。推荐长期拆分为以下边界：
+项目围绕“可替换的流水线”组织，而不是把音频分析、AI 提示词、谱面输出耦合在单个脚本中：
 
-- **输入层**：接收音频文件、用户配置、目标难度、曲名/艺术家等元数据。
-- **音频分析层**：提取 BPM、拍号、节拍网格、段落、能量变化、可能的鼓点/重音位置。
-- **中间表示层**：用稳定的数据结构表达音乐分析结果和谱面草稿，避免 AI 输出直接绑定最终 `.tja` 文本。
-- **AI 生成层**：根据分析结果、约束和难度策略生成谱面事件；提示词、模型配置和生成策略应可版本化。
-- **校验层**：检查谱面事件是否对齐节拍、是否超出音频时长、是否满足 `.tja` 格式约束、是否存在明显不可游玩的密度问题。
-- **导出层**：将校验后的谱面转换为 `.tja` 文件，并保留必要的生成元数据，方便复现和调试。
+- **CLI 编排层**：`src/tja_ai_chartgen/cli.py` 提供 `version` 和 `generate` 命令，负责串联转换、分析、特征、谱面生成、渲染、校验和报告写入。
+- **音频层**：`audio/convert.py` 通过 `ffmpeg` 转 `.ogg`；`audio/analyze.py` 通过 `librosa` 提取 BPM、beat、onset、duration 和初步 offset。
+- **特征层**：`features/bars.py` 将 raw analysis 映射为 4/4、每小节 16 格的 `BarFeature`；`features/sections.py` 根据位置和 energy 标记 intro / outro / chorus / verse / break。
+- **数据模型层**：`tja/model.py` 定义 `SongAnalysis`、`BarFeature`、`ChartMetadata`、`ChartBar`、`TjaChart`，是 JSON 输出、AI 输入和 TJA writer 之间的稳定中间表示。
+- **谱面生成层**：`rules/fallback_generator.py` 提供不依赖 AI 的规则生成器；`ai/prompts.py` 和 `ai/client.py` 提供 LiteLLM prompt、调用入口和 AI 输出清洗，AI 失败时 CLI 必须回退到规则生成器。
+- **TJA 层**：`tja/writer.py` 只负责把 `TjaChart` 渲染为文本；`tja/validator.py` 做 MVP 级格式检查。
+- **工具层**：`utils/paths.py` 集中处理 UTF-8 JSON 写入和 Pydantic 模型序列化。
 
-后续实现时，应优先保证这些边界清晰，使音频分析工具、AI 模型、谱面难度策略和导出格式可以独立替换。
+`generate` 当前数据流：输入音频 → `output/<stem>.ogg` → `analysis.json` → AI 或 fallback `ChartBar` → `song.tja` → `report.txt`。
 
 ## 工程约束
 
