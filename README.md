@@ -95,3 +95,45 @@ Each `generate` run writes `generation_config.json` next to the TJA output. It r
 - `--bpm` and `--offset` override automatic analysis results for manual calibration.
 - `--density auto|low|medium|high|max` controls rule-based draft density and is passed into the AI prompt when `--use-ai` is enabled.
 - MVP does not support BPM changes, branches, drumrolls, balloons, or scroll gimmicks.
+
+## Roadmap
+
+These items are planned for later versions and are not part of the MVP scope.
+
+### v0.2
+
+- Support manual BPM override. ✅ Implemented in MVP iteration via `--bpm`.
+- Support manual OFFSET override. ✅ Implemented in MVP iteration via `--offset`.
+- Support `--max-bars` to generate only the first N bars for easier testing. ✅ Implemented in MVP iteration.
+- Add automatic AI output repair and retry.
+- Add `--density low|medium|high|max`. ✅ Implemented in MVP iteration via `--density auto|low|medium|high|max`.
+
+### v0.3
+
+- Try integrating BeatNet for:
+  - downbeat detection
+  - meter detection
+  - more accurate bar starts
+- Support `3/4` and `6/8` time signatures.
+- Support simple drumrolls and balloons.
+
+### v0.4
+
+- Support multiple difficulties:
+  - Easy
+  - Normal
+  - Hard
+  - Oni
+- Support style templates:
+  - technical
+  - stamina
+  - hybrid
+  - performance
+
+### v0.5
+
+- Build a Web UI.
+- Upload audio files.
+- Preview analysis results online.
+- Manually adjust BPM / OFFSET.
+- Regenerate selected bars.
