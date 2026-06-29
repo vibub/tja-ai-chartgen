@@ -2,7 +2,7 @@
 
 用于太鼓模拟器的 AI 辅助 TJA 谱面草稿生成器。
 
-英文版文档见：[READEME_EN.md](README_EN.md)。
+英文版文档见：[README_EN.md](README_EN.md)。
 
 ## 环境要求
 
@@ -64,6 +64,27 @@ tja-ai-chartgen generate song.mp3 \
   --use-ai
 ```
 
+AI 调用通过 LiteLLM 接入。默认读取 `LITELLM_MODEL`，也可以通过 `--model` 指定模型。使用 OpenAI 兼容接口时，模型名通常需要使用 LiteLLM 的 `openai/` 前缀，并传入自定义 base URL 和 API key：
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --use-ai \
+  --model openai/custom-model \
+  --ai-base-url https://llm.example.com/v1 \
+  --ai-api-key sk-...
+```
+
+也可以在 `.env` 中配置，避免把 API key 写进命令历史：
+
+```env
+LITELLM_MODEL=openai/custom-model
+LITELLM_API_BASE=https://llm.example.com/v1
+LITELLM_API_KEY=sk-...
+```
+
+AI 输出会先做严格格式校验；如果 JSON、bar 数量、notes 长度或字符不符合 MVP 约束，CLI 会自动向模型发送修复提示并重试。默认最多修复重试 2 次，可以用 `--ai-repair-retries` 调整。修复仍失败时会回退到规则生成器。
+
 通过已保存的生成配置复跑：
 
 ```bash
@@ -85,7 +106,7 @@ output/
 
 ## 可复现性
 
-每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、AI 开关和模型名。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、AI 开关、模型名、AI base URL 和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量、命令参数或手动配置文件提供密钥。
 
 ## 限制
 
@@ -96,6 +117,7 @@ output/
 - `--max-bars` 主要用于快速检查，会将生成谱面截断到前 N 小节。
 - `--bpm` 和 `--offset` 会覆盖自动分析结果，用于人工校准。
 - `--density auto|low|medium|high|max` 会控制规则生成器密度；启用 `--use-ai` 时也会传入 AI prompt。
+- `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
 - MVP 不支持 BPM 变化、分歧谱面、滚奏、气球音符或滚动演出等复杂语法。
 
 ## 后续版本规划
@@ -107,7 +129,7 @@ output/
 - 支持用户手动指定 BPM。✅ 已在 MVP 迭代中通过 `--bpm` 实现。
 - 支持用户手动指定 OFFSET。✅ 已在 MVP 迭代中通过 `--offset` 实现。
 - 支持 `--max-bars` 只生成前 N 小节，方便测试。✅ 已在 MVP 迭代中实现。
-- AI 输出自动修复重试。
+- AI 输出自动修复重试。✅ 已实现，默认最多修复重试 2 次，可通过 `--ai-repair-retries` 调整。
 - 加入 `--density low|medium|high|max`。✅ 已在 MVP 迭代中通过 `--density auto|low|medium|high|max` 实现。
 
 ### v0.3

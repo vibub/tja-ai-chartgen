@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.cli import app
+from tja_ai_chartgen.tja.model import ChartBar
 
 runner = CliRunner()
 
@@ -87,6 +88,8 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "offset_override": 0.25,
         "use_ai": False,
         "model": None,
+        "ai_base_url": None,
+        "ai_repair_retries": 2,
     }
     assert f"Generation config: {output_dir / 'generation_config.json'}" in (
         output_dir / "report.txt"
@@ -114,6 +117,8 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
                 "offset_override": 0.25,
                 "use_ai": False,
                 "model": None,
+                "ai_base_url": "https://llm.example.com/v1",
+                "ai_repair_retries": 1,
             }
         ),
         encoding="utf-8",
@@ -130,6 +135,8 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     assert "1000100010001000," in tja_text
     assert saved_config["density"] == "low"
     assert saved_config["max_bars"] == 2
+    assert saved_config["ai_base_url"] == "https://llm.example.com/v1"
+    assert saved_config["ai_repair_retries"] == 1
 
 
 def test_generate_from_config_reports_missing_file(tmp_path):
@@ -333,6 +340,89 @@ def test_generate_rejects_non_positive_bpm(tmp_path):
 
     assert result.exit_code == 1
     assert "--bpm must be greater than 0" in result.output
+
+
+def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
+    tmp_path,
+    monkeypatch,
+):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch)
+
+    def fake_generate_chart_bars_with_ai(
+        analysis,
+        course,
+        level,
+        style,
+        density,
+        model,
+        *,
+        api_base,
+        api_key,
+        max_repair_attempts,
+    ):
+        assert model == "openai/custom-model"
+        assert api_base == "https://llm.example.com/v1"
+        assert api_key == "secret-key"
+        assert max_repair_attempts == 1
+        return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--use-ai",
+            "--model",
+            "openai/custom-model",
+            "--ai-base-url",
+            "https://llm.example.com/v1",
+            "--ai-api-key",
+            "secret-key",
+            "--ai-repair-retries",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    assert saved_config["model"] == "openai/custom-model"
+    assert saved_config["ai_base_url"] == "https://llm.example.com/v1"
+    assert saved_config["ai_repair_retries"] == 1
+    assert "ai_api_key" not in saved_config
+    assert "secret-key" not in (output_dir / "generation_config.json").read_text(encoding="utf-8")
+
+
+def test_generate_rejects_negative_ai_repair_retries(tmp_path):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--use-ai",
+            "--ai-repair-retries",
+            "-1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--ai-repair-retries must be greater than or equal to 0" in result.output
 
 
 def test_generate_with_ai_failure_falls_back_to_rules(tmp_path, monkeypatch):

@@ -44,6 +44,21 @@ def generate(
     offset: float | None = typer.Option(None, help="Override analyzed OFFSET."),
     use_ai: bool = typer.Option(False, help="Use AI generation before falling back to rules."),
     model: str | None = typer.Option(None, help="Optional LiteLLM model name."),
+    ai_base_url: str | None = typer.Option(
+        None,
+        "--ai-base-url",
+        help="OpenAI-compatible API base URL passed to LiteLLM as api_base.",
+    ),
+    ai_api_key: str | None = typer.Option(
+        None,
+        "--ai-api-key",
+        help="OpenAI-compatible API key. Prefer LITELLM_API_KEY or OPENAI_API_KEY in .env.",
+    ),
+    ai_repair_retries: int = typer.Option(
+        2,
+        "--ai-repair-retries",
+        help="Retry count for repairing invalid AI JSON output.",
+    ),
 ) -> None:
     run_generate(
         input_audio=input_audio,
@@ -59,6 +74,9 @@ def generate(
         offset=offset,
         use_ai=use_ai,
         model=model,
+        ai_base_url=ai_base_url,
+        ai_api_key=ai_api_key,
+        ai_repair_retries=ai_repair_retries,
     )
 
 
@@ -81,6 +99,13 @@ def generate_from_config(config_path: Path) -> None:
             offset=_optional_float(config.get("offset_override"), "offset_override"),
             use_ai=_optional_bool(config.get("use_ai", False), "use_ai"),
             model=_optional_str(config.get("model")),
+            ai_base_url=_optional_str(config.get("ai_base_url")),
+            ai_api_key=_optional_str(config.get("ai_api_key")),
+            ai_repair_retries=_optional_int(
+                config.get("ai_repair_retries", 2),
+                "ai_repair_retries",
+            )
+            or 0,
         )
     except ValueError as error:
         _fail(f"Invalid generation config: {error}")
@@ -101,6 +126,9 @@ def run_generate(
     offset: float | None,
     use_ai: bool,
     model: str | None,
+    ai_base_url: str | None,
+    ai_api_key: str | None,
+    ai_repair_retries: int,
 ) -> None:
     load_dotenv()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -109,6 +137,8 @@ def run_generate(
         _fail("--max-bars must be greater than or equal to 1.")
     if bpm is not None and bpm <= 0:
         _fail("--bpm must be greater than 0.")
+    if ai_repair_retries < 0:
+        _fail("--ai-repair-retries must be greater than or equal to 0.")
     try:
         validate_density(density)
     except ValueError as error:
@@ -137,6 +167,8 @@ def run_generate(
         offset=offset,
         use_ai=use_ai,
         model=model,
+        ai_base_url=ai_base_url,
+        ai_repair_retries=ai_repair_retries,
     )
     write_json(generation_config_path, generation_config)
 
@@ -168,7 +200,11 @@ def run_generate(
 
     if use_ai:
         try:
-            from tja_ai_chartgen.ai.client import generate_chart_bars_with_ai, sanitize_ai_bars
+            from tja_ai_chartgen.ai.client import (
+                AiOutputRepairError,
+                generate_chart_bars_with_ai,
+                sanitize_ai_bars,
+            )
             from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
 
             write_json(ai_input_path, build_chart_generation_payload(analysis, course, level, style, density))
@@ -179,9 +215,16 @@ def run_generate(
                 style,
                 density,
                 model,
+                api_base=ai_base_url,
+                api_key=ai_api_key,
+                max_repair_attempts=ai_repair_retries,
             )
             write_json(ai_output_path, ai_output)
             chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars))
+        except AiOutputRepairError as error:
+            ai_failure = str(error)
+            console.print("AI generation failed. Falling back to rule-based generator.")
+            write_json(ai_output_path, {"error": ai_failure, **error.output})
         except Exception as error:  # noqa: BLE001 - CLI must keep producing a usable draft.
             ai_failure = str(error)
             console.print("AI generation failed. Falling back to rule-based generator.")
@@ -291,6 +334,8 @@ def _build_generation_config(
     offset: float | None,
     use_ai: bool,
     model: str | None,
+    ai_base_url: str | None,
+    ai_repair_retries: int,
 ) -> dict[str, Any]:
     return {
         "input_audio": str(input_audio),
@@ -306,6 +351,8 @@ def _build_generation_config(
         "offset_override": offset,
         "use_ai": use_ai,
         "model": model,
+        "ai_base_url": ai_base_url,
+        "ai_repair_retries": ai_repair_retries,
     }
 
 
