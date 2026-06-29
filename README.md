@@ -64,7 +64,29 @@ tja-ai-chartgen generate song.mp3 \
   --use-ai
 ```
 
-AI 调用通过 LiteLLM 接入。默认读取 `MODEL`，也可以通过 `--model` 指定模型。使用 OpenAI 兼容接口时，模型名通常需要使用 LiteLLM 的 `openai/` 前缀，并传入自定义 base URL 和 API key：
+AI 调用通过 LiteLLM 接入，并使用 OpenAI 兼容协议。推荐在 `.env` 中配置模型和连接信息，避免把 API key 写进命令历史：
+
+```env
+MODEL=openai/custom-model
+OPENAI_BASE_URL=https://llm.example.com/v1
+OPENAI_API_KEY=sk-...
+```
+
+变量说明：
+
+- `MODEL`：要调用的模型名。可以是兼容网关暴露的模型名，也可以是 LiteLLM provider 前缀形式，例如 `openai/custom-model`。
+- `OPENAI_BASE_URL`：OpenAI 兼容接口地址，例如 `https://llm.example.com/v1`。
+- `OPENAI_API_KEY`：OpenAI 兼容接口密钥。
+
+配置好 `.env` 后，只需要加 `--use-ai`：
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --use-ai
+```
+
+也可以用命令行参数临时覆盖 `.env` 中的配置：
 
 ```bash
 tja-ai-chartgen generate song.mp3 \
@@ -75,13 +97,7 @@ tja-ai-chartgen generate song.mp3 \
   --ai-api-key sk-...
 ```
 
-也可以在 `.env` 中配置，避免把 API key 写进命令历史：
-
-```env
-MODEL=openai/custom-model
-OPENAI_BASE_URL=https://llm.example.com/v1
-OPENAI_API_KEY=sk-...
-```
+`generation_config.json` 会记录最终解析使用的 `model`，但不会记录 `OPENAI_BASE_URL` 或 `OPENAI_API_KEY`。复跑 AI 生成时，请继续通过 `.env`、环境变量或命令行参数提供连接配置。
 
 AI 输出会先做严格格式校验；如果 JSON、bar 数量、notes 长度或字符不符合 MVP 约束，CLI 会自动向模型发送修复提示并重试。默认最多修复重试 2 次，可以用 `--ai-repair-retries` 调整。修复仍失败时会回退到规则生成器。
 

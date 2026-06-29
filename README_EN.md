@@ -62,7 +62,29 @@ tja-ai-chartgen generate song.mp3 \
   --use-ai
 ```
 
-AI calls are routed through LiteLLM. By default the CLI reads `MODEL`; you can also pass `--model` explicitly. For OpenAI-compatible endpoints, model names usually use LiteLLM's `openai/` prefix and can be combined with a custom base URL and API key:
+AI calls are routed through LiteLLM using an OpenAI-compatible protocol. The recommended setup is to put model and connection settings in `.env` so API keys do not appear in shell history:
+
+```env
+MODEL=openai/custom-model
+OPENAI_BASE_URL=https://llm.example.com/v1
+OPENAI_API_KEY=sk-...
+```
+
+Variable meanings:
+
+- `MODEL`: model name to call. It can be the model exposed by your compatible gateway, or a LiteLLM provider-prefixed name such as `openai/custom-model`.
+- `OPENAI_BASE_URL`: OpenAI-compatible endpoint URL, for example `https://llm.example.com/v1`.
+- `OPENAI_API_KEY`: API key for the OpenAI-compatible endpoint.
+
+After `.env` is configured, enable AI generation with `--use-ai`:
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --use-ai
+```
+
+Command-line options can temporarily override `.env` values:
 
 ```bash
 tja-ai-chartgen generate song.mp3 \
@@ -73,13 +95,7 @@ tja-ai-chartgen generate song.mp3 \
   --ai-api-key sk-...
 ```
 
-You can also configure these values in `.env` to avoid writing API keys into shell history:
-
-```env
-MODEL=openai/custom-model
-OPENAI_BASE_URL=https://llm.example.com/v1
-OPENAI_API_KEY=sk-...
-```
+`generation_config.json` records the final resolved `model`, but does not record `OPENAI_BASE_URL` or `OPENAI_API_KEY`. When rerunning AI generation, provide connection settings again through `.env`, environment variables, or command-line options.
 
 AI output is strictly validated before use. If JSON shape, bar count, note length, or allowed characters fail MVP constraints, the CLI sends a repair prompt and retries. The default repair retry count is 2 and can be changed with `--ai-repair-retries`. If repair still fails, generation falls back to the rule-based generator.
 
