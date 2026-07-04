@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.tja.model import ChartBar
+from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
 from tja_ai_chartgen.web import create_app
 
 
@@ -141,7 +142,7 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
     job_dir = tmp_path / job_id
     assert (job_dir / "ai_input_1_2.json").exists()
     assert (job_dir / "ai_output_1_2.json").exists()
-    generated_text = (job_dir / "regenerated_1_2.tja").read_text(encoding="utf-8")
+    generated_text = (job_dir / "regenerated_1_2.tja").read_text(encoding=TJA_FILE_ENCODING)
     assert "1111000000000000," in generated_text
     assert "2222000000000000," in generated_text
 
@@ -196,7 +197,7 @@ def test_web_save_chart_edits(tmp_path, monkeypatch):
     assert "Saved chart edits" in response.text
     assert "游玩预览" in response.text
     assert "BALLOON:8" not in response.text
-    edited_text = (tmp_path / job_id / "edited_1_2.tja").read_text(encoding="utf-8")
+    edited_text = (tmp_path / job_id / "edited_1_2.tja").read_text(encoding=TJA_FILE_ENCODING)
     assert "BALLOON:8" in edited_text
     assert edited_text.count("1000000000000000,") == 1
 

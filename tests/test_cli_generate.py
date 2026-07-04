@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.cli import app
 from tja_ai_chartgen.tja.model import ChartBar
+from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
 
 runner = CliRunner()
 
@@ -21,7 +22,7 @@ def test_generate_without_ai_writes_outputs(tmp_path, monkeypatch):
             "generate",
             str(input_audio),
             "--title",
-            "Song Title",
+            "迷っちゃうわ",
             "--output-dir",
             str(output_dir),
         ],
@@ -30,8 +31,9 @@ def test_generate_without_ai_writes_outputs(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     tja_path = output_dir / "song.tja"
     assert tja_path.exists()
-    assert "#START" in tja_path.read_text(encoding="utf-8")
-    assert "#END" in tja_path.read_text(encoding="utf-8")
+    assert "#START" in tja_path.read_text(encoding=TJA_FILE_ENCODING)
+    assert "#END" in tja_path.read_text(encoding=TJA_FILE_ENCODING)
+    assert tja_path.read_bytes().startswith("TITLE:迷っちゃうわ".encode(TJA_FILE_ENCODING))
     assert (output_dir / "analysis.json").exists()
     assert (output_dir / "generation_config.json").exists()
     assert (output_dir / "report.txt").exists()
@@ -169,7 +171,7 @@ def test_generate_with_time_signature_outputs_measure_and_records_config(tmp_pat
     )
 
     assert result.exit_code == 0, result.output
-    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     analysis = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
     assert "#MEASURE 3/4" in tja_text
@@ -212,7 +214,7 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     result = runner.invoke(app, ["generate-from-config", str(config_path)])
 
     assert result.exit_code == 0, result.output
-    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     assert "BPM:240.123" in tja_text
     assert "OFFSET:0.25" in tja_text
@@ -276,7 +278,7 @@ def test_generate_with_max_bars_limits_output_bars(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 0, result.output
-    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     chart_lines = [line for line in tja_text.splitlines() if line.endswith(",")]
     assert len(chart_lines) == 2
     assert '"index": 1' in (output_dir / "analysis.json").read_text(encoding="utf-8")
@@ -306,7 +308,7 @@ def test_generate_with_density_controls_fallback_patterns(tmp_path, monkeypatch)
     )
 
     assert result.exit_code == 0, result.output
-    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     assert "1000100010001000," in tja_text
     assert "1000200010002000," in tja_text
 
@@ -335,7 +337,7 @@ def test_generate_with_special_notes_outputs_balloon_header(tmp_path, monkeypatc
     )
 
     assert result.exit_code == 0, result.output
-    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     assert "5000000080000000," in tja_text
     assert "BALLOON:8" in tja_text
@@ -368,7 +370,7 @@ def test_generate_all_courses_writes_four_tja_files(tmp_path, monkeypatch):
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     assert saved_config["all_courses"] is True
     for course, level in [("easy", 3), ("normal", 5), ("hard", 7), ("oni", 10)]:
-        tja_text = (output_dir / f"song_{course}.tja").read_text(encoding="utf-8")
+        tja_text = (output_dir / f"song_{course}.tja").read_text(encoding=TJA_FILE_ENCODING)
         assert f"COURSE:{course.title() if course != 'oni' else 'Oni'}" in tja_text
         assert f"LEVEL:{level}" in tja_text
 
@@ -438,7 +440,7 @@ def test_generate_with_bpm_and_offset_overrides_outputs_metadata(tmp_path, monke
     )
 
     assert result.exit_code == 0, result.output
-    tja_text = (output_dir / "song.tja").read_text(encoding="utf-8")
+    tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     analysis_text = (output_dir / "analysis.json").read_text(encoding="utf-8")
     assert "BPM:240.123" in tja_text
     assert "OFFSET:0.25" in tja_text

@@ -1,5 +1,5 @@
 from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, TjaChart
-from tja_ai_chartgen.tja.writer import render_tja
+from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING, read_tja_text, render_tja, write_tja_text
 
 
 def test_render_tja_outputs_required_sections():
@@ -57,3 +57,13 @@ def test_render_tja_outputs_balloon_header():
 
     assert "BALLOON:8" in text
     assert "7000000080000000," in text
+
+
+def test_write_tja_text_saves_shift_jis_compatible_file(tmp_path):
+    path = tmp_path / "song.tja"
+    text = "TITLE:迷っちゃうわ\nWAVE:mayocchauwa.ogg\n#START\n1000,\n#END\n"
+
+    write_tja_text(path, text)
+
+    assert path.read_bytes() == text.encode(TJA_FILE_ENCODING)
+    assert read_tja_text(path) == text

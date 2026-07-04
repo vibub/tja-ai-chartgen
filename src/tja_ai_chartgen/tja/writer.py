@@ -1,7 +1,10 @@
+from pathlib import Path
+
 from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.tja.model import ChartBar, TjaChart
 
 DEFAULT_BALLOON_COUNT = 8
+TJA_FILE_ENCODING = "cp932"
 
 
 def render_tja(chart: TjaChart) -> str:
@@ -44,6 +47,19 @@ def render_tja(chart: TjaChart) -> str:
     lines.append("#END")
 
     return "\n".join(lines) + "\n"
+
+
+def write_tja_text(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding=TJA_FILE_ENCODING, newline="\n")
+    return path
+
+
+def read_tja_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        return path.read_text(encoding=TJA_FILE_ENCODING)
 
 
 def _collect_balloon_counts(bars: list[ChartBar]) -> list[int]:

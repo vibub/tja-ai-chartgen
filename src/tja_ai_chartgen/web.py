@@ -16,7 +16,7 @@ from tja_ai_chartgen.features.sections import assign_sections
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
 from tja_ai_chartgen.rules.styles import STYLE_LEVELS, validate_style
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ChartMetadata, SongAnalysis, TjaChart
-from tja_ai_chartgen.tja.writer import render_tja
+from tja_ai_chartgen.tja.writer import read_tja_text, render_tja, write_tja_text
 from tja_ai_chartgen.utils.paths import write_json
 
 DEFAULT_WEB_OUTPUT_DIR = Path("output/web")
@@ -1334,7 +1334,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             )
             tja_text = render_tja(chart)
             output_path = job_dir / "preview.tja"
-            output_path.write_text(tja_text, encoding="utf-8")
+            write_tja_text(output_path, tja_text)
             return HTMLResponse(
                 _page(
                     "Game preview",
@@ -1375,7 +1375,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             job_dir = _new_job_dir(app.state.output_dir)
             tja_path = _save_upload(job_dir, tja)
             ogg_path = _save_ogg_upload(job_dir, audio)
-            tja_text = tja_path.read_text(encoding="utf-8-sig")
+            tja_text = read_tja_text(tja_path)
             analysis, chart_bars, course, level = _parse_tja_preview(
                 tja_text,
                 audio_file=ogg_path,
@@ -1484,7 +1484,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             )
             tja_text = render_tja(chart)
             output_path = job_dir / f"regenerated_{start_bar}_{end_bar}.tja"
-            output_path.write_text(tja_text, encoding="utf-8")
+            write_tja_text(output_path, tja_text)
             body = "".join(
                 [
                     _ai_generation_notice(ai_failure) if use_ai else "",
@@ -1533,7 +1533,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             )
             tja_text = render_tja(chart)
             output_path = job_dir / _edited_output_filename(chart_bars)
-            output_path.write_text(tja_text, encoding="utf-8")
+            write_tja_text(output_path, tja_text)
             body = "".join(
                 [
                     _result_panel(
