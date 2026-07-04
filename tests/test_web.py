@@ -250,7 +250,7 @@ def test_web_preview_tja_upload(tmp_path, monkeypatch):
     client = TestClient(create_app(output_dir=tmp_path))
     tja_text = """TITLE:Debug Song
 BPM:120
-OFFSET:0.5
+OFFSET:-0.5
 COURSE:Oni
 LEVEL:10
 
@@ -270,6 +270,7 @@ LEVEL:10
     assert response.status_code == 200
     assert "游玩预览" in response.text
     assert "Debug Song" in response.text
+    assert "0.500s" in response.text
     assert "data-game-preview" in response.text
     assert "taiko_don_16bit_44100.wav" in response.text
     assert "taiko_ka_16bit_44100.wav" in response.text

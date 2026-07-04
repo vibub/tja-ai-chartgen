@@ -217,7 +217,7 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     assert "BPM:240.123" in tja_text
-    assert "OFFSET:0.25" in tja_text
+    assert "OFFSET:-0.25" in tja_text
     assert "#MEASURE 3/4" in tja_text
     assert "100010001000," in tja_text
     assert saved_config["density"] == "low"
@@ -443,7 +443,7 @@ def test_generate_with_bpm_and_offset_overrides_outputs_metadata(tmp_path, monke
     tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     analysis_text = (output_dir / "analysis.json").read_text(encoding="utf-8")
     assert "BPM:240.123" in tja_text
-    assert "OFFSET:0.25" in tja_text
+    assert "OFFSET:-0.25" in tja_text
     assert '"bpm": 240.123' in analysis_text
     assert '"offset": 0.25' in analysis_text
 

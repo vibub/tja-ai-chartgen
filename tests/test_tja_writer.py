@@ -20,9 +20,26 @@ def test_render_tja_outputs_required_sections():
 
     assert "TITLE:Song Title" in text
     assert "SUBTITLE:-- Artist Name" in text
+    assert "OFFSET:0.032" in text
     assert "#START" in text
     assert "#END" in text
     assert "1000100010001000," in text
+
+
+def test_render_tja_writes_tja_offset_with_opposite_sign():
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title="Song Title",
+            wave="song.ogg",
+            bpm=120.0,
+            offset=0.725,
+        ),
+        bars=[ChartBar(index=0, notes="1000100010001000")],
+    )
+
+    text = render_tja(chart)
+
+    assert "OFFSET:-0.725" in text
 
 
 def test_render_tja_outputs_measure_for_three_four_bars():

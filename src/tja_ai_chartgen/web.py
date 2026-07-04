@@ -1818,7 +1818,8 @@ def _parse_tja_preview(
         raise ValueError("TJA does not contain playable note bars")
 
     bpm = float(metadata.get("BPM", "120"))
-    offset = float(metadata.get("OFFSET", "0"))
+    tja_offset = float(metadata.get("OFFSET", "0"))
+    offset = -tja_offset
     title = metadata.get("TITLE", audio_file.stem)
     artist = metadata.get("SUBTITLE", "").removeprefix("-- ") or None
     course = metadata.get("COURSE", "Oni")

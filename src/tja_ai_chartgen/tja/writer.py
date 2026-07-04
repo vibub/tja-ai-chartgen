@@ -20,7 +20,7 @@ def render_tja(chart: TjaChart) -> str:
         [
             f"BPM:{metadata.bpm}",
             f"WAVE:{metadata.wave}",
-            f"OFFSET:{metadata.offset}",
+            f"OFFSET:{_format_tja_offset(metadata.offset)}",
             f"COURSE:{metadata.course}",
             f"LEVEL:{metadata.level}",
             f"MAKER:{metadata.maker}",
@@ -60,6 +60,13 @@ def read_tja_text(path: Path) -> str:
         return path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         return path.read_text(encoding=TJA_FILE_ENCODING)
+
+
+def _format_tja_offset(internal_offset: float) -> float:
+    tja_offset = -internal_offset
+    if tja_offset == 0:
+        return 0.0
+    return tja_offset
 
 
 def _collect_balloon_counts(bars: list[ChartBar]) -> list[int]:
