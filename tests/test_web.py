@@ -10,7 +10,9 @@ def test_web_index_shows_upload_form(tmp_path):
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Upload and analyze" in response.text
+    assert "上传并分析" in response.text
+    assert "data-analyze-form" in response.text
+    assert "交换歌名和歌手" in response.text
     assert "直接播放 TJA" in response.text
     assert "multipart/form-data" in response.text
 
@@ -64,7 +66,7 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "Regenerated bars" in response.text
     assert "游玩预览" in response.text
-    assert "Game preview" in response.text
+    assert "谱面时间线" in response.text
     assert "data-game-preview" in response.text
     assert "TJA preview" not in response.text
     assert (tmp_path / job_id / "regenerated_1_2.tja").exists()

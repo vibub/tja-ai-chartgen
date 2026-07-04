@@ -250,6 +250,27 @@ h2 {
   grid-column: 1 / -1;
 }
 
+.title-artist-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.swap-button {
+  min-width: 3.15rem;
+  padding: 0.8rem 0.9rem;
+  color: var(--ink);
+  background: rgba(246, 240, 226, 0.09);
+  border: 1px solid rgba(246, 240, 226, 0.16);
+  box-shadow: none;
+}
+
+.swap-button:hover {
+  background: rgba(214, 168, 95, 0.18);
+  box-shadow: none;
+}
+
 label {
   color: var(--ink);
   font-weight: 650;
@@ -776,7 +797,7 @@ pre {
 .timeline-head {
   display: grid;
   grid-template-columns: 10.5rem 1fr;
-  min-height: 2.3rem;
+  min-height: 3.05rem;
   color: #d7d0c0;
   background: #242525;
   border-bottom: 1px solid rgba(246, 240, 226, 0.08);
@@ -784,21 +805,37 @@ pre {
 
 .timeline-scale {
   position: relative;
+  overflow: hidden;
+  background-image: linear-gradient(90deg, rgba(246, 240, 226, 0.06) 1px, transparent 1px);
+  background-size: 6.25% 100%;
 }
 
 .timeline-bar-mark {
   position: absolute;
-  top: 0.25rem;
+  top: 0.35rem;
   bottom: 0;
+  min-width: 5rem;
   color: #d7d0c0;
-  font-size: 0.82rem;
-  transform: translateX(-1px);
+  font-size: 0.78rem;
+  line-height: 1.15;
+  pointer-events: none;
+  transform: translateX(0.25rem);
+}
+
+.timeline-bar-mark::before {
+  position: absolute;
+  top: -0.35rem;
+  bottom: -4.9rem;
+  left: -0.25rem;
+  width: 1px;
+  content: "";
+  background: rgba(246, 240, 226, 0.18);
 }
 
 .timeline-row {
   display: grid;
   grid-template-columns: 10.5rem 1fr;
-  min-height: 4.7rem;
+  min-height: 5.7rem;
   border-bottom: 1px solid rgba(246, 240, 226, 0.07);
 }
 
@@ -814,8 +851,10 @@ pre {
 .timeline-track {
   position: relative;
   overflow: hidden;
-  background-image: linear-gradient(90deg, rgba(246, 240, 226, 0.055) 1px, transparent 1px);
-  background-size: 2.8rem 100%;
+  background-image:
+    linear-gradient(90deg, rgba(246, 240, 226, 0.08) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(246, 240, 226, 0.045) 1px, transparent 1px);
+  background-size: 6.25% 100%, 100% 50%;
 }
 
 .timeline-note {
@@ -823,6 +862,7 @@ pre {
   top: 50%;
   width: 1.9rem;
   height: 1.9rem;
+  opacity: 0;
   border: 0.22rem solid #f1eadc;
   border-radius: 999px;
   transform: translate(-50%, -50%);
@@ -879,6 +919,14 @@ pre {
   .timeline-head,
   .timeline-row {
     grid-template-columns: 1fr;
+  }
+
+  .title-artist-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .swap-button {
+    width: 100%;
   }
 
   .preview-side {
@@ -942,6 +990,46 @@ function noteSoundKey(note) {
   return null;
 }
 
+function parseSongFileName(filename) {
+  const stem = (filename || '').replace(/\\.[^/.]+$/, '').trim();
+  if (!stem) return { title: '', artist: '' };
+  const separators = [' - ', ' – ', ' — ', '-', '–', '—'];
+  for (const separator of separators) {
+    const index = stem.indexOf(separator);
+    if (index > 0 && index < stem.length - separator.length) {
+      return {
+        title: stem.slice(0, index).trim(),
+        artist: stem.slice(index + separator.length).trim(),
+      };
+    }
+  }
+  return { title: stem, artist: '' };
+}
+
+function setupAnalyzeForm(form) {
+  const audioInput = form.querySelector('[data-role="audio-input"]');
+  const titleInput = form.querySelector('[data-role="title-input"]');
+  const artistInput = form.querySelector('[data-role="artist-input"]');
+  const swapButton = form.querySelector('[data-role="swap-title-artist"]');
+  if (audioInput && titleInput && artistInput) {
+    audioInput.addEventListener('change', () => {
+      const file = audioInput.files && audioInput.files[0];
+      if (!file) return;
+      const parsed = parseSongFileName(file.name);
+      titleInput.value = parsed.title;
+      artistInput.value = parsed.artist;
+    });
+  }
+  if (swapButton && titleInput && artistInput) {
+    swapButton.addEventListener('click', () => {
+      const title = titleInput.value;
+      titleInput.value = artistInput.value;
+      artistInput.value = title;
+      titleInput.focus();
+    });
+  }
+}
+
 function setupGamePreview(root) {
   const dataElement = root.querySelector('script[type="application/json"]');
   if (!dataElement) return;
@@ -954,9 +1042,12 @@ function setupGamePreview(root) {
   const hitRing = root.querySelector('.hit-ring');
   const combo = root.querySelector('[data-role="combo"]');
   const timelineCursor = root.querySelector('[data-role="timeline-cursor"]');
+  const timelineTrack = root.querySelector('[data-role="timeline-track"]');
+  const timelineScale = root.querySelector('[data-role="timeline-scale"]');
   const start = data.startTime || 0;
   const end = data.endTime || Math.max(start + 1, ...data.notes.map((note) => note.time + 1));
   const notes = data.notes || [];
+  const bars = data.bars || [];
   const pixelsPerSecond = 360;
   const hitEpsilonSeconds = 0.012;
   const soundPools = Object.fromEntries(
@@ -994,6 +1085,22 @@ function setupGamePreview(root) {
     node.dataset.time = String(note.time);
     lane.appendChild(node);
     return { ...note, node };
+  });
+
+  const timelineNoteNodes = notes.map((note) => {
+    const node = document.createElement('span');
+    node.className = `timeline-note ${noteClass(note.type).replace(' big', '')}`;
+    node.title = `第 ${note.bar} 小节 / 第 ${note.grid} 格`;
+    timelineTrack.appendChild(node);
+    return { ...note, node };
+  });
+
+  const timelineMarkNodes = bars.map((bar) => {
+    const node = document.createElement('span');
+    node.className = 'timeline-bar-mark';
+    node.innerHTML = `${bar.index}<br>${formatTime(bar.time)}`;
+    timelineScale.appendChild(node);
+    return { ...bar, node };
   });
 
   function measurePreview() {
@@ -1046,12 +1153,37 @@ function setupGamePreview(root) {
     }
   }
 
+  function updateTimeline(currentTime) {
+    const windowSeconds = 6.6;
+    const windowStart = Math.max(start, Math.min(currentTime - 0.35, end - windowSeconds));
+    const windowEnd = Math.min(end, windowStart + windowSeconds);
+    const windowDuration = Math.max(0.001, windowEnd - windowStart);
+    const cursorProgress = Math.min(1, Math.max(0, (currentTime - windowStart) / windowDuration));
+    timelineCursor.style.left = `${cursorProgress * 100}%`;
+
+    timelineMarkNodes.forEach((bar) => {
+      const barTime = Number(bar.time);
+      const inWindow = barTime >= windowStart && barTime <= windowEnd;
+      bar.node.style.opacity = inWindow ? '1' : '0';
+      if (inWindow) {
+        bar.node.style.left = `${((barTime - windowStart) / windowDuration) * 100}%`;
+      }
+    });
+
+    timelineNoteNodes.forEach((note) => {
+      const noteTime = Number(note.time);
+      const inWindow = noteTime >= windowStart && noteTime <= windowEnd;
+      note.node.style.opacity = inWindow ? '1' : '0';
+      if (inWindow) {
+        note.node.style.left = `${((noteTime - windowStart) / windowDuration) * 100}%`;
+      }
+    });
+  }
+
   function update(currentTime) {
     seek.value = currentTime.toString();
     readout.textContent = `${formatTime(currentTime)} / ${formatTime(end)}`;
-    const total = Math.max(0.001, end - start);
-    const progress = Math.min(1, Math.max(0, (currentTime - start) / total));
-    timelineCursor.style.left = `${progress * 100}%`;
+    updateTimeline(currentTime);
 
     const nextActiveIndexes = new Set();
     let hitCount = 0;
@@ -1129,6 +1261,7 @@ function setupGamePreview(root) {
   startLoop();
 }
 
+document.querySelectorAll('[data-analyze-form]').forEach(setupAnalyzeForm);
 document.querySelectorAll('[data-game-preview]').forEach(setupGamePreview);
 
 document.querySelectorAll('form').forEach((form) => {
@@ -1608,7 +1741,7 @@ def _analysis_form() -> str:
     return f"""
 <section class="hero" aria-labelledby="page-title">
   <div class="hero-copy">
-    <p class="eyebrow">Local chart workbench</p>
+    <p class="eyebrow">本地谱面工作台</p>
     <h1 id="page-title">tja-ai-chartgen</h1>
     <p class="lede">
       上传音频，先做节拍与小节分析，再挑选片段生成可检查的 TJA 草稿。
@@ -1622,37 +1755,40 @@ def _analysis_form() -> str:
   </div>
 
   <section class="panel" aria-labelledby="upload-heading">
-    <p class="eyebrow">Analyze audio</p>
-    <h2 id="upload-heading">Upload and analyze</h2>
-    <form action="/analyze" enctype="multipart/form-data" method="post">
+    <p class="eyebrow">分析音频</p>
+    <h2 id="upload-heading">上传并分析</h2>
+    <form action="/analyze" enctype="multipart/form-data" method="post" data-analyze-form>
       <div class="form-grid">
         <label class="field field-wide">
-          Audio
-          <input name="audio" type="file" accept="audio/*" required>
-          <span class="field-hint">mp3、wav、flac 等 ffmpeg 可读取的音频。</span>
+          音频文件
+          <input name="audio" type="file" accept="audio/*,video/mp4,.mp4" data-role="audio-input" required>
+          <span class="field-hint">mp3、wav、flac 等 ffmpeg 可读取的音频。文件名格式建议为：歌名 - 歌手.mp4。</span>
         </label>
+        <div class="title-artist-grid field-wide">
+          <label class="field">
+            歌名
+            <input name="title" placeholder="自动从文件名识别" data-role="title-input" required>
+          </label>
+          <button class="swap-button" type="button" data-role="swap-title-artist" aria-label="交换歌名和歌手">⇄</button>
+          <label class="field">
+            歌手
+            <input name="artist" placeholder="可选" data-role="artist-input">
+          </label>
+        </div>
         <label class="field">
-          Title
-          <input name="title" placeholder="Song Title" required>
-        </label>
-        <label class="field">
-          Artist
-          <input name="artist" placeholder="可选">
-        </label>
-        <label class="field">
-          Max bars
+          最大小节数
           <input name="max_bars" type="number" min="1" placeholder="16">
         </label>
         <label class="field">
-          BPM override
+          BPM 覆盖
           <input name="bpm" type="number" step="0.001" min="0" placeholder="220.588">
         </label>
         <label class="field">
-          OFFSET override
+          OFFSET 覆盖
           <input name="offset" type="number" step="0.001" placeholder="0.725">
         </label>
         <label class="field">
-          Time signature
+          拍号
           <select name="time_signature">
             <option value="">使用分析结果</option>
             <option value="4/4">4/4</option>
@@ -1662,12 +1798,12 @@ def _analysis_form() -> str:
         </label>
         <label class="checkbox-card field-wide">
           <input name="use_beatnet" type="checkbox" value="true">
-          <span>Use BeatNet <span class="field-hint">尝试增强 downbeat、meter 和 offset。</span></span>
+          <span>使用 BeatNet <span class="field-hint">尝试增强强拍、拍号和 offset。</span></span>
         </label>
       </div>
       <div class="helper-strip">
-        <button type="submit" data-loading-text="Analyzing">Upload and analyze</button>
-        <span>Style options: {', '.join(STYLE_LEVELS)}</span>
+        <button type="submit" data-loading-text="分析中">上传并分析</button>
+        <span>可用风格：{', '.join(STYLE_LEVELS)}</span>
       </div>
     </form>
     {_tja_preview_form()}
@@ -1679,22 +1815,22 @@ def _analysis_form() -> str:
 def _tja_preview_form() -> str:
     return """
 <section class="inline-debug-card" aria-labelledby="tja-preview-heading">
-  <p class="eyebrow">Debug preview</p>
+  <p class="eyebrow">调试预览</p>
   <h2 id="tja-preview-heading">直接播放 TJA</h2>
   <p>已有 `.tja` 时可以直接上传调试。这里只接受已经准备好的 OGG 音频，不会再调用 ffmpeg 转换或额外输出音频文件。</p>
   <form action="/preview-tja" enctype="multipart/form-data" method="post">
     <div class="form-grid">
       <label class="field">
-        TJA file
+        TJA 文件
         <input name="tja" type="file" accept=".tja,text/plain" required>
       </label>
       <label class="field">
-        OGG audio
+        OGG 音频
         <input name="audio" type="file" accept=".ogg,audio/ogg" required>
       </label>
     </div>
     <div class="helper-strip">
-      <button type="submit" data-loading-text="Loading">打开 TJA 预览</button>
+      <button type="submit" data-loading-text="载入中">打开 TJA 预览</button>
       <span>用于快速定位谱面播放、对齐和滚动问题。</span>
     </div>
   </form>
@@ -1711,12 +1847,12 @@ def _analysis_summary(analysis: SongAnalysis, analysis_path: Path, job_id: str) 
     return f"""
 <section class="stack" aria-labelledby="analysis-heading">
   <div class="summary-head">
-    <span class="badge">Job <code>{_escape(job_id)}</code></span>
-    <span class="badge">Analysis JSON <code>{_escape(str(analysis_path))}</code></span>
+    <span class="badge">任务 <code>{_escape(job_id)}</code></span>
+    <span class="badge">分析 JSON <code>{_escape(str(analysis_path))}</code></span>
   </div>
   <section class="panel">
-    <p class="eyebrow">Analysis preview</p>
-    <h1 id="analysis-heading">Analysis preview</h1>
+    <p class="eyebrow">分析预览</p>
+    <h1 id="analysis-heading">分析预览</h1>
     <p class="lede">分析结果已保存。确认 BPM、OFFSET 和小节数量后，可以只重生成需要调整的片段。</p>
     <div class="summary-grid" aria-label="分析指标">
       <article class="metric-card">
@@ -1728,11 +1864,11 @@ def _analysis_summary(analysis: SongAnalysis, analysis_path: Path, job_id: str) 
         <span class="metric-value">{analysis.offset:.3f}</span>
       </article>
       <article class="metric-card">
-        <span class="meta-label">Time signature</span>
+        <span class="meta-label">拍号</span>
         <span class="metric-value">{_escape(analysis.time_signature)}</span>
       </article>
       <article class="metric-card">
-        <span class="meta-label">Bars</span>
+        <span class="meta-label">小节数</span>
         <span class="metric-value">{len(analysis.bars)}</span>
       </article>
     </div>
@@ -1742,13 +1878,13 @@ def _analysis_summary(analysis: SongAnalysis, analysis_path: Path, job_id: str) 
 
   <section class="table-wrap" aria-labelledby="bars-heading">
     <div class="panel">
-      <p class="eyebrow">Bar map</p>
+      <p class="eyebrow">小节映射</p>
       <h2 id="bars-heading">小节预览</h2>
     </div>
     <div class="table-scroll">
       <table>
         <thead>
-          <tr><th>Bar</th><th>Start</th><th>End</th><th>Energy</th><th>Section</th><th>Grids</th></tr>
+          <tr><th>小节</th><th>开始</th><th>结束</th><th>能量</th><th>段落</th><th>格数</th></tr>
         </thead>
         <tbody>{rows}</tbody>
       </table>
@@ -1761,43 +1897,43 @@ def _analysis_summary(analysis: SongAnalysis, analysis_path: Path, job_id: str) 
 def _regenerate_form(job_id: str) -> str:
     return f"""
 <section class="panel" aria-labelledby="regen-heading">
-  <p class="eyebrow">Pattern draft</p>
-  <h2 id="regen-heading">Regenerate selected bars</h2>
+  <p class="eyebrow">谱面片段</p>
+  <h2 id="regen-heading">重新生成选中小节</h2>
   <p class="lede">选择起止小节、难度和模板，只输出这段片段，方便你逐步修正谱面。</p>
   <form action="/regenerate" method="post">
     <input name="job_id" type="hidden" value="{_escape(job_id)}">
     <div class="form-grid">
       <label class="field">
-        Start bar
+        起始小节
         <input name="start_bar" type="number" min="1" value="1" required>
       </label>
       <label class="field">
-        End bar
+        结束小节
         <input name="end_bar" type="number" min="1" value="1" required>
       </label>
       <label class="field">
-        Course
+        难度类型
         <input name="course" value="Oni">
       </label>
       <label class="field">
-        Level
+        难度等级
         <input name="level" type="number" min="1" max="10" value="10">
       </label>
       <label class="field">
-        Style
+        风格
         <select name="style">{_option_tags(STYLE_LEVELS, "technical")}</select>
       </label>
       <label class="field">
-        Density
+        密度
         <select name="density">{_option_tags(("auto", "low", "medium", "high", "max"), "auto")}</select>
       </label>
       <label class="checkbox-card field-wide">
         <input name="special_notes" type="checkbox" value="true">
-        <span>Special notes <span class="field-hint">允许简单滚奏和气球。</span></span>
+        <span>特殊音符 <span class="field-hint">允许简单滚奏和气球。</span></span>
       </label>
     </div>
     <div class="helper-strip">
-      <button type="submit" data-loading-text="Regenerating">Regenerate</button>
+      <button type="submit" data-loading-text="重新生成中">重新生成</button>
       <span>当前 job：<code>{_escape(job_id)}</code></span>
     </div>
   </form>
@@ -1809,7 +1945,7 @@ def _audio_preview(analysis: SongAnalysis, job_id: str) -> str:
     ogg_name = Path(analysis.ogg_file).name
     return f"""
   <section class="panel audio-card" aria-labelledby="audio-heading">
-    <p class="eyebrow">Audio preview</p>
+    <p class="eyebrow">音频预览</p>
     <h2 id="audio-heading">音频预览</h2>
     <p class="lede">播放转换后的 OGG，配合下方小节起止时间检查 OFFSET 与局部节奏。</p>
     <audio controls preload="metadata" src="/jobs/{_escape(job_id)}/{_escape(ogg_name)}"></audio>
@@ -1826,15 +1962,13 @@ def _game_preview(
 ) -> str:
     payload = _preview_payload(analysis, chart_bars)
     ogg_name = Path(analysis.ogg_file).name
-    timeline_marks = _timeline_marks(payload)
-    timeline_notes = _timeline_notes(payload)
     duration = max(0.001, payload["endTime"] - payload["startTime"])
     return f"""
   <section class="play-preview" data-game-preview aria-labelledby="game-preview-heading">
     <script type="application/json">{_json_script(payload)}</script>
     <div class="preview-topline">
       <div class="preview-tabs" aria-label="预览标签">
-        <span class="preview-tab is-active">Game preview</span>
+        <span class="preview-tab is-active">游玩预览</span>
         <span class="preview-tab">{_escape(course)} x{level}</span>
       </div>
       <span class="preview-status">{analysis.bpm:.3f} BPM · {duration:.3f}s · 自动演奏预览</span>
@@ -1842,15 +1976,15 @@ def _game_preview(
     <div class="preview-stage-grid">
       <aside class="preview-side" aria-label="谱面属性">
         <div class="inspector-group">
-          <div class="inspector-title">Chart</div>
-          <div class="inspector-line"><span>Title</span><span>{_escape(analysis.title)}</span></div>
-          <div class="inspector-line"><span>Creator</span><span>tja-ai-chartgen</span></div>
+          <div class="inspector-title">谱面</div>
+          <div class="inspector-line"><span>歌名</span><span>{_escape(analysis.title)}</span></div>
+          <div class="inspector-line"><span>制作者</span><span>tja-ai-chartgen</span></div>
           <div class="inspector-line"><span>Offset</span><span>{analysis.offset:.3f}s</span></div>
         </div>
         <div class="inspector-group">
-          <div class="inspector-title">Course</div>
-          <div class="inspector-line"><span>Difficulty</span><span>{_escape(course)}</span></div>
-          <div class="inspector-line"><span>Level</span><span>x{level}</span></div>
+          <div class="inspector-title">难度</div>
+          <div class="inspector-line"><span>类型</span><span>{_escape(course)}</span></div>
+          <div class="inspector-line"><span>等级</span><span>x{level}</span></div>
         </div>
       </aside>
       <div class="preview-stage">
@@ -1877,14 +2011,13 @@ def _game_preview(
     </div>
     <div class="timeline-panel" aria-label="谱面时间线">
       <div class="timeline-head">
-        <div class="timeline-row-label">Chart timeline</div>
-        <div class="timeline-scale">{timeline_marks}</div>
+        <div class="timeline-row-label">谱面时间线</div>
+        <div class="timeline-scale" data-role="timeline-scale"></div>
       </div>
       <div class="timeline-row">
-        <div class="timeline-row-label">Notes</div>
-        <div class="timeline-track">
+        <div class="timeline-row-label">音符</div>
+        <div class="timeline-track" data-role="timeline-track">
           <span class="timeline-cursor" data-role="timeline-cursor"></span>
-          {timeline_notes}
         </div>
       </div>
     </div>
@@ -1986,7 +2119,7 @@ def _result_panel(
     return f"""
 <section class="stack" aria-labelledby="result-heading">
   <section class="panel">
-    <p class="eyebrow">Preview ready</p>
+    <p class="eyebrow">预览已生成</p>
     <h1 id="result-heading">游玩预览</h1>
     <p class="result-path">谱面已生成：<code>{_escape(str(output_path))}</code></p>
     <p class="lede">生成完成后直接进入可视化预览。点击播放自动演奏，拖动进度条查看任意位置，不再把大段 TJA 数值直接丢给用户。</p>
@@ -1999,7 +2132,7 @@ def _result_panel(
 def _error_notice(message: str) -> str:
     return f"""
 <section class="panel" aria-labelledby="error-heading">
-  <p class="eyebrow">Request failed</p>
+  <p class="eyebrow">请求失败</p>
   <h1 id="error-heading">无法完成操作</h1>
   <p class="notice error">{_escape(message)}</p>
   <a class="button-link" href="/">返回上传页面</a>
@@ -2040,7 +2173,7 @@ def _page(title: str, body: str) -> str:
         <span class="brand-mark" aria-hidden="true">太</span>
         <span>tja-ai-chartgen</span>
       </a>
-      <span class="nav-note">local web ui · no cloud upload</span>
+      <span class="nav-note">本地 Web 界面 · 不上传云端</span>
     </header>
     <main id="main">
       {body}
