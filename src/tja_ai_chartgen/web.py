@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import ValidationError
@@ -1278,6 +1279,7 @@ document.querySelectorAll('form').forEach((form) => {
 
 
 def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
+    load_dotenv()
     app = FastAPI(title="tja-ai-chartgen Web UI")
     app.state.output_dir = output_dir
 
@@ -1422,21 +1424,52 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
         style: Annotated[str, Form()] = "technical",
         density: Annotated[str, Form()] = "auto",
         special_notes: Annotated[bool, Form()] = False,
+        use_ai: Annotated[bool, Form()] = False,
+        ai_model: Annotated[str, Form()] = "",
+        ai_base_url: Annotated[str, Form()] = "",
+        ai_api_key: Annotated[str, Form()] = "",
+        ai_repair_retries: Annotated[int, Form()] = 2,
     ) -> HTMLResponse:
         try:
             validate_density(density)
             validate_style(style)
+            if ai_repair_retries < 0:
+                raise ValueError("AI repair retries must be greater than or equal to 0")
             job_dir = _job_dir(app.state.output_dir, job_id)
             analysis = SongAnalysis.model_validate_json(
                 (job_dir / "analysis.json").read_text(encoding="utf-8")
             )
             selected_bars = _select_bars(analysis, start_bar, end_bar)
-            chart_bars = generate_fallback_chart_bars(
-                selected_bars,
-                style=style,
-                density=density,
-                special_notes=special_notes,
-            )
+            chart_bars = None
+            ai_failure: str | None = None
+            if use_ai:
+                try:
+                    chart_bars = _generate_ai_chart_bars_for_web(
+                        job_dir=job_dir,
+                        analysis=analysis,
+                        selected_bars=selected_bars,
+                        start_bar=start_bar,
+                        end_bar=end_bar,
+                        course=course,
+                        level=level,
+                        style=style,
+                        density=density,
+                        model=_optional_form_text(ai_model),
+                        api_base=_optional_form_text(ai_base_url),
+                        api_key=_optional_form_text(ai_api_key),
+                        ai_repair_retries=ai_repair_retries,
+                        special_notes=special_notes,
+                    )
+                except Exception as error:  # noqa: BLE001 - Web UI should still render a usable draft.
+                    ai_failure = str(error)
+
+            if chart_bars is None:
+                chart_bars = generate_fallback_chart_bars(
+                    selected_bars,
+                    style=style,
+                    density=density,
+                    special_notes=special_notes,
+                )
             chart = TjaChart(
                 metadata=ChartMetadata(
                     title=analysis.title,
@@ -1454,6 +1487,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             output_path.write_text(tja_text, encoding="utf-8")
             body = "".join(
                 [
+                    _ai_generation_notice(ai_failure) if use_ai else "",
                     _result_panel(
                         job_id=job_id,
                         output_path=output_path,
@@ -1737,6 +1771,94 @@ def _bar_features_from_chart(chart_bars: list[ChartBar], *, bpm: float, offset: 
     return features
 
 
+def _generate_ai_chart_bars_for_web(
+    *,
+    job_dir: Path,
+    analysis: SongAnalysis,
+    selected_bars: list[BarFeature],
+    start_bar: int,
+    end_bar: int,
+    course: str,
+    level: int,
+    style: str,
+    density: str,
+    model: str | None,
+    api_base: str | None,
+    api_key: str | None,
+    ai_repair_retries: int,
+    special_notes: bool,
+) -> list[ChartBar]:
+    from tja_ai_chartgen.ai.client import generate_chart_bars_with_ai, sanitize_ai_bars
+    from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
+
+    selected_analysis = analysis.model_copy(update={"bars": selected_bars})
+    ai_input_path = job_dir / f"ai_input_{start_bar}_{end_bar}.json"
+    ai_output_path = job_dir / f"ai_output_{start_bar}_{end_bar}.json"
+    write_json(
+        ai_input_path,
+        build_chart_generation_payload(
+            selected_analysis,
+            course,
+            level,
+            style,
+            density,
+            special_notes=special_notes,
+        ),
+    )
+    try:
+        ai_bars, ai_output = generate_chart_bars_with_ai(
+            selected_analysis,
+            course,
+            level,
+            style,
+            density,
+            model,
+            api_base=api_base,
+            api_key=api_key,
+            max_repair_attempts=ai_repair_retries,
+            special_notes=special_notes,
+        )
+    except Exception as error:
+        _write_web_ai_failure(ai_output_path, error)
+        raise
+
+    write_json(ai_output_path, ai_output)
+    sanitized = sanitize_ai_bars(
+        ai_bars,
+        expected_count=len(selected_bars),
+        expected_bars=selected_bars,
+    )
+    return _reindex_chart_bars(sanitized, selected_bars)
+
+
+def _write_web_ai_failure(path: Path, error: Exception) -> None:
+    output = getattr(error, "output", None)
+    payload = {"error": str(error)}
+    if isinstance(output, dict):
+        payload.update(output)
+    write_json(path, payload)
+
+
+def _reindex_chart_bars(chart_bars: list[ChartBar], selected_bars: list[BarFeature]) -> list[ChartBar]:
+    reindexed: list[ChartBar] = []
+    for index, chart_bar in enumerate(chart_bars):
+        feature = selected_bars[index]
+        reindexed.append(
+            ChartBar(
+                index=feature.index,
+                notes=chart_bar.notes,
+                time_signature=feature.time_signature,
+                balloon_counts=chart_bar.balloon_counts,
+            )
+        )
+    return reindexed
+
+
+def _optional_form_text(value: str) -> str | None:
+    stripped = value.strip()
+    return stripped or None
+
+
 def _analysis_form() -> str:
     return f"""
 <section class="hero" aria-labelledby="page-title">
@@ -1931,10 +2053,30 @@ def _regenerate_form(job_id: str) -> str:
         <input name="special_notes" type="checkbox" value="true">
         <span>特殊音符 <span class="field-hint">允许简单滚奏和气球。</span></span>
       </label>
+      <label class="checkbox-card field-wide">
+        <input name="use_ai" type="checkbox" value="true">
+        <span>使用 AI 增强 <span class="field-hint">优先调用 LiteLLM / OpenAI 兼容接口，失败时自动回退规则生成。</span></span>
+      </label>
+      <label class="field">
+        AI 模型
+        <input name="ai_model" placeholder="留空读取 MODEL">
+      </label>
+      <label class="field">
+        AI Base URL
+        <input name="ai_base_url" placeholder="留空读取 OPENAI_BASE_URL">
+      </label>
+      <label class="field">
+        AI API Key
+        <input name="ai_api_key" type="password" autocomplete="off" placeholder="留空读取 OPENAI_API_KEY">
+      </label>
+      <label class="field">
+        修复重试
+        <input name="ai_repair_retries" type="number" min="0" value="2">
+      </label>
     </div>
     <div class="helper-strip">
       <button type="submit" data-loading-text="重新生成中">重新生成</button>
-      <span>当前 job：<code>{_escape(job_id)}</code></span>
+      <span>当前 job：<code>{_escape(job_id)}</code>。API Key 只用于本次请求，不写入输出文件。</span>
     </div>
   </form>
 </section>
@@ -2127,6 +2269,13 @@ def _result_panel(
   {_game_preview(job_id, analysis, chart_bars, course, level)}
 </section>
 """
+
+
+def _ai_generation_notice(ai_failure: str | None) -> str:
+    if ai_failure:
+        message = f"AI 增强失败，已自动回退到规则生成：{ai_failure}"
+        return f'<p class="notice error">{_escape(message)}</p>'
+    return '<p class="notice">AI 增强已完成，本次谱面来自 AI 输出校验后的结果。</p>'
 
 
 def _error_notice(message: str) -> str:

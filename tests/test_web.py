@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
+from tja_ai_chartgen.tja.model import ChartBar
 from tja_ai_chartgen.web import create_app
 
 
@@ -70,6 +71,94 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     assert "data-game-preview" in response.text
     assert "TJA preview" not in response.text
     assert (tmp_path / job_id / "regenerated_1_2.tja").exists()
+
+
+def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch, duration=4.0)
+
+    def fake_generate_chart_bars_with_ai(
+        analysis,
+        course,
+        level,
+        style,
+        density,
+        model,
+        *,
+        api_base=None,
+        api_key=None,
+        max_repair_attempts=2,
+        special_notes=False,
+    ):
+        assert course == "Oni"
+        assert level == 10
+        assert style == "hybrid"
+        assert density == "high"
+        assert model == "openai/test-model"
+        assert api_base == "https://llm.example.com/v1"
+        assert api_key == "secret-key"
+        assert max_repair_attempts == 1
+        assert special_notes is True
+        assert len(analysis.bars) == 2
+        return [
+            ChartBar(index=0, notes="1111000000000000", time_signature="4/4"),
+            ChartBar(index=1, notes="2222000000000000", time_signature="4/4"),
+        ], {"final": {"bars": []}, "api_key_provided": True}
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+    analyze_response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "2"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert analyze_response.status_code == 200
+    job_id = next(tmp_path.iterdir()).name
+
+    response = client.post(
+        "/regenerate",
+        data={
+            "job_id": job_id,
+            "start_bar": "1",
+            "end_bar": "2",
+            "course": "Oni",
+            "level": "10",
+            "style": "hybrid",
+            "density": "high",
+            "special_notes": "true",
+            "use_ai": "true",
+            "ai_model": "openai/test-model",
+            "ai_base_url": "https://llm.example.com/v1",
+            "ai_api_key": "secret-key",
+            "ai_repair_retries": "1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "AI 增强已完成" in response.text
+    job_dir = tmp_path / job_id
+    assert (job_dir / "ai_input_1_2.json").exists()
+    assert (job_dir / "ai_output_1_2.json").exists()
+    generated_text = (job_dir / "regenerated_1_2.tja").read_text(encoding="utf-8")
+    assert "1111000000000000," in generated_text
+    assert "2222000000000000," in generated_text
+
+
+def test_web_regenerate_shows_ai_option(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    assert "使用 AI 增强" in response.text
+    assert "name=\"ai_model\"" in response.text
 
 
 def test_web_save_chart_edits(tmp_path, monkeypatch):
