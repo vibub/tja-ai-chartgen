@@ -17,6 +17,8 @@ def test_web_index_shows_upload_form(tmp_path):
     assert "交换歌名和歌手" in response.text
     assert "直接播放 TJA" in response.text
     assert "multipart/form-data" in response.text
+    assert 'accept="audio/*,video/mp4,.mp4,.m4s"' in response.text
+    assert "m4s" in response.text
 
 
 def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
@@ -36,6 +38,12 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert 'name="end_bar" type="number" min="1" value="1"' in response.text
     assert '<select name="course">' in response.text
     assert '魔王（Oni）' in response.text
+    assert '技巧（technical）' in response.text
+    assert 'name="special_notes" type="checkbox" value="true" checked' in response.text
+    assert 'name="use_ai" type="checkbox" value="true" checked' in response.text
+    assert '<details class="advanced-panel field-wide">' in response.text
+    assert '<summary>AI 参数</summary>' in response.text
+    assert '<details class="advanced-panel field-wide" open>' not in response.text
     assert "BPM: 180.0" not in response.text
     assert "OFFSET: 0.25" not in response.text
     assert "小节预览" not in response.text

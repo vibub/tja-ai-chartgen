@@ -34,6 +34,12 @@ WEB_COURSE_OPTIONS = (
     ("Hard", "困难（Hard）"),
     ("Oni", "魔王（Oni）"),
 )
+WEB_STYLE_OPTIONS = (
+    ("technical", "技巧（technical）"),
+    ("stamina", "体力（stamina）"),
+    ("hybrid", "综合（hybrid）"),
+    ("performance", "演出（performance）"),
+)
 
 
 _PAGE_CSS = """
@@ -343,6 +349,23 @@ textarea:focus {
   background: rgba(12, 13, 16, 0.44);
   border: 1px solid rgba(246, 240, 226, 0.12);
   border-radius: var(--radius-sm);
+}
+
+.advanced-panel {
+  padding: 0.78rem 0.9rem;
+  background: rgba(12, 13, 16, 0.32);
+  border: 1px solid rgba(246, 240, 226, 0.12);
+  border-radius: var(--radius-sm);
+}
+
+.advanced-panel summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.advanced-panel .form-grid {
+  margin-top: 1rem;
 }
 
 .inline-debug-card {
@@ -1964,8 +1987,8 @@ def _analysis_form() -> str:
       <div class="form-grid">
         <label class="field field-wide">
           音频文件
-          <input name="audio" type="file" accept="audio/*,video/mp4,.mp4" data-role="audio-input" required>
-          <span class="field-hint">mp3、wav、flac 等 ffmpeg 可读取的音频。文件名格式建议为：歌名 - 歌手.mp4。</span>
+          <input name="audio" type="file" accept="audio/*,video/mp4,.mp4,.m4s" data-role="audio-input" required>
+          <span class="field-hint">mp3、wav、flac、m4s 等 ffmpeg 可读取的音频。文件名格式建议为：歌名 - 歌手.mp4。</span>
         </label>
         <div class="title-artist-grid field-wide">
           <label class="field">
@@ -2125,36 +2148,41 @@ def _regenerate_form(job_id: str, bar_count: int, course: str = "Oni") -> str:
       </label>
       <label class="field">
         风格
-        <select name="style">{_option_tags(STYLE_LEVELS, "technical")}</select>
+        <select name="style">{_style_option_tags("technical")}</select>
       </label>
       <label class="field">
         密度
         <select name="density">{_option_tags(("auto", "low", "medium", "high", "max"), "auto")}</select>
       </label>
       <label class="checkbox-card field-wide">
-        <input name="special_notes" type="checkbox" value="true">
+        <input name="special_notes" type="checkbox" value="true" checked>
         <span>特殊音符 <span class="field-hint">允许简单滚奏和气球。</span></span>
       </label>
       <label class="checkbox-card field-wide">
-        <input name="use_ai" type="checkbox" value="true">
+        <input name="use_ai" type="checkbox" value="true" checked>
         <span>使用 AI 增强 <span class="field-hint">优先调用 LiteLLM / OpenAI 兼容接口，失败时自动回退规则生成。</span></span>
       </label>
-      <label class="field">
-        AI 模型
-        <input name="ai_model" placeholder="留空读取 MODEL">
-      </label>
-      <label class="field">
-        AI Base URL
-        <input name="ai_base_url" placeholder="留空读取 OPENAI_BASE_URL">
-      </label>
-      <label class="field">
-        AI API Key
-        <input name="ai_api_key" type="password" autocomplete="off" placeholder="留空读取 OPENAI_API_KEY">
-      </label>
-      <label class="field">
-        修复重试
-        <input name="ai_repair_retries" type="number" min="0" value="2">
-      </label>
+      <details class="advanced-panel field-wide">
+        <summary>AI 参数</summary>
+        <div class="form-grid">
+          <label class="field">
+            AI 模型
+            <input name="ai_model" placeholder="留空读取 MODEL">
+          </label>
+          <label class="field">
+            AI Base URL
+            <input name="ai_base_url" placeholder="留空读取 OPENAI_BASE_URL">
+          </label>
+          <label class="field">
+            AI API Key
+            <input name="ai_api_key" type="password" autocomplete="off" placeholder="留空读取 OPENAI_API_KEY">
+          </label>
+          <label class="field">
+            修复重试
+            <input name="ai_repair_retries" type="number" min="0" value="2">
+          </label>
+        </div>
+      </details>
     </div>
     <div class="helper-strip">
       <button type="submit" data-loading-text="重新生成中">重新生成</button>
@@ -2414,6 +2442,16 @@ def _option_tags(options, selected: str) -> str:
 
 def _course_option_tags(selected: str) -> str:
     options = list(WEB_COURSE_OPTIONS)
+    if selected and selected not in {value for value, _label in options}:
+        options.append((selected, selected))
+    return "".join(
+        f'<option value="{_escape(value)}"{_selected_attr(value, selected)}>{_escape(label)}</option>'
+        for value, label in options
+    )
+
+
+def _style_option_tags(selected: str) -> str:
+    options = list(WEB_STYLE_OPTIONS)
     if selected and selected not in {value for value, _label in options}:
         options.append((selected, selected))
     return "".join(
