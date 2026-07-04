@@ -44,6 +44,35 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert (job_dir / "preview.tja").exists()
 
 
+def test_web_export_chart_saves_ogg_and_tja_with_matching_names(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path / "jobs"))
+    analyze_response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert analyze_response.status_code == 200
+    assert "保存 OGG 和 TJA" in analyze_response.text
+    job_id = next((tmp_path / "jobs").iterdir()).name
+    export_dir = tmp_path / "exported"
+
+    response = client.post(
+        "/export-chart",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+        },
+    )
+
+    assert response.status_code == 200
+    assert "已保存" in response.text
+    assert (export_dir / "song.ogg").read_bytes() == b"fake ogg"
+    assert (export_dir / "song.tja").exists()
+    assert "WAVE:song.ogg" in (export_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
+
+
 def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     _patch_web_audio_pipeline(monkeypatch, duration=4.0)
     client = TestClient(create_app(output_dir=tmp_path))

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from shutil import copy2
 from typing import Annotated
 from uuid import uuid4
 
@@ -1513,6 +1514,47 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                 status_code=400,
             )
 
+    @app.post("/export-chart", response_class=HTMLResponse)
+    async def export_chart(
+        job_id: Annotated[str, Form()],
+        tja_filename: Annotated[str, Form()],
+        output_dir: Annotated[str, Form()],
+    ) -> HTMLResponse:
+        try:
+            job_dir = _job_dir(app.state.output_dir, job_id)
+            analysis = SongAnalysis.model_validate_json(
+                (job_dir / "analysis.json").read_text(encoding="utf-8")
+            )
+            tja_path = _job_file_path(job_dir, tja_filename)
+            tja_text = read_tja_text(tja_path)
+            _export_chart_files(tja_path=tja_path, analysis=analysis, output_dir=Path(output_dir))
+            _parsed_analysis, chart_bars, course, level = _parse_tja_preview(
+                tja_text,
+                audio_file=Path(analysis.audio_file),
+                ogg_file=Path(analysis.ogg_file),
+            )
+            body = "".join(
+                [
+                    _export_success_notice(Path(output_dir), Path(analysis.ogg_file).stem),
+                    _result_panel(
+                        job_id=job_id,
+                        output_path=tja_path,
+                        tja_text=tja_text,
+                        analysis=analysis,
+                        chart_bars=chart_bars,
+                        course=course,
+                        level=level,
+                    ),
+                    _regenerate_form(job_id, len(analysis.bars), course),
+                ]
+            )
+            return HTMLResponse(_page("Exported chart", body))
+        except (FileExistsError, FileNotFoundError, ValidationError, ValueError) as error:
+            return HTMLResponse(
+                _page("Export failed", _error_notice(str(error))),
+                status_code=400,
+            )
+
     @app.post("/save-chart", response_class=HTMLResponse)
     async def save_chart(request: Request) -> HTMLResponse:
         try:
@@ -1597,6 +1639,39 @@ def _save_ogg_upload(job_dir: Path, audio: UploadFile) -> Path:
     if Path(filename).suffix.lower() != ".ogg":
         raise ValueError("TJA preview audio must be an .ogg file")
     return _save_upload(job_dir, audio)
+
+
+def _job_file_path(job_dir: Path, filename: str) -> Path:
+    safe_filename = Path(filename).name
+    if not safe_filename:
+        raise ValueError("Output filename is required")
+    path = job_dir / safe_filename
+    if not path.is_file():
+        raise FileNotFoundError(f"Job file not found: {filename}")
+    return path
+
+
+def _export_chart_files(*, tja_path: Path, analysis: SongAnalysis, output_dir: Path) -> tuple[Path, Path]:
+    if not str(output_dir).strip():
+        raise ValueError("Output directory is required")
+    ogg_path = Path(analysis.ogg_file)
+    if not ogg_path.is_file():
+        raise FileNotFoundError(f"OGG file not found: {ogg_path}")
+    if tja_path.suffix.lower() != ".tja":
+        raise ValueError("Only .tja files can be exported")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_stem = ogg_path.stem
+    export_ogg_path = output_dir / f"{output_stem}.ogg"
+    export_tja_path = output_dir / f"{output_stem}.tja"
+    existing_paths = [path for path in (export_ogg_path, export_tja_path) if path.exists()]
+    if existing_paths:
+        existing = ", ".join(str(path) for path in existing_paths)
+        raise FileExistsError(f"Export target already exists: {existing}")
+
+    copy2(ogg_path, export_ogg_path)
+    copy2(tja_path, export_tja_path)
+    return export_ogg_path, export_tja_path
 
 
 def _select_bars(analysis: SongAnalysis, start_bar: int, end_bar: int):
@@ -2273,9 +2348,43 @@ def _result_panel(
     <p class="result-path">谱面已生成：<code>{_escape(str(output_path))}</code></p>
     <p class="lede">生成完成后直接进入可视化预览。点击播放自动演奏，拖动进度条查看任意位置，不再把大段 TJA 数值直接丢给用户。</p>
   </section>
+  {_export_form(job_id, output_path, analysis)}
   {_game_preview(job_id, analysis, chart_bars, course, level)}
 </section>
 """
+
+
+def _export_form(job_id: str, output_path: Path, analysis: SongAnalysis) -> str:
+    ogg_stem = Path(analysis.ogg_file).stem
+    return f"""
+  <section class="panel" aria-labelledby="export-heading">
+    <p class="eyebrow">保存结果</p>
+    <h2 id="export-heading">保存 OGG 和 TJA</h2>
+    <p class="lede">保存当前预览使用的 OGG 和 TJA；输出文件名会统一为 <code>{_escape(ogg_stem)}.ogg</code> 和 <code>{_escape(ogg_stem)}.tja</code>。</p>
+    <form action="/export-chart" method="post">
+      <input name="job_id" type="hidden" value="{_escape(job_id)}">
+      <input name="tja_filename" type="hidden" value="{_escape(output_path.name)}">
+      <div class="form-grid">
+        <label class="field field-wide">
+          保存目录
+          <input name="output_dir" placeholder="例如 D:\\Taiko\\Songs\\{_escape(ogg_stem)}" required>
+        </label>
+      </div>
+      <div class="helper-strip">
+        <button type="submit" data-loading-text="保存中">保存 OGG 和 TJA</button>
+        <span>如果目标目录中已有同名文件，本次保存会停止并提示。</span>
+      </div>
+    </form>
+  </section>
+"""
+
+
+def _export_success_notice(output_dir: Path, output_stem: str) -> str:
+    return (
+        '<p class="notice">已保存：'
+        f'<code>{_escape(str(output_dir / f"{output_stem}.ogg"))}</code> 和 '
+        f'<code>{_escape(str(output_dir / f"{output_stem}.tja"))}</code></p>'
+    )
 
 
 def _ai_generation_notice(ai_failure: str | None) -> str:
