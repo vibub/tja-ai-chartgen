@@ -10,7 +10,6 @@ from rich.console import Console
 from tja_ai_chartgen import __version__
 from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
 from tja_ai_chartgen.audio.convert import convert_to_ogg
-from tja_ai_chartgen.ai.examples import DEFAULT_REFERENCE_EXAMPLES_DIR, build_reference_examples
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.meter import validate_time_signature
 from tja_ai_chartgen.features.sections import assign_sections
@@ -91,11 +90,6 @@ def generate(
         "--ai-repair-retries",
         help="Retry count for repairing invalid AI JSON output.",
     ),
-    reference_examples_dir: Path = typer.Option(
-        DEFAULT_REFERENCE_EXAMPLES_DIR,
-        "--reference-examples-dir",
-        help="Directory containing reference .tja files and matching audio for AI prompts.",
-    ),
 ) -> None:
     run_generate(
         input_audio=input_audio,
@@ -118,7 +112,6 @@ def generate(
         ai_base_url=ai_base_url,
         ai_api_key=ai_api_key,
         ai_repair_retries=ai_repair_retries,
-        reference_examples_dir=reference_examples_dir,
     )
 
 
@@ -152,9 +145,6 @@ def generate_from_config(config_path: Path) -> None:
                 "ai_repair_retries",
             )
             or 0,
-            reference_examples_dir=Path(
-                str(config.get("reference_examples_dir", DEFAULT_REFERENCE_EXAMPLES_DIR))
-            ),
         )
     except ValueError as error:
         _fail(f"Invalid generation config: {error}")
@@ -207,7 +197,6 @@ def run_generate(
     ai_base_url: str | None,
     ai_api_key: str | None,
     ai_repair_retries: int,
-    reference_examples_dir: Path,
 ) -> None:
     load_dotenv()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -239,7 +228,6 @@ def run_generate(
     ai_input_path = output_dir / "ai_input.json"
     ai_output_path = output_dir / "ai_output.json"
     report_path = output_dir / "report.txt"
-    reference_examples_work_dir = output_dir / "reference_examples"
 
     generation_config = _build_generation_config(
         input_audio=input_audio,
@@ -260,7 +248,6 @@ def run_generate(
         use_ai=use_ai,
         model=resolved_model,
         ai_repair_retries=ai_repair_retries,
-        reference_examples_dir=reference_examples_dir,
     )
     write_json(generation_config_path, generation_config)
 
@@ -289,15 +276,6 @@ def run_generate(
         bars=bars,
     )
     write_json(analysis_path, analysis)
-
-    reference_examples = []
-    if use_ai:
-        console.print(f"Preparing AI reference examples from: {reference_examples_dir}")
-        reference_examples = build_reference_examples(
-            reference_examples_dir,
-            use_beatnet=use_beatnet,
-            work_dir=reference_examples_work_dir,
-        )
 
     course_specs = _build_course_specs(course, level, density, all_courses)
     tja_paths: list[Path] = []
@@ -332,7 +310,6 @@ def run_generate(
                         style,
                         course_density,
                         special_notes=special_notes,
-                        reference_examples=reference_examples,
                     ),
                 )
                 ai_bars, ai_output = generate_chart_bars_with_ai(
@@ -346,7 +323,6 @@ def run_generate(
                     api_key=ai_api_key,
                     max_repair_attempts=ai_repair_retries,
                     special_notes=special_notes,
-                    reference_examples=reference_examples,
                 )
                 write_json(course_ai_output_path, ai_output)
                 chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars), expected_bars=bars)
@@ -478,7 +454,6 @@ def _build_generation_config(
     use_ai: bool,
     model: str | None,
     ai_repair_retries: int,
-    reference_examples_dir: Path,
 ) -> dict[str, Any]:
     return {
         "input_audio": str(input_audio),
@@ -499,7 +474,6 @@ def _build_generation_config(
         "use_ai": use_ai,
         "model": model,
         "ai_repair_retries": ai_repair_retries,
-        "reference_examples_dir": str(reference_examples_dir),
     }
 
 

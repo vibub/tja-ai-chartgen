@@ -95,7 +95,6 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "use_ai": False,
         "model": None,
         "ai_repair_retries": 2,
-        "reference_examples_dir": "D:\\Downloads\\examples",
     }
     assert f"Generation config: {output_dir / 'generation_config.json'}" in (
         output_dir / "report.txt"
@@ -128,7 +127,6 @@ def test_generate_with_beatnet_passes_flag_and_records_config(tmp_path, monkeypa
 
     monkeypatch.setattr("tja_ai_chartgen.cli.convert_to_ogg", fake_convert_to_ogg)
     monkeypatch.setattr("tja_ai_chartgen.cli.analyze_audio", fake_analyze_audio)
-    monkeypatch.setattr("tja_ai_chartgen.cli.build_reference_examples", lambda *args, **kwargs: [])
 
     result = runner.invoke(
         app,
@@ -535,7 +533,6 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
         api_key,
         max_repair_attempts,
         special_notes,
-        reference_examples=None,
     ):
         assert model == "openai/custom-model"
         assert api_base == "https://llm.example.com/v1"
@@ -598,7 +595,6 @@ def test_generate_with_ai_records_default_model(tmp_path, monkeypatch):
         api_key,
         max_repair_attempts,
         special_notes,
-        reference_examples=None,
     ):
         assert model == "openai/gpt-4o-mini"
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
@@ -646,7 +642,6 @@ def test_generate_with_ai_records_model_from_environment(tmp_path, monkeypatch):
         api_key,
         max_repair_attempts,
         special_notes,
-        reference_examples=None,
     ):
         assert model == "openai/env-model"
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
@@ -748,4 +743,3 @@ def _patch_audio_pipeline(monkeypatch, duration=2.0):
 
     monkeypatch.setattr("tja_ai_chartgen.cli.convert_to_ogg", fake_convert_to_ogg)
     monkeypatch.setattr("tja_ai_chartgen.cli.analyze_audio", fake_analyze_audio)
-    monkeypatch.setattr("tja_ai_chartgen.cli.build_reference_examples", lambda *args, **kwargs: [])

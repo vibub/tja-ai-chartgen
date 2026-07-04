@@ -36,19 +36,18 @@ def test_build_chart_generation_payload_includes_density():
     assert "grid_features" in payload["bars"][0]
 
 
-def test_build_chart_generation_payload_includes_reference_examples():
+def test_build_chart_generation_payload_can_include_static_reference_prompt():
     analysis = _analysis()
-    reference_examples = [{"title": "Reference", "bars": []}]
 
     payload = build_chart_generation_payload(
         analysis,
         "Oni",
         10,
         "technical",
-        reference_examples=reference_examples,
+        reference_examples_prompt="static reference prompt",
     )
 
-    assert payload["reference_examples"] == reference_examples
+    assert payload["reference_examples_prompt"] == "static reference prompt"
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
@@ -57,6 +56,7 @@ def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
     def fake_completion(**kwargs):
         assert kwargs["model"] == "fake/model"
         assert kwargs["messages"][0]["role"] == "user"
+        assert "Reference chart examples" in kwargs["messages"][0]["content"]
         assert kwargs["temperature"] == 0.7
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
