@@ -27,6 +27,12 @@ WEB_SOUND_FILES = {
 }
 ALLOWED_WEB_NOTES = set("01234578")
 DEFAULT_WEB_BALLOON_COUNT = 8
+WEB_COURSE_OPTIONS = (
+    ("Easy", "简单（Easy）"),
+    ("Normal", "普通（Normal）"),
+    ("Hard", "困难（Hard）"),
+    ("Oni", "魔王（Oni）"),
+)
 
 
 _PAGE_CSS = """
@@ -1347,7 +1353,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                         course=chart.metadata.course,
                         level=chart.metadata.level,
                     )
-                    + _regenerate_form(job_dir.name),
+                    + _regenerate_form(job_dir.name, len(analysis.bars), chart.metadata.course),
                 )
             )
         except Exception as error:  # noqa: BLE001 - Web boundary returns a readable error page.
@@ -1394,7 +1400,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                         course=course,
                         level=level,
                     )
-                    + _regenerate_form(job_dir.name),
+                    + _regenerate_form(job_dir.name, len(analysis.bars), course),
                 )
             )
         except (UnicodeDecodeError, ValueError) as error:
@@ -1497,7 +1503,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                         course=course,
                         level=level,
                     ),
-                    _regenerate_form(job_id),
+                    _regenerate_form(job_id, len(analysis.bars), course),
                 ]
             )
             return HTMLResponse(_page("Regenerated bars", body))
@@ -1545,7 +1551,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                         course=course,
                         level=level,
                     ),
-                    _regenerate_form(job_id),
+                    _regenerate_form(job_id, len(analysis.bars), course),
                 ]
             )
             return HTMLResponse(_page("Saved chart edits", body))
@@ -2016,7 +2022,8 @@ def _analysis_summary(analysis: SongAnalysis, analysis_path: Path, job_id: str) 
 """
 
 
-def _regenerate_form(job_id: str) -> str:
+def _regenerate_form(job_id: str, bar_count: int, course: str = "Oni") -> str:
+    end_bar = max(1, bar_count)
     return f"""
 <section class="panel" aria-labelledby="regen-heading">
   <p class="eyebrow">谱面片段</p>
@@ -2031,11 +2038,11 @@ def _regenerate_form(job_id: str) -> str:
       </label>
       <label class="field">
         结束小节
-        <input name="end_bar" type="number" min="1" value="1" required>
+        <input name="end_bar" type="number" min="1" value="{end_bar}" required>
       </label>
       <label class="field">
         难度类型
-        <input name="course" value="Oni">
+        <select name="course">{_course_option_tags(course)}</select>
       </label>
       <label class="field">
         难度等级
@@ -2293,6 +2300,16 @@ def _option_tags(options, selected: str) -> str:
     return "".join(
         f'<option value="{_escape(option)}"{_selected_attr(option, selected)}>{_escape(option)}</option>'
         for option in options
+    )
+
+
+def _course_option_tags(selected: str) -> str:
+    options = list(WEB_COURSE_OPTIONS)
+    if selected and selected not in {value for value, _label in options}:
+        options.append((selected, selected))
+    return "".join(
+        f'<option value="{_escape(value)}"{_selected_attr(value, selected)}>{_escape(label)}</option>'
+        for value, label in options
     )
 
 

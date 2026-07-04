@@ -32,6 +32,10 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "游玩预览" in response.text
     assert "data-game-preview" in response.text
+    assert 'name="start_bar" type="number" min="1" value="1"' in response.text
+    assert 'name="end_bar" type="number" min="1" value="1"' in response.text
+    assert '<select name="course">' in response.text
+    assert '魔王（Oni）' in response.text
     assert "BPM: 180.0" not in response.text
     assert "OFFSET: 0.25" not in response.text
     assert "小节预览" not in response.text
@@ -49,6 +53,8 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
         files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
     )
     assert analyze_response.status_code == 200
+    assert 'name="start_bar" type="number" min="1" value="1"' in analyze_response.text
+    assert 'name="end_bar" type="number" min="1" value="2"' in analyze_response.text
     job_id = next(tmp_path.iterdir()).name
 
     response = client.post(
