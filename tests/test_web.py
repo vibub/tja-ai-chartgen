@@ -60,7 +60,64 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "Regenerated bars" in response.text
     assert "COURSE:Oni" in response.text
+    assert "谱面预览与调整" in response.text
     assert (tmp_path / job_id / "regenerated_1_2.tja").exists()
+
+
+def test_web_save_chart_edits(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch, duration=4.0)
+    client = TestClient(create_app(output_dir=tmp_path))
+    analyze_response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "2"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert analyze_response.status_code == 200
+    job_id = next(tmp_path.iterdir()).name
+
+    response = client.post(
+        "/save-chart",
+        data={
+            "job_id": job_id,
+            "course": "Oni",
+            "level": "10",
+            "bar_count": "2",
+            "bar_index_0": "0",
+            "time_signature_0": "4/4",
+            "grids_per_bar_0": "16",
+            "notes_0": "1000000000000000",
+            "balloon_counts_0": "",
+            "bar_index_1": "1",
+            "time_signature_1": "4/4",
+            "grids_per_bar_1": "16",
+            "notes_1": "7000000080000000",
+            "balloon_counts_1": "8",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Saved chart edits" in response.text
+    assert "BALLOON:8" in response.text
+    assert (tmp_path / job_id / "edited_1_2.tja").read_text(encoding="utf-8").count(
+        "1000000000000000,"
+    ) == 1
+
+
+def test_web_serves_job_audio(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+    analyze_response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert analyze_response.status_code == 200
+    job_id = next(tmp_path.iterdir()).name
+
+    response = client.get(f"/jobs/{job_id}/song.ogg")
+
+    assert response.status_code == 200
+    assert response.content == b"fake ogg"
 
 
 def _patch_web_audio_pipeline(monkeypatch, duration=2.0):

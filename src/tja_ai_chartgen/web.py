@@ -2,8 +2,8 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import ValidationError
 
 from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
@@ -13,11 +13,14 @@ from tja_ai_chartgen.features.meter import validate_time_signature
 from tja_ai_chartgen.features.sections import assign_sections
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
 from tja_ai_chartgen.rules.styles import STYLE_LEVELS, validate_style
-from tja_ai_chartgen.tja.model import ChartMetadata, SongAnalysis, TjaChart
+from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.writer import render_tja
 from tja_ai_chartgen.utils.paths import write_json
 
 DEFAULT_WEB_OUTPUT_DIR = Path("output/web")
+ALLOWED_WEB_NOTES = set("01234578")
+DEFAULT_WEB_BALLOON_COUNT = 8
+
 
 _PAGE_CSS = """
 :root {
@@ -254,7 +257,8 @@ textarea {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 3.15rem;
   padding: 0.78rem 0.9rem;
@@ -288,7 +292,8 @@ a:focus-visible {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   background: rgba(12, 13, 16, 0.82);
   border-color: rgba(214, 168, 95, 0.78);
   box-shadow: 0 0 0 4px rgba(214, 168, 95, 0.11);
@@ -504,6 +509,140 @@ pre {
   border-radius: var(--radius-lg);
 }
 
+.audio-card audio {
+  width: 100%;
+  margin-top: 0.8rem;
+  accent-color: var(--accent);
+}
+
+.chart-editor {
+  display: grid;
+  gap: 1rem;
+}
+
+.editor-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.note-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.note-legend li {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.22rem 0.5rem;
+  color: #ded4c0;
+  font-size: 0.82rem;
+  background: rgba(12, 13, 16, 0.44);
+  border: 1px solid rgba(246, 240, 226, 0.1);
+  border-radius: 999px;
+}
+
+.bar-editor {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(18rem, 1fr) minmax(12rem, 0.55fr);
+  gap: 0.8rem;
+  align-items: start;
+  padding: 0.9rem;
+  background: rgba(12, 13, 16, 0.42);
+  border: 1px solid rgba(246, 240, 226, 0.1);
+  border-radius: var(--radius-md);
+}
+
+.bar-meta {
+  display: grid;
+  gap: 0.22rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-no {
+  color: #f8e7bf;
+  font-weight: 820;
+}
+
+.bar-subtle {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.note-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--grid-count), minmax(1.9rem, 1fr));
+  gap: 0.35rem;
+  padding: 0.4rem;
+  overflow-x: auto;
+  background: rgba(5, 6, 8, 0.4);
+  border: 1px solid rgba(246, 240, 226, 0.08);
+  border-radius: var(--radius-sm);
+}
+
+.note-cell {
+  display: grid;
+  min-width: 1.9rem;
+  min-height: 2.3rem;
+  padding: 0;
+  place-items: center;
+  color: #f8edda;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  background: rgba(246, 240, 226, 0.08);
+  border: 1px solid rgba(246, 240, 226, 0.12);
+  border-radius: 0.65rem;
+  box-shadow: none;
+}
+
+.note-cell:hover {
+  filter: brightness(1.1);
+  box-shadow: none;
+  transform: translateY(-1px);
+}
+
+.note-cell[data-beat="true"] {
+  border-color: rgba(214, 168, 95, 0.5);
+}
+
+.note-0 { color: rgba(246, 240, 226, 0.42); background: rgba(246, 240, 226, 0.04); }
+.note-1 { background: #d94f3f; }
+.note-2 { background: #4f7fd9; }
+.note-3 { background: linear-gradient(135deg, #d94f3f 0 50%, #f3c267 50%); }
+.note-4 { background: linear-gradient(135deg, #4f7fd9 0 50%, #f3c267 50%); }
+.note-5 { color: #17130d; background: #f3c267; }
+.note-7 { color: #17130d; background: #8ed16f; }
+.note-8 { color: #17130d; background: #d9d9d9; }
+
+.note-text-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.note-text-grid input {
+  min-height: 2.5rem;
+  font-family: "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+.note-text-grid label {
+  display: grid;
+  gap: 0.35rem;
+}
+
 .notice {
   padding: 1rem 1.1rem;
   border-radius: var(--radius-md);
@@ -531,7 +670,8 @@ pre {
     position: static;
   }
 
-  .form-grid {
+  .form-grid,
+  .bar-editor {
     grid-template-columns: 1fr;
   }
 }
@@ -554,6 +694,61 @@ pre {
 """
 
 _PAGE_SCRIPT = """
+const NOTE_SEQUENCE = ['0', '1', '2', '3', '4', '5', '7', '8'];
+const NOTE_LABELS = {
+  '0': '·',
+  '1': 'ド',
+  '2': 'カ',
+  '3': '大ド',
+  '4': '大カ',
+  '5': '連',
+  '7': '風',
+  '8': '止',
+};
+
+function paintNoteCell(cell, note) {
+  const normalized = NOTE_SEQUENCE.includes(note) ? note : '0';
+  const beatClass = cell.dataset.beat === 'true' ? ' beat-cell' : '';
+  cell.dataset.note = normalized;
+  cell.className = `note-cell note-${normalized}${beatClass}`;
+  cell.textContent = NOTE_LABELS[normalized];
+  cell.setAttribute('aria-label', `note ${normalized}`);
+}
+
+function syncBarNotes(row, notes) {
+  const hidden = row.querySelector('input[type="hidden"][data-role="notes"]');
+  const text = row.querySelector('input[data-role="notes-text"]');
+  const cells = [...row.querySelectorAll('.note-cell')];
+  const normalized = cells.map((cell, index) => NOTE_SEQUENCE.includes(notes[index]) ? notes[index] : '0');
+  cells.forEach((cell, index) => paintNoteCell(cell, normalized[index] || '0'));
+  const value = normalized.join('');
+  if (hidden) hidden.value = value;
+  if (text && text.value !== value) text.value = value;
+}
+
+function setupChartEditor() {
+  document.querySelectorAll('.bar-editor').forEach((row) => {
+    const cells = [...row.querySelectorAll('.note-cell')];
+    const text = row.querySelector('input[data-role="notes-text"]');
+    syncBarNotes(row, cells.map((cell) => cell.dataset.note || '0').join(''));
+
+    cells.forEach((cell, index) => {
+      cell.addEventListener('click', () => {
+        const current = cell.dataset.note || '0';
+        const next = NOTE_SEQUENCE[(NOTE_SEQUENCE.indexOf(current) + 1) % NOTE_SEQUENCE.length];
+        const notes = cells.map((item, itemIndex) => itemIndex === index ? next : (item.dataset.note || '0')).join('');
+        syncBarNotes(row, notes);
+      });
+    });
+
+    if (text) {
+      text.addEventListener('input', () => syncBarNotes(row, text.value));
+    }
+  });
+}
+
+setupChartEditor();
+
 document.querySelectorAll('form').forEach((form) => {
   form.addEventListener('submit', () => {
     const button = form.querySelector('button[type="submit"]');
@@ -622,6 +817,17 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                 status_code=400,
             )
 
+    @app.get("/jobs/{job_id}/{filename}")
+    async def job_file(job_id: str, filename: str) -> FileResponse:
+        try:
+            job_dir = _job_dir(app.state.output_dir, job_id)
+        except (FileNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        path = job_dir / Path(filename).name
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=f"Job file not found: {filename}")
+        return FileResponse(path)
+
     @app.post("/regenerate", response_class=HTMLResponse)
     async def regenerate(
         job_id: Annotated[str, Form()],
@@ -664,7 +870,15 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             output_path.write_text(tja_text, encoding="utf-8")
             body = "".join(
                 [
-                    _result_panel(output_path, tja_text),
+                    _result_panel(
+                        job_id=job_id,
+                        output_path=output_path,
+                        tja_text=tja_text,
+                        analysis=analysis,
+                        chart_bars=chart_bars,
+                        course=course,
+                        level=level,
+                    ),
                     _regenerate_form(job_id),
                 ]
             )
@@ -672,6 +886,54 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
         except (FileNotFoundError, ValidationError, ValueError) as error:
             return HTMLResponse(
                 _page("Regeneration failed", _error_notice(str(error))),
+                status_code=400,
+            )
+
+    @app.post("/save-chart", response_class=HTMLResponse)
+    async def save_chart(request: Request) -> HTMLResponse:
+        try:
+            form = await request.form()
+            job_id = str(form.get("job_id", ""))
+            job_dir = _job_dir(app.state.output_dir, job_id)
+            analysis = SongAnalysis.model_validate_json(
+                (job_dir / "analysis.json").read_text(encoding="utf-8")
+            )
+            course = str(form.get("course", "Oni"))
+            level = int(str(form.get("level", "10")))
+            chart_bars = _edited_chart_bars_from_form(form)
+            chart = TjaChart(
+                metadata=ChartMetadata(
+                    title=analysis.title,
+                    artist=analysis.artist,
+                    wave=Path(analysis.ogg_file).name,
+                    bpm=analysis.bpm,
+                    offset=analysis.offset,
+                    course=course,
+                    level=level,
+                ),
+                bars=chart_bars,
+            )
+            tja_text = render_tja(chart)
+            output_path = job_dir / _edited_output_filename(chart_bars)
+            output_path.write_text(tja_text, encoding="utf-8")
+            body = "".join(
+                [
+                    _result_panel(
+                        job_id=job_id,
+                        output_path=output_path,
+                        tja_text=tja_text,
+                        analysis=analysis,
+                        chart_bars=chart_bars,
+                        course=course,
+                        level=level,
+                    ),
+                    _regenerate_form(job_id),
+                ]
+            )
+            return HTMLResponse(_page("Saved chart edits", body))
+        except (FileNotFoundError, ValidationError, ValueError) as error:
+            return HTMLResponse(
+                _page("Save failed", _error_notice(str(error))),
                 status_code=400,
             )
 
@@ -715,6 +977,64 @@ def _select_bars(analysis: SongAnalysis, start_bar: int, end_bar: int):
     if not selected:
         raise ValueError("No bars selected")
     return selected
+
+
+def _edited_chart_bars_from_form(form) -> list[ChartBar]:
+    bar_count = int(str(form.get("bar_count", "0")))
+    if bar_count < 1:
+        raise ValueError("No editable bars submitted")
+
+    chart_bars: list[ChartBar] = []
+    for position in range(bar_count):
+        notes = str(form.get(f"notes_{position}", ""))
+        expected_length = int(str(form.get(f"grids_per_bar_{position}", len(notes))))
+        if len(notes) != expected_length:
+            raise ValueError(
+                f"notes_{position} must contain exactly {expected_length} character(s), got {len(notes)}"
+            )
+        illegal_characters = sorted(set(notes) - ALLOWED_WEB_NOTES)
+        if illegal_characters:
+            raise ValueError(f"notes_{position} contains illegal character(s): {''.join(illegal_characters)}")
+
+        time_signature = str(form.get(f"time_signature_{position}", "4/4"))
+        validate_time_signature(time_signature)
+        chart_bars.append(
+            ChartBar(
+                index=int(str(form.get(f"bar_index_{position}", position))),
+                notes=notes,
+                time_signature=time_signature,
+                balloon_counts=_parse_balloon_counts(
+                    str(form.get(f"balloon_counts_{position}", "")),
+                    notes.count("7"),
+                ),
+            )
+        )
+
+    return chart_bars
+
+
+def _parse_balloon_counts(raw_value: str, expected_count: int) -> list[int]:
+    if expected_count == 0:
+        return []
+    if not raw_value.strip():
+        return [DEFAULT_WEB_BALLOON_COUNT] * expected_count
+
+    counts: list[int] = []
+    for raw_count in raw_value.split(","):
+        value = int(raw_count.strip())
+        if value < 1:
+            raise ValueError("balloon counts must be positive integers")
+        counts.append(value)
+
+    if len(counts) != expected_count:
+        raise ValueError(f"balloon counts must contain exactly {expected_count} value(s)")
+    return counts
+
+
+def _edited_output_filename(chart_bars: list[ChartBar]) -> str:
+    first_bar = chart_bars[0].index + 1
+    last_bar = chart_bars[-1].index + 1
+    return f"edited_{first_bar}_{last_bar}.tja"
 
 
 def _analysis_form() -> str:
@@ -824,6 +1144,8 @@ def _analysis_summary(analysis: SongAnalysis, analysis_path: Path, job_id: str) 
     </div>
   </section>
 
+  {_audio_preview(analysis, job_id)}
+
   <section class="table-wrap" aria-labelledby="bars-heading">
     <div class="panel">
       <p class="eyebrow">Bar map</p>
@@ -889,14 +1211,145 @@ def _regenerate_form(job_id: str) -> str:
 """
 
 
-def _result_panel(output_path: Path, tja_text: str) -> str:
+def _audio_preview(analysis: SongAnalysis, job_id: str) -> str:
+    ogg_name = Path(analysis.ogg_file).name
+    return f"""
+  <section class="panel audio-card" aria-labelledby="audio-heading">
+    <p class="eyebrow">Audio preview</p>
+    <h2 id="audio-heading">音频预览</h2>
+    <p class="lede">播放转换后的 OGG，配合下方小节起止时间检查 OFFSET 与局部节奏。</p>
+    <audio controls preload="metadata" src="/jobs/{_escape(job_id)}/{_escape(ogg_name)}"></audio>
+  </section>
+"""
+
+
+def _chart_editor(
+    job_id: str,
+    analysis: SongAnalysis,
+    chart_bars: list[ChartBar],
+    course: str,
+    level: int,
+) -> str:
+    rows = "".join(
+        _bar_editor_row(position, bar, analysis)
+        for position, bar in enumerate(chart_bars)
+    )
+    return f"""
+  <section class="panel chart-editor" aria-labelledby="chart-editor-heading">
+    <div class="editor-toolbar">
+      <div>
+        <p class="eyebrow">Interactive preview</p>
+        <h2 id="chart-editor-heading">谱面预览与调整</h2>
+      </div>
+      {_note_legend()}
+    </div>
+    <form class="editor-card" action="/save-chart" method="post">
+      <input name="job_id" type="hidden" value="{_escape(job_id)}">
+      <input name="course" type="hidden" value="{_escape(course)}">
+      <input name="level" type="hidden" value="{level}">
+      <input name="bar_count" type="hidden" value="{len(chart_bars)}">
+      {rows}
+      <div class="helper-strip">
+        <button type="submit" data-loading-text="Saving">保存调整后的 TJA</button>
+        <span>点击格子循环 0/1/2/3/4/5/7/8；文本框可直接粘贴 TJA 小节音符。</span>
+      </div>
+    </form>
+  </section>
+"""
+
+
+def _bar_editor_row(position: int, chart_bar: ChartBar, analysis: SongAnalysis) -> str:
+    feature = next((bar for bar in analysis.bars if bar.index == chart_bar.index), None)
+    beat_grids = set(feature.beat_grids if feature else [])
+    cells = "".join(
+        _note_cell(note, grid_index in beat_grids)
+        for grid_index, note in enumerate(chart_bar.notes)
+    )
+    balloon_counts = ",".join(str(count) for count in chart_bar.balloon_counts)
+    start_time = f"{feature.start_time:.3f}s" if feature else "unknown"
+    section = feature.section if feature else "unknown"
+    return f"""
+      <article class="bar-editor" data-bar-index="{chart_bar.index}">
+        <div class="bar-meta">
+          <span class="bar-no">Bar {chart_bar.index + 1}</span>
+          <span class="bar-subtle">{_escape(start_time)}</span>
+          <span class="bar-subtle">{_escape(section)} · {chart_bar.time_signature}</span>
+        </div>
+        <div class="note-grid" style="--grid-count: {len(chart_bar.notes)}" aria-label="Bar {chart_bar.index + 1} note grid">
+          {cells}
+        </div>
+        <div class="note-text-grid">
+          <input name="bar_index_{position}" type="hidden" value="{chart_bar.index}">
+          <input name="time_signature_{position}" type="hidden" value="{_escape(chart_bar.time_signature)}">
+          <input name="grids_per_bar_{position}" type="hidden" value="{len(chart_bar.notes)}">
+          <input name="notes_{position}" type="hidden" data-role="notes" value="{_escape(chart_bar.notes)}">
+          <label>
+            Notes
+            <input data-role="notes-text" value="{_escape(chart_bar.notes)}" maxlength="{len(chart_bar.notes)}">
+          </label>
+          <label>
+            Balloon counts
+            <input name="balloon_counts_{position}" value="{_escape(balloon_counts)}" placeholder="8,8">
+          </label>
+        </div>
+      </article>
+"""
+
+
+def _note_cell(note: str, is_beat: bool) -> str:
+    normalized = note if note in ALLOWED_WEB_NOTES else "0"
+    label = {
+        "0": "·",
+        "1": "ド",
+        "2": "カ",
+        "3": "大ド",
+        "4": "大カ",
+        "5": "連",
+        "7": "風",
+        "8": "止",
+    }[normalized]
+    beat_value = "true" if is_beat else "false"
+    return f"""
+          <button class="note-cell note-{normalized}" type="button" data-note="{normalized}" data-beat="{beat_value}" aria-label="note {normalized}">{label}</button>
+"""
+
+
+def _note_legend() -> str:
+    items = "".join(
+        f'<li><span class="note-cell note-{note}" aria-hidden="true">{label}</span><span>{note}</span></li>'
+        for note, label in (
+            ("0", "·"),
+            ("1", "ド"),
+            ("2", "カ"),
+            ("3", "大ド"),
+            ("4", "大カ"),
+            ("5", "連"),
+            ("7", "風"),
+            ("8", "止"),
+        )
+    )
+    return f'<ul class="note-legend" aria-label="音符图例">{items}</ul>'
+
+
+def _result_panel(
+    *,
+    job_id: str,
+    output_path: Path,
+    tja_text: str,
+    analysis: SongAnalysis,
+    chart_bars: list[ChartBar],
+    course: str,
+    level: int,
+) -> str:
     return f"""
 <section class="stack" aria-labelledby="result-heading">
   <section class="panel">
     <p class="eyebrow">Export ready</p>
     <h1 id="result-heading">Regenerated bars</h1>
     <p class="result-path">Generated: <code>{_escape(str(output_path))}</code></p>
+    <p class="lede">参考 PeepoDrumKit 这类太鼓谱面编辑器，把 TJA 文本变成可点选的鼓点网格；点击格子循环音符，再保存为新的 .tja。</p>
   </section>
+  {_chart_editor(job_id, analysis, chart_bars, course, level)}
   <section class="code-card" aria-label="TJA preview">
     <p class="eyebrow">TJA preview</p>
     <pre>{_escape(tja_text)}</pre>
