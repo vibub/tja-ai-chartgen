@@ -1,7 +1,10 @@
+import numpy as np
 import pytest
 
 from tja_ai_chartgen.audio.analyze import (
     AudioAnalysisRaw,
+    _estimate_tempo_and_offset_from_onsets,
+    _regular_beat_times,
     apply_analysis_overrides,
     estimate_time_signature,
     merge_beatnet_output,
@@ -17,6 +20,46 @@ def test_normalize_bpm_keeps_taiko_friendly_range():
 def test_normalize_bpm_rejects_non_positive_values():
     with pytest.raises(ValueError, match="BPM must be positive"):
         normalize_bpm(0)
+
+
+def test_estimate_tempo_and_offset_from_onsets_selects_periodic_grid():
+    onset_times = [0.2 + i * 0.5 for i in range(24)]
+    weights = [1.0 for _ in onset_times]
+    samples = np.zeros(8_000, dtype=float)
+
+    bpm, offset = _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        weights,
+        samples,
+        sample_rate=1_000,
+        fallback_bpm=90,
+    )
+
+    assert bpm == 120
+    assert offset == pytest.approx(0.2, abs=0.006)
+
+
+def test_estimate_tempo_and_offset_from_onsets_uses_waveform_to_reject_offbeat():
+    onset_times = [0.25 + i * 0.5 for i in range(16)] + [0.5 + i * 0.5 for i in range(16)]
+    weights = [1.0 for _ in onset_times]
+    samples = np.zeros(10_000, dtype=float)
+    for index in range(0, len(samples), 500):
+        samples[index : index + 20] = np.linspace(0.0, 1.0, 20)
+
+    bpm, offset = _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        weights,
+        samples,
+        sample_rate=1_000,
+        fallback_bpm=120,
+    )
+
+    assert bpm == 120
+    assert offset == pytest.approx(0.0, abs=0.006)
+
+
+def test_regular_beat_times_starts_at_refined_offset():
+    assert _regular_beat_times(0.2, 120, 1.3) == [0.2, 0.7, 1.2]
 
 
 def test_apply_analysis_overrides_updates_bpm_and_offset():
