@@ -35,6 +35,7 @@ def generate_chart_bars_with_ai(
     api_key: str | None = None,
     max_repair_attempts: int = DEFAULT_AI_REPAIR_RETRIES,
     special_notes: bool = False,
+    reference_examples: list[dict[str, Any]] | None = None,
 ) -> tuple[list[ChartBar], dict[str, Any]]:
     model_name = model or os.getenv("MODEL", "openai/gpt-4o-mini")
     resolved_api_base = api_base or os.getenv("OPENAI_BASE_URL")
@@ -47,6 +48,7 @@ def generate_chart_bars_with_ai(
         style,
         density,
         special_notes=special_notes,
+        reference_examples=reference_examples,
     )
     messages = [{"role": "user", "content": prompt}]
     attempts: list[dict[str, Any]] = []
@@ -85,6 +87,7 @@ def generate_chart_bars_with_ai(
                 max_repair_attempts=repair_attempts,
                 attempts=attempts,
                 final=data,
+                reference_example_count=len(reference_examples or []),
             )
 
         attempts.append(
@@ -116,6 +119,7 @@ def generate_chart_bars_with_ai(
         max_repair_attempts=repair_attempts,
         attempts=attempts,
         final=None,
+        reference_example_count=len(reference_examples or []),
     )
     raise AiOutputRepairError(
         f"AI output remained invalid after {len(attempts)} attempt(s): "
@@ -297,12 +301,14 @@ def _build_ai_output(
     max_repair_attempts: int,
     attempts: list[dict[str, Any]],
     final: dict[str, Any] | None,
+    reference_example_count: int = 0,
 ) -> dict[str, Any]:
     return {
         "model": model,
         "api_base": api_base,
         "api_key_provided": api_key_provided,
         "max_repair_attempts": max_repair_attempts,
+        "reference_example_count": reference_example_count,
         "attempts": attempts,
         "final": final,
     }

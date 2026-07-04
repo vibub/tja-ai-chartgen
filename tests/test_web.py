@@ -89,6 +89,7 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
         api_key=None,
         max_repair_attempts=2,
         special_notes=False,
+        reference_examples=None,
     ):
         assert course == "Oni"
         assert level == 10
@@ -279,3 +280,4 @@ def _patch_web_audio_pipeline(monkeypatch, duration=2.0):
 
     monkeypatch.setattr("tja_ai_chartgen.web.convert_to_ogg", fake_convert_to_ogg)
     monkeypatch.setattr("tja_ai_chartgen.web.analyze_audio", fake_analyze_audio)
+    monkeypatch.setattr("tja_ai_chartgen.web.build_reference_examples", lambda *args, **kwargs: [])

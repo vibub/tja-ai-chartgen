@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
 from tja_ai_chartgen.audio.convert import convert_to_ogg
+from tja_ai_chartgen.ai.examples import DEFAULT_REFERENCE_EXAMPLES_DIR, build_reference_examples
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
 from tja_ai_chartgen.features.sections import assign_sections
@@ -1792,6 +1793,10 @@ def _generate_ai_chart_bars_for_web(
     from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
 
     selected_analysis = analysis.model_copy(update={"bars": selected_bars})
+    reference_examples = build_reference_examples(
+        DEFAULT_REFERENCE_EXAMPLES_DIR,
+        work_dir=job_dir / "reference_examples",
+    )
     ai_input_path = job_dir / f"ai_input_{start_bar}_{end_bar}.json"
     ai_output_path = job_dir / f"ai_output_{start_bar}_{end_bar}.json"
     write_json(
@@ -1803,6 +1808,7 @@ def _generate_ai_chart_bars_for_web(
             style,
             density,
             special_notes=special_notes,
+            reference_examples=reference_examples,
         ),
     )
     try:
@@ -1817,6 +1823,7 @@ def _generate_ai_chart_bars_for_web(
             api_key=api_key,
             max_repair_attempts=ai_repair_retries,
             special_notes=special_notes,
+            reference_examples=reference_examples,
         )
     except Exception as error:
         _write_web_ai_failure(ai_output_path, error)

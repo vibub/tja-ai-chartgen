@@ -12,9 +12,10 @@ def build_chart_generation_payload(
     style: str,
     density: str = "auto",
     special_notes: bool = False,
+    reference_examples: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     template = get_style_template(style)
-    return {
+    payload = {
         "title": analysis.title,
         "artist": analysis.artist,
         "bpm": analysis.bpm,
@@ -31,6 +32,9 @@ def build_chart_generation_payload(
         "special_notes": special_notes,
         "bars": [bar.model_dump() for bar in analysis.bars],
     }
+    if reference_examples:
+        payload["reference_examples"] = reference_examples
+    return payload
 
 
 def build_chart_generation_prompt(
@@ -40,6 +44,7 @@ def build_chart_generation_prompt(
     style: str,
     density: str = "auto",
     special_notes: bool = False,
+    reference_examples: list[dict[str, Any]] | None = None,
 ) -> str:
     payload = build_chart_generation_payload(
         analysis,
@@ -48,6 +53,7 @@ def build_chart_generation_prompt(
         style,
         density,
         special_notes=special_notes,
+        reference_examples=reference_examples,
     )
 
     return f"""
@@ -72,6 +78,7 @@ Rules:
 14. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density asks for more.
 15. Use beat_grids, downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
 16. If special_notes is true and you use a balloon note 7, include balloon_counts with one positive integer per balloon note in that bar.
+17. If reference_examples are present in the input, use them as style and audio-alignment examples only: study how their audio_features map to reference_notes, but do not copy their note-string length. Your output notes must still match the requested input bars' grids_per_bar values.
 
 Input:
 {json.dumps(payload, ensure_ascii=False)}

@@ -36,6 +36,21 @@ def test_build_chart_generation_payload_includes_density():
     assert "grid_features" in payload["bars"][0]
 
 
+def test_build_chart_generation_payload_includes_reference_examples():
+    analysis = _analysis()
+    reference_examples = [{"title": "Reference", "bars": []}]
+
+    payload = build_chart_generation_payload(
+        analysis,
+        "Oni",
+        10,
+        "technical",
+        reference_examples=reference_examples,
+    )
+
+    assert payload["reference_examples"] == reference_examples
+
+
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
 
