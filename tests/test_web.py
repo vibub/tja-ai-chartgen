@@ -11,10 +11,11 @@ def test_web_index_shows_upload_form(tmp_path):
 
     assert response.status_code == 200
     assert "Upload and analyze" in response.text
+    assert "直接播放 TJA" in response.text
     assert "multipart/form-data" in response.text
 
 
-def test_web_analyze_upload_previews_bars(tmp_path, monkeypatch):
+def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     _patch_web_audio_pipeline(monkeypatch)
     client = TestClient(create_app(output_dir=tmp_path))
 
@@ -25,11 +26,14 @@ def test_web_analyze_upload_previews_bars(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert "Analysis preview" in response.text
-    assert "BPM: 180.0" in response.text
-    assert "OFFSET: 0.25" in response.text
-    assert "Regenerate selected bars" in response.text
-    assert (next(tmp_path.iterdir()) / "analysis.json").exists()
+    assert "游玩预览" in response.text
+    assert "data-game-preview" in response.text
+    assert "BPM: 180.0" not in response.text
+    assert "OFFSET: 0.25" not in response.text
+    assert "小节预览" not in response.text
+    job_dir = next(tmp_path.iterdir())
+    assert (job_dir / "analysis.json").exists()
+    assert (job_dir / "preview.tja").exists()
 
 
 def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
@@ -59,8 +63,10 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert "Regenerated bars" in response.text
-    assert "COURSE:Oni" in response.text
-    assert "谱面预览与调整" in response.text
+    assert "游玩预览" in response.text
+    assert "Game preview" in response.text
+    assert "data-game-preview" in response.text
+    assert "TJA preview" not in response.text
     assert (tmp_path / job_id / "regenerated_1_2.tja").exists()
 
 
@@ -97,10 +103,54 @@ def test_web_save_chart_edits(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert "Saved chart edits" in response.text
-    assert "BALLOON:8" in response.text
-    assert (tmp_path / job_id / "edited_1_2.tja").read_text(encoding="utf-8").count(
-        "1000000000000000,"
-    ) == 1
+    assert "游玩预览" in response.text
+    assert "BALLOON:8" not in response.text
+    edited_text = (tmp_path / job_id / "edited_1_2.tja").read_text(encoding="utf-8")
+    assert "BALLOON:8" in edited_text
+    assert edited_text.count("1000000000000000,") == 1
+
+
+def test_web_preview_tja_upload(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+    tja_text = """TITLE:Debug Song
+BPM:120
+OFFSET:0.5
+COURSE:Oni
+LEVEL:10
+
+#START
+1000200030004000,
+#END
+"""
+
+    response = client.post(
+        "/preview-tja",
+        files={
+            "tja": ("debug.tja", tja_text.encode("utf-8"), "text/plain"),
+            "audio": ("song.ogg", b"fake ogg", "audio/ogg"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert "游玩预览" in response.text
+    assert "Debug Song" in response.text
+    assert "data-game-preview" in response.text
+    assert "taiko_don_16bit_44100.wav" in response.text
+    assert "taiko_ka_16bit_44100.wav" in response.text
+    assert (next(tmp_path.iterdir()) / "debug.tja").exists()
+
+
+def test_web_serves_taiko_hit_sounds(tmp_path):
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    don_response = client.get("/assets/taiko_don_16bit_44100.wav")
+    ka_response = client.get("/assets/taiko_ka_16bit_44100.wav")
+
+    assert don_response.status_code == 200
+    assert ka_response.status_code == 200
+    assert don_response.content.startswith(b"RIFF")
+    assert ka_response.content.startswith(b"RIFF")
 
 
 def test_web_serves_job_audio(tmp_path, monkeypatch):

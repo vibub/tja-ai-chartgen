@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -9,15 +10,20 @@ from pydantic import ValidationError
 from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
-from tja_ai_chartgen.features.meter import validate_time_signature
+from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
 from tja_ai_chartgen.features.sections import assign_sections
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
 from tja_ai_chartgen.rules.styles import STYLE_LEVELS, validate_style
-from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, SongAnalysis, TjaChart
+from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.writer import render_tja
 from tja_ai_chartgen.utils.paths import write_json
 
 DEFAULT_WEB_OUTPUT_DIR = Path("output/web")
+WEB_ASSET_DIR = Path(__file__).resolve().parent / "assets"
+WEB_SOUND_FILES = {
+    "taiko_don_16bit_44100.wav": "don",
+    "taiko_ka_16bit_44100.wav": "ka",
+}
 ALLOWED_WEB_NOTES = set("01234578")
 DEFAULT_WEB_BALLOON_COUNT = 8
 
@@ -310,6 +316,27 @@ textarea:focus {
   border-radius: var(--radius-sm);
 }
 
+.inline-debug-card {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  margin-top: 1.2rem;
+  background: rgba(5, 6, 8, 0.36);
+  border: 1px solid rgba(214, 168, 95, 0.22);
+  border-radius: var(--radius-md);
+}
+
+.inline-debug-card h2 {
+  margin-bottom: 0;
+  font-size: clamp(1.25rem, 2vw, 1.65rem);
+}
+
+.inline-debug-card p {
+  max-width: 54rem;
+  margin-bottom: 0;
+  color: #d7d0c0;
+}
+
 button,
 .button-link {
   display: inline-flex;
@@ -515,132 +542,308 @@ pre {
   accent-color: var(--accent);
 }
 
-.chart-editor {
+.play-preview {
   display: grid;
   gap: 1rem;
+  padding: 0;
+  overflow: hidden;
+  background: #1f2020;
+  border: 1px solid rgba(246, 240, 226, 0.16);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 26px 90px rgba(2, 3, 4, 0.56);
 }
 
-.editor-card {
-  display: grid;
-  gap: 1rem;
+.preview-topline,
+.preview-controls,
+.preview-side,
+.timeline-head,
+.timeline-row-label {
+  font-variant-numeric: tabular-nums;
 }
 
-.editor-toolbar {
+.preview-topline {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: 0.7rem;
   align-items: center;
   justify-content: space-between;
+  padding: 0.75rem 1rem;
+  color: #d8d4c9;
+  background: #2b2c2c;
+  border-bottom: 1px solid rgba(246, 240, 226, 0.09);
 }
 
-.note-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.note-legend li {
+.preview-tabs {
   display: inline-flex;
   gap: 0.35rem;
-  align-items: center;
-  padding: 0.22rem 0.5rem;
-  color: #ded4c0;
-  font-size: 0.82rem;
-  background: rgba(12, 13, 16, 0.44);
-  border: 1px solid rgba(246, 240, 226, 0.1);
-  border-radius: 999px;
 }
 
-.bar-editor {
+.preview-tab {
+  padding: 0.42rem 0.72rem;
+  color: #dedbd2;
+  background: #3a3a39;
+  border-radius: 0.35rem 0.35rem 0 0;
+}
+
+.preview-tab.is-active {
+  color: #17130d;
+  background: #d7cdb9;
+}
+
+.preview-status {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.preview-stage-grid {
   display: grid;
-  grid-template-columns: 5.5rem minmax(18rem, 1fr) minmax(12rem, 0.55fr);
+  grid-template-columns: minmax(11rem, 0.25fr) minmax(24rem, 1fr) minmax(11rem, 0.25fr);
   gap: 0.8rem;
-  align-items: start;
-  padding: 0.9rem;
-  background: rgba(12, 13, 16, 0.42);
+  padding: 0 0.8rem;
+}
+
+.preview-side {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+  color: #ddd8cc;
+}
+
+.inspector-group {
+  overflow: hidden;
+  background: #252626;
+  border: 1px solid rgba(246, 240, 226, 0.09);
+  border-radius: 0.55rem;
+}
+
+.inspector-title {
+  padding: 0.45rem 0.65rem;
+  font-weight: 760;
+  background: #343534;
+}
+
+.inspector-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.48rem 0.65rem;
+  color: #ccc7ba;
+  border-top: 1px solid rgba(246, 240, 226, 0.07);
+}
+
+.inspector-line span:last-child {
+  color: #f3ead8;
+  text-align: right;
+}
+
+.preview-stage {
+  display: grid;
+  gap: 0.7rem;
+  align-content: center;
+  min-height: 25rem;
+}
+
+.taiko-lane {
+  position: relative;
+  height: clamp(10rem, 22vw, 15rem);
+  overflow: hidden;
+  background: #242626;
+  border: 0.42rem solid #050505;
+  box-shadow: inset 0 -3.1rem 0 #8b8b88, inset 0 -3.55rem 0 #050505;
+}
+
+.taiko-lane::before {
+  position: absolute;
+  top: 0;
+  bottom: 3.55rem;
+  left: 8.5rem;
+  width: 2px;
+  content: "";
+  background: #bbb7aa;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+.hit-ring {
+  position: absolute;
+  top: calc((100% - 3.55rem) / 2);
+  left: 8.5rem;
+  z-index: 3;
+  width: 6.6rem;
+  height: 6.6rem;
+  border: 0.48rem solid #f1eadc;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0.35rem 0 rgba(0, 0, 0, 0.45);
+}
+
+.hit-ring::after {
+  position: absolute;
+  inset: 0.78rem;
+  content: "";
+  background: #332f28;
+  border-radius: inherit;
+}
+
+.lane-notes {
+  position: absolute;
+  z-index: 4;
+  inset: 0 0 3.55rem;
+  contain: layout paint;
+}
+
+.drum-note {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 4;
+  width: 4.55rem;
+  height: 4.55rem;
+  pointer-events: none;
+  opacity: 0;
+  border: 0.38rem solid #f1eadc;
+  border-radius: 999px;
+  transform: translate3d(-200vw, -50%, 0) translateX(-50%);
+  box-shadow: 0 0.32rem 0 rgba(0, 0, 0, 0.45);
+  will-change: transform, opacity;
+}
+
+.drum-note.big {
+  width: 5.7rem;
+  height: 5.7rem;
+}
+
+.drum-note.don,
+.timeline-note.don { background: #fa4028; }
+.drum-note.ka,
+.timeline-note.ka { background: #46c1c4; }
+.drum-note.roll,
+.timeline-note.roll { background: #e6bb57; }
+.drum-note.balloon,
+.timeline-note.balloon { background: #9bd272; }
+.drum-note.end,
+.timeline-note.end { background: #d7d7d3; }
+
+.drum-note.is-hit {
+  filter: brightness(1.18);
+  outline: 0.35rem solid rgba(246, 240, 226, 0.22);
+}
+
+.combo-readout {
+  position: absolute;
+  top: 1rem;
+  right: 1.2rem;
+  color: #f1eadc;
+  font-size: clamp(1.7rem, 4vw, 3.4rem);
+  font-weight: 850;
+  letter-spacing: -0.06em;
+  opacity: 0.9;
+}
+
+.preview-controls {
+  display: grid;
+  grid-template-columns: auto minmax(14rem, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0 0.2rem;
+}
+
+.play-button {
+  min-width: 7.5rem;
+}
+
+.time-readout {
+  color: #d7d0c0;
+  font-family: "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.preview-seek {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.preview-audio {
+  display: none;
+}
+
+.timeline-panel {
+  margin: 0 0.8rem 0.8rem;
+  overflow: hidden;
+  background: #1b1c1c;
   border: 1px solid rgba(246, 240, 226, 0.1);
   border-radius: var(--radius-md);
 }
 
-.bar-meta {
+.timeline-head {
   display: grid;
-  gap: 0.22rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.bar-no {
-  color: #f8e7bf;
-  font-weight: 820;
-}
-
-.bar-subtle {
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-.note-grid {
-  display: grid;
-  grid-template-columns: repeat(var(--grid-count), minmax(1.9rem, 1fr));
-  gap: 0.35rem;
-  padding: 0.4rem;
-  overflow-x: auto;
-  background: rgba(5, 6, 8, 0.4);
-  border: 1px solid rgba(246, 240, 226, 0.08);
-  border-radius: var(--radius-sm);
-}
-
-.note-cell {
-  display: grid;
-  min-width: 1.9rem;
+  grid-template-columns: 10.5rem 1fr;
   min-height: 2.3rem;
-  padding: 0;
+  color: #d7d0c0;
+  background: #242525;
+  border-bottom: 1px solid rgba(246, 240, 226, 0.08);
+}
+
+.timeline-scale {
+  position: relative;
+}
+
+.timeline-bar-mark {
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0;
+  color: #d7d0c0;
+  font-size: 0.82rem;
+  transform: translateX(-1px);
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: 10.5rem 1fr;
+  min-height: 4.7rem;
+  border-bottom: 1px solid rgba(246, 240, 226, 0.07);
+}
+
+.timeline-row-label {
+  display: grid;
+  align-items: center;
+  padding: 0 0.7rem;
+  color: #d7d0c0;
+  background: #202121;
+  border-right: 1px solid rgba(246, 240, 226, 0.08);
+}
+
+.timeline-track {
+  position: relative;
+  overflow: hidden;
+  background-image: linear-gradient(90deg, rgba(246, 240, 226, 0.055) 1px, transparent 1px);
+  background-size: 2.8rem 100%;
+}
+
+.timeline-note {
+  position: absolute;
+  top: 50%;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 0.22rem solid #f1eadc;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+}
+
+.timeline-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  width: 2px;
+  pointer-events: none;
+  background: #8ebc76;
+}
+
+.preview-empty {
+  display: grid;
+  min-height: 12rem;
   place-items: center;
-  color: #f8edda;
-  font-size: 0.72rem;
-  font-weight: 900;
-  letter-spacing: 0;
-  background: rgba(246, 240, 226, 0.08);
-  border: 1px solid rgba(246, 240, 226, 0.12);
-  border-radius: 0.65rem;
-  box-shadow: none;
-}
-
-.note-cell:hover {
-  filter: brightness(1.1);
-  box-shadow: none;
-  transform: translateY(-1px);
-}
-
-.note-cell[data-beat="true"] {
-  border-color: rgba(214, 168, 95, 0.5);
-}
-
-.note-0 { color: rgba(246, 240, 226, 0.42); background: rgba(246, 240, 226, 0.04); }
-.note-1 { background: #d94f3f; }
-.note-2 { background: #4f7fd9; }
-.note-3 { background: linear-gradient(135deg, #d94f3f 0 50%, #f3c267 50%); }
-.note-4 { background: linear-gradient(135deg, #4f7fd9 0 50%, #f3c267 50%); }
-.note-5 { color: #17130d; background: #f3c267; }
-.note-7 { color: #17130d; background: #8ed16f; }
-.note-8 { color: #17130d; background: #d9d9d9; }
-
-.note-text-grid {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.note-text-grid input {
-  min-height: 2.5rem;
-  font-family: "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  font-size: 0.9rem;
-}
-
-.note-text-grid label {
-  display: grid;
-  gap: 0.35rem;
+  color: var(--muted);
 }
 
 .notice {
@@ -671,8 +874,21 @@ pre {
   }
 
   .form-grid,
-  .bar-editor {
+  .preview-stage-grid,
+  .preview-controls,
+  .timeline-head,
+  .timeline-row {
     grid-template-columns: 1fr;
+  }
+
+  .preview-side {
+    display: none;
+  }
+
+  .timeline-row-label {
+    min-height: 2rem;
+    border-right: 0;
+    border-bottom: 1px solid rgba(246, 240, 226, 0.08);
   }
 }
 
@@ -694,60 +910,226 @@ pre {
 """
 
 _PAGE_SCRIPT = """
-const NOTE_SEQUENCE = ['0', '1', '2', '3', '4', '5', '7', '8'];
-const NOTE_LABELS = {
-  '0': '·',
-  '1': 'ド',
-  '2': 'カ',
-  '3': '大ド',
-  '4': '大カ',
-  '5': '連',
-  '7': '風',
-  '8': '止',
+const NOTE_CLASSES = {
+  '1': 'don',
+  '2': 'ka',
+  '3': 'don big',
+  '4': 'ka big',
+  '5': 'roll',
+  '7': 'balloon',
+  '8': 'end',
 };
 
-function paintNoteCell(cell, note) {
-  const normalized = NOTE_SEQUENCE.includes(note) ? note : '0';
-  const beatClass = cell.dataset.beat === 'true' ? ' beat-cell' : '';
-  cell.dataset.note = normalized;
-  cell.className = `note-cell note-${normalized}${beatClass}`;
-  cell.textContent = NOTE_LABELS[normalized];
-  cell.setAttribute('aria-label', `note ${normalized}`);
+const NOTE_SOUND_URLS = {
+  don: '/assets/taiko_don_16bit_44100.wav',
+  ka: '/assets/taiko_ka_16bit_44100.wav',
+};
+
+function formatTime(seconds) {
+  const value = Math.max(0, seconds || 0);
+  const minutes = Math.floor(value / 60).toString().padStart(2, '0');
+  const rest = (value % 60).toFixed(3).padStart(6, '0');
+  return `${minutes}:${rest}`;
 }
 
-function syncBarNotes(row, notes) {
-  const hidden = row.querySelector('input[type="hidden"][data-role="notes"]');
-  const text = row.querySelector('input[data-role="notes-text"]');
-  const cells = [...row.querySelectorAll('.note-cell')];
-  const normalized = cells.map((cell, index) => NOTE_SEQUENCE.includes(notes[index]) ? notes[index] : '0');
-  cells.forEach((cell, index) => paintNoteCell(cell, normalized[index] || '0'));
-  const value = normalized.join('');
-  if (hidden) hidden.value = value;
-  if (text && text.value !== value) text.value = value;
+function noteClass(note) {
+  return NOTE_CLASSES[note] || 'don';
 }
 
-function setupChartEditor() {
-  document.querySelectorAll('.bar-editor').forEach((row) => {
-    const cells = [...row.querySelectorAll('.note-cell')];
-    const text = row.querySelector('input[data-role="notes-text"]');
-    syncBarNotes(row, cells.map((cell) => cell.dataset.note || '0').join(''));
+function noteSoundKey(note) {
+  if (note === '1' || note === '3') return 'don';
+  if (note === '2' || note === '4') return 'ka';
+  return null;
+}
 
-    cells.forEach((cell, index) => {
-      cell.addEventListener('click', () => {
-        const current = cell.dataset.note || '0';
-        const next = NOTE_SEQUENCE[(NOTE_SEQUENCE.indexOf(current) + 1) % NOTE_SEQUENCE.length];
-        const notes = cells.map((item, itemIndex) => itemIndex === index ? next : (item.dataset.note || '0')).join('');
-        syncBarNotes(row, notes);
-      });
+function setupGamePreview(root) {
+  const dataElement = root.querySelector('script[type="application/json"]');
+  if (!dataElement) return;
+  const data = JSON.parse(dataElement.textContent || '{}');
+  const audio = root.querySelector('audio');
+  const playButton = root.querySelector('[data-role="play"]');
+  const seek = root.querySelector('[data-role="seek"]');
+  const readout = root.querySelector('[data-role="time"]');
+  const lane = root.querySelector('[data-role="lane"]');
+  const hitRing = root.querySelector('.hit-ring');
+  const combo = root.querySelector('[data-role="combo"]');
+  const timelineCursor = root.querySelector('[data-role="timeline-cursor"]');
+  const start = data.startTime || 0;
+  const end = data.endTime || Math.max(start + 1, ...data.notes.map((note) => note.time + 1));
+  const notes = data.notes || [];
+  const pixelsPerSecond = 360;
+  const hitEpsilonSeconds = 0.012;
+  const soundPools = Object.fromEntries(
+    Object.entries(NOTE_SOUND_URLS).map(([key, url]) => [
+      key,
+      Array.from({ length: 6 }, () => {
+        const player = new Audio(url);
+        player.preload = 'auto';
+        player.volume = 0.85;
+        return player;
+      }),
+    ]),
+  );
+  const soundPoolIndexes = { don: 0, ka: 0 };
+  let animationFrame = null;
+  let hitX = 0;
+  let visibleAheadSeconds = 0;
+  let activeIndexes = new Set();
+  let nextSoundIndex = 0;
+
+  seek.min = start.toString();
+  seek.max = end.toString();
+  seek.step = '0.001';
+  seek.value = start.toString();
+  audio.currentTime = start;
+
+  window.addEventListener('resize', () => {
+    measurePreview();
+    update(audio.currentTime || start);
+  });
+
+  const noteNodes = notes.map((note) => {
+    const node = document.createElement('span');
+    node.className = `drum-note ${noteClass(note.type)}`;
+    node.dataset.time = String(note.time);
+    lane.appendChild(node);
+    return { ...note, node };
+  });
+
+  function measurePreview() {
+    const laneRect = lane.getBoundingClientRect();
+    const hitRect = hitRing.getBoundingClientRect();
+    hitX = hitRect.left + hitRect.width / 2 - laneRect.left;
+    visibleAheadSeconds = Math.max(0.25, (lane.clientWidth + 120 - hitX) / pixelsPerSecond);
+  }
+
+  function setNoteHidden(index) {
+    const note = noteNodes[index];
+    if (!note) return;
+    note.node.style.opacity = '0';
+    note.node.style.transform = 'translate3d(-200vw, -50%, 0) translateX(-50%)';
+    note.node.classList.remove('is-hit');
+  }
+
+  function firstNoteIndexAtOrAfter(time) {
+    let low = 0;
+    let high = noteNodes.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (noteNodes[middle].time < time) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  }
+
+  function syncSoundCursor(currentTime) {
+    nextSoundIndex = firstNoteIndexAtOrAfter(currentTime - hitEpsilonSeconds);
+  }
+
+  function playNoteSound(noteType) {
+    const soundKey = noteSoundKey(noteType);
+    if (!soundKey) return;
+    const pool = soundPools[soundKey];
+    if (!pool || pool.length === 0) return;
+    const player = pool[soundPoolIndexes[soundKey] % pool.length];
+    soundPoolIndexes[soundKey] += 1;
+    player.currentTime = 0;
+    player.play().catch(() => {});
+  }
+
+  function playDueSounds(currentTime) {
+    if (audio.paused) return;
+    const soundUntil = currentTime + hitEpsilonSeconds;
+    while (nextSoundIndex < noteNodes.length && noteNodes[nextSoundIndex].time <= soundUntil) {
+      playNoteSound(noteNodes[nextSoundIndex].type);
+      nextSoundIndex += 1;
+    }
+  }
+
+  function update(currentTime) {
+    seek.value = currentTime.toString();
+    readout.textContent = `${formatTime(currentTime)} / ${formatTime(end)}`;
+    const total = Math.max(0.001, end - start);
+    const progress = Math.min(1, Math.max(0, (currentTime - start) / total));
+    timelineCursor.style.left = `${progress * 100}%`;
+
+    const nextActiveIndexes = new Set();
+    let hitCount = 0;
+    for (let index = 0; index < noteNodes.length; index += 1) {
+      const note = noteNodes[index];
+      const delta = note.time - currentTime;
+      if (delta <= hitEpsilonSeconds) {
+        hitCount += 1;
+        continue;
+      }
+      if (delta > visibleAheadSeconds) {
+        continue;
+      }
+      const x = hitX + delta * pixelsPerSecond;
+      note.node.style.opacity = '1';
+      note.node.style.transform = `translate3d(${x}px, -50%, 0) translateX(-50%)`;
+      note.node.classList.toggle('is-hit', delta < 0.055);
+      nextActiveIndexes.add(index);
+    }
+    activeIndexes.forEach((index) => {
+      if (!nextActiveIndexes.has(index)) setNoteHidden(index);
     });
+    activeIndexes = nextActiveIndexes;
+    combo.textContent = hitCount ? `${hitCount}` : '';
+  }
 
-    if (text) {
-      text.addEventListener('input', () => syncBarNotes(row, text.value));
+  function tick() {
+    if (audio.currentTime >= end) {
+      audio.pause();
+      audio.currentTime = end;
+    }
+    update(audio.currentTime);
+    playDueSounds(audio.currentTime);
+    animationFrame = requestAnimationFrame(tick);
+  }
+
+  function startLoop() {
+    if (animationFrame === null) {
+      animationFrame = requestAnimationFrame(tick);
+    }
+  }
+
+  playButton.addEventListener('click', async () => {
+    if (audio.paused) {
+      if (audio.currentTime < start || audio.currentTime >= end) audio.currentTime = start;
+      await audio.play();
+    } else {
+      audio.pause();
     }
   });
+
+  audio.addEventListener('play', () => {
+    playButton.textContent = '暂停';
+    syncSoundCursor(audio.currentTime);
+    startLoop();
+  });
+  audio.addEventListener('pause', () => {
+    playButton.textContent = '播放';
+  });
+  audio.addEventListener('loadedmetadata', () => {
+    if (audio.currentTime < start) audio.currentTime = start;
+    syncSoundCursor(audio.currentTime);
+    measurePreview();
+    update(audio.currentTime);
+  });
+  seek.addEventListener('input', () => {
+    audio.currentTime = Number(seek.value);
+    syncSoundCursor(audio.currentTime);
+    update(audio.currentTime);
+  });
+
+  measurePreview();
+  syncSoundCursor(start);
+  update(start);
+  startLoop();
 }
 
-setupChartEditor();
+document.querySelectorAll('[data-game-preview]').forEach(setupGamePreview);
 
 document.querySelectorAll('form').forEach((form) => {
   form.addEventListener('submit', () => {
@@ -803,17 +1185,86 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                 time_signature=raw.time_signature,
                 bars=bars,
             )
-            analysis_path = write_json(job_dir / "analysis.json", analysis)
+            write_json(job_dir / "analysis.json", analysis)
+            chart_bars = generate_fallback_chart_bars(bars)
+            chart = TjaChart(
+                metadata=ChartMetadata(
+                    title=analysis.title,
+                    artist=analysis.artist,
+                    wave=Path(analysis.ogg_file).name,
+                    bpm=analysis.bpm,
+                    offset=analysis.offset,
+                ),
+                bars=chart_bars,
+            )
+            tja_text = render_tja(chart)
+            output_path = job_dir / "preview.tja"
+            output_path.write_text(tja_text, encoding="utf-8")
             return HTMLResponse(
                 _page(
-                    "Analysis preview",
-                    _analysis_summary(analysis, analysis_path, job_dir.name)
+                    "Game preview",
+                    _result_panel(
+                        job_id=job_dir.name,
+                        output_path=output_path,
+                        tja_text=tja_text,
+                        analysis=analysis,
+                        chart_bars=chart_bars,
+                        course=chart.metadata.course,
+                        level=chart.metadata.level,
+                    )
                     + _regenerate_form(job_dir.name),
                 )
             )
         except Exception as error:  # noqa: BLE001 - Web boundary returns a readable error page.
             return HTMLResponse(
                 _page("Analysis failed", _error_notice(str(error))),
+                status_code=400,
+            )
+
+    @app.get("/assets/{filename}")
+    async def web_asset(filename: str) -> FileResponse:
+        safe_filename = Path(filename).name
+        if safe_filename not in WEB_SOUND_FILES:
+            raise HTTPException(status_code=404, detail=f"Web asset not found: {filename}")
+        path = WEB_ASSET_DIR / safe_filename
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=f"Web asset not found: {filename}")
+        return FileResponse(path)
+
+    @app.post("/preview-tja", response_class=HTMLResponse)
+    async def preview_tja(
+        tja: Annotated[UploadFile, File()],
+        audio: Annotated[UploadFile, File()],
+    ) -> HTMLResponse:
+        try:
+            job_dir = _new_job_dir(app.state.output_dir)
+            tja_path = _save_upload(job_dir, tja)
+            ogg_path = _save_ogg_upload(job_dir, audio)
+            tja_text = tja_path.read_text(encoding="utf-8-sig")
+            analysis, chart_bars, course, level = _parse_tja_preview(
+                tja_text,
+                audio_file=ogg_path,
+                ogg_file=ogg_path,
+            )
+            write_json(job_dir / "analysis.json", analysis)
+            return HTMLResponse(
+                _page(
+                    "Game preview",
+                    _result_panel(
+                        job_id=job_dir.name,
+                        output_path=tja_path,
+                        tja_text=tja_text,
+                        analysis=analysis,
+                        chart_bars=chart_bars,
+                        course=course,
+                        level=level,
+                    )
+                    + _regenerate_form(job_dir.name),
+                )
+            )
+        except (UnicodeDecodeError, ValueError) as error:
+            return HTMLResponse(
+                _page("TJA preview failed", _error_notice(str(error))),
                 status_code=400,
             )
 
@@ -968,6 +1419,13 @@ def _save_upload(job_dir: Path, audio: UploadFile) -> Path:
     return path
 
 
+def _save_ogg_upload(job_dir: Path, audio: UploadFile) -> Path:
+    filename = Path(audio.filename or "upload.ogg").name
+    if Path(filename).suffix.lower() != ".ogg":
+        raise ValueError("TJA preview audio must be an .ogg file")
+    return _save_upload(job_dir, audio)
+
+
 def _select_bars(analysis: SongAnalysis, start_bar: int, end_bar: int):
     if start_bar < 1:
         raise ValueError("start_bar must be greater than or equal to 1")
@@ -1037,6 +1495,115 @@ def _edited_output_filename(chart_bars: list[ChartBar]) -> str:
     return f"edited_{first_bar}_{last_bar}.tja"
 
 
+def _parse_tja_preview(
+    tja_text: str,
+    *,
+    audio_file: Path,
+    ogg_file: Path,
+) -> tuple[SongAnalysis, list[ChartBar], str, int]:
+    metadata: dict[str, str] = {}
+    chart_bars: list[ChartBar] = []
+    in_chart = False
+    time_signature = "4/4"
+
+    for raw_line in tja_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("//"):
+            continue
+        upper_line = line.upper()
+        if upper_line == "#START":
+            in_chart = True
+            continue
+        if upper_line == "#END":
+            break
+        if not in_chart:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                metadata[key.strip().upper()] = value.strip()
+            continue
+        if upper_line.startswith("#MEASURE"):
+            time_signature = _time_signature_from_measure(upper_line)
+            continue
+        if upper_line.startswith("#"):
+            continue
+
+        for raw_notes in line.split(","):
+            notes = "".join(character for character in raw_notes.strip() if not character.isspace())
+            if not notes:
+                continue
+            illegal_characters = sorted(set(notes) - ALLOWED_WEB_NOTES)
+            if illegal_characters:
+                raise ValueError(f"TJA contains unsupported note character(s): {''.join(illegal_characters)}")
+            chart_bars.append(
+                ChartBar(
+                    index=len(chart_bars),
+                    notes=notes,
+                    time_signature=time_signature,
+                    balloon_counts=[DEFAULT_WEB_BALLOON_COUNT] * notes.count("7"),
+                )
+            )
+
+    if not chart_bars:
+        raise ValueError("TJA does not contain playable note bars")
+
+    bpm = float(metadata.get("BPM", "120"))
+    offset = float(metadata.get("OFFSET", "0"))
+    title = metadata.get("TITLE", audio_file.stem)
+    artist = metadata.get("SUBTITLE", "").removeprefix("-- ") or None
+    course = metadata.get("COURSE", "Oni")
+    level = int(float(metadata.get("LEVEL", "10")))
+    bars = _bar_features_from_chart(chart_bars, bpm=bpm, offset=offset)
+    analysis = SongAnalysis(
+        title=title,
+        artist=artist,
+        audio_file=str(audio_file),
+        ogg_file=str(ogg_file),
+        bpm=bpm,
+        offset=offset,
+        time_signature=chart_bars[0].time_signature,
+        bars=bars,
+    )
+    return analysis, chart_bars, course, level
+
+
+def _time_signature_from_measure(measure_line: str) -> str:
+    parts = measure_line.split(maxsplit=1)
+    if len(parts) < 2:
+        return "4/4"
+    ratio = parts[1].strip()
+    if ratio == "1/1":
+        return "4/4"
+    if ratio == "3/4":
+        return "3/4"
+    return "4/4"
+
+
+def _bar_features_from_chart(chart_bars: list[ChartBar], *, bpm: float, offset: float) -> list[BarFeature]:
+    current_time = offset
+    features: list[BarFeature] = []
+    for chart_bar in chart_bars:
+        meter = get_meter_spec(chart_bar.time_signature)
+        bar_length = meter.beats_per_bar * 60.0 / bpm
+        note_grids = [index for index, note in enumerate(chart_bar.notes) if note != "0"]
+        features.append(
+            BarFeature(
+                index=chart_bar.index,
+                start_time=round(current_time, 6),
+                end_time=round(current_time + bar_length, 6),
+                energy=round(min(1.0, len(note_grids) / max(1, len(chart_bar.notes))), 3),
+                time_signature=chart_bar.time_signature,
+                grids_per_bar=len(chart_bar.notes),
+                onset_16=note_grids,
+                accent_16=[grid for grid in note_grids if grid in meter.accent_grids],
+                beat_grids=sorted(meter.accent_grids),
+                downbeat_grid=0,
+                section="tja",
+            )
+        )
+        current_time += bar_length
+    return features
+
+
 def _analysis_form() -> str:
     return f"""
 <section class="hero" aria-labelledby="page-title">
@@ -1103,7 +1670,34 @@ def _analysis_form() -> str:
         <span>Style options: {', '.join(STYLE_LEVELS)}</span>
       </div>
     </form>
+    {_tja_preview_form()}
   </section>
+</section>
+"""
+
+
+def _tja_preview_form() -> str:
+    return """
+<section class="inline-debug-card" aria-labelledby="tja-preview-heading">
+  <p class="eyebrow">Debug preview</p>
+  <h2 id="tja-preview-heading">直接播放 TJA</h2>
+  <p>已有 `.tja` 时可以直接上传调试。这里只接受已经准备好的 OGG 音频，不会再调用 ffmpeg 转换或额外输出音频文件。</p>
+  <form action="/preview-tja" enctype="multipart/form-data" method="post">
+    <div class="form-grid">
+      <label class="field">
+        TJA file
+        <input name="tja" type="file" accept=".tja,text/plain" required>
+      </label>
+      <label class="field">
+        OGG audio
+        <input name="audio" type="file" accept=".ogg,audio/ogg" required>
+      </label>
+    </div>
+    <div class="helper-strip">
+      <button type="submit" data-loading-text="Loading">打开 TJA 预览</button>
+      <span>用于快速定位谱面播放、对齐和滚动问题。</span>
+    </div>
+  </form>
 </section>
 """
 
@@ -1223,112 +1817,160 @@ def _audio_preview(analysis: SongAnalysis, job_id: str) -> str:
 """
 
 
-def _chart_editor(
+def _game_preview(
     job_id: str,
     analysis: SongAnalysis,
     chart_bars: list[ChartBar],
     course: str,
     level: int,
 ) -> str:
-    rows = "".join(
-        _bar_editor_row(position, bar, analysis)
-        for position, bar in enumerate(chart_bars)
-    )
+    payload = _preview_payload(analysis, chart_bars)
+    ogg_name = Path(analysis.ogg_file).name
+    timeline_marks = _timeline_marks(payload)
+    timeline_notes = _timeline_notes(payload)
+    duration = max(0.001, payload["endTime"] - payload["startTime"])
     return f"""
-  <section class="panel chart-editor" aria-labelledby="chart-editor-heading">
-    <div class="editor-toolbar">
-      <div>
-        <p class="eyebrow">Interactive preview</p>
-        <h2 id="chart-editor-heading">谱面预览与调整</h2>
+  <section class="play-preview" data-game-preview aria-labelledby="game-preview-heading">
+    <script type="application/json">{_json_script(payload)}</script>
+    <div class="preview-topline">
+      <div class="preview-tabs" aria-label="预览标签">
+        <span class="preview-tab is-active">Game preview</span>
+        <span class="preview-tab">{_escape(course)} x{level}</span>
       </div>
-      {_note_legend()}
+      <span class="preview-status">{analysis.bpm:.3f} BPM · {duration:.3f}s · 自动演奏预览</span>
     </div>
-    <form class="editor-card" action="/save-chart" method="post">
-      <input name="job_id" type="hidden" value="{_escape(job_id)}">
-      <input name="course" type="hidden" value="{_escape(course)}">
-      <input name="level" type="hidden" value="{level}">
-      <input name="bar_count" type="hidden" value="{len(chart_bars)}">
-      {rows}
-      <div class="helper-strip">
-        <button type="submit" data-loading-text="Saving">保存调整后的 TJA</button>
-        <span>点击格子循环 0/1/2/3/4/5/7/8；文本框可直接粘贴 TJA 小节音符。</span>
+    <div class="preview-stage-grid">
+      <aside class="preview-side" aria-label="谱面属性">
+        <div class="inspector-group">
+          <div class="inspector-title">Chart</div>
+          <div class="inspector-line"><span>Title</span><span>{_escape(analysis.title)}</span></div>
+          <div class="inspector-line"><span>Creator</span><span>tja-ai-chartgen</span></div>
+          <div class="inspector-line"><span>Offset</span><span>{analysis.offset:.3f}s</span></div>
+        </div>
+        <div class="inspector-group">
+          <div class="inspector-title">Course</div>
+          <div class="inspector-line"><span>Difficulty</span><span>{_escape(course)}</span></div>
+          <div class="inspector-line"><span>Level</span><span>x{level}</span></div>
+        </div>
+      </aside>
+      <div class="preview-stage">
+        <div class="taiko-lane" aria-label="太鼓自动演奏预览">
+          <span class="hit-ring" aria-hidden="true"></span>
+          <span class="combo-readout" data-role="combo" aria-hidden="true"></span>
+          <div class="lane-notes" data-role="lane"></div>
+        </div>
+        <div class="preview-controls">
+          <button class="play-button" type="button" data-role="play">播放</button>
+          <input class="preview-seek" data-role="seek" type="range" aria-label="谱面播放进度">
+          <span class="time-readout" data-role="time">00:00.000 / 00:00.000</span>
+          <audio class="preview-audio" preload="metadata" src="/jobs/{_escape(job_id)}/{_escape(ogg_name)}"></audio>
+        </div>
       </div>
-    </form>
+      <aside class="preview-side" aria-label="当前选择">
+        <div class="inspector-group">
+          <div class="inspector-title">说明</div>
+          <div class="inspector-line"><span>播放</span><span>自动演奏</span></div>
+          <div class="inspector-line"><span>拖动</span><span>查看任意位置</span></div>
+          <div class="inspector-line"><span>输出</span><span>已保存 .tja</span></div>
+        </div>
+      </aside>
+    </div>
+    <div class="timeline-panel" aria-label="谱面时间线">
+      <div class="timeline-head">
+        <div class="timeline-row-label">Chart timeline</div>
+        <div class="timeline-scale">{timeline_marks}</div>
+      </div>
+      <div class="timeline-row">
+        <div class="timeline-row-label">Notes</div>
+        <div class="timeline-track">
+          <span class="timeline-cursor" data-role="timeline-cursor"></span>
+          {timeline_notes}
+        </div>
+      </div>
+    </div>
   </section>
 """
 
 
-def _bar_editor_row(position: int, chart_bar: ChartBar, analysis: SongAnalysis) -> str:
-    feature = next((bar for bar in analysis.bars if bar.index == chart_bar.index), None)
-    beat_grids = set(feature.beat_grids if feature else [])
-    cells = "".join(
-        _note_cell(note, grid_index in beat_grids)
-        for grid_index, note in enumerate(chart_bar.notes)
-    )
-    balloon_counts = ",".join(str(count) for count in chart_bar.balloon_counts)
-    start_time = f"{feature.start_time:.3f}s" if feature else "unknown"
-    section = feature.section if feature else "unknown"
-    return f"""
-      <article class="bar-editor" data-bar-index="{chart_bar.index}">
-        <div class="bar-meta">
-          <span class="bar-no">Bar {chart_bar.index + 1}</span>
-          <span class="bar-subtle">{_escape(start_time)}</span>
-          <span class="bar-subtle">{_escape(section)} · {chart_bar.time_signature}</span>
-        </div>
-        <div class="note-grid" style="--grid-count: {len(chart_bar.notes)}" aria-label="Bar {chart_bar.index + 1} note grid">
-          {cells}
-        </div>
-        <div class="note-text-grid">
-          <input name="bar_index_{position}" type="hidden" value="{chart_bar.index}">
-          <input name="time_signature_{position}" type="hidden" value="{_escape(chart_bar.time_signature)}">
-          <input name="grids_per_bar_{position}" type="hidden" value="{len(chart_bar.notes)}">
-          <input name="notes_{position}" type="hidden" data-role="notes" value="{_escape(chart_bar.notes)}">
-          <label>
-            Notes
-            <input data-role="notes-text" value="{_escape(chart_bar.notes)}" maxlength="{len(chart_bar.notes)}">
-          </label>
-          <label>
-            Balloon counts
-            <input name="balloon_counts_{position}" value="{_escape(balloon_counts)}" placeholder="8,8">
-          </label>
-        </div>
-      </article>
-"""
+def _preview_payload(analysis: SongAnalysis, chart_bars: list[ChartBar]) -> dict:
+    features = {bar.index: bar for bar in analysis.bars}
+    selected_features = [features[bar.index] for bar in chart_bars if bar.index in features]
+    start_time = selected_features[0].start_time if selected_features else 0.0
+    end_time = selected_features[-1].end_time if selected_features else start_time + 1.0
+    notes: list[dict[str, float | int | str]] = []
+    bars: list[dict[str, float | int | str]] = []
 
-
-def _note_cell(note: str, is_beat: bool) -> str:
-    normalized = note if note in ALLOWED_WEB_NOTES else "0"
-    label = {
-        "0": "·",
-        "1": "ド",
-        "2": "カ",
-        "3": "大ド",
-        "4": "大カ",
-        "5": "連",
-        "7": "風",
-        "8": "止",
-    }[normalized]
-    beat_value = "true" if is_beat else "false"
-    return f"""
-          <button class="note-cell note-{normalized}" type="button" data-note="{normalized}" data-beat="{beat_value}" aria-label="note {normalized}">{label}</button>
-"""
-
-
-def _note_legend() -> str:
-    items = "".join(
-        f'<li><span class="note-cell note-{note}" aria-hidden="true">{label}</span><span>{note}</span></li>'
-        for note, label in (
-            ("0", "·"),
-            ("1", "ド"),
-            ("2", "カ"),
-            ("3", "大ド"),
-            ("4", "大カ"),
-            ("5", "連"),
-            ("7", "風"),
-            ("8", "止"),
+    for chart_bar in chart_bars:
+        feature = features.get(chart_bar.index)
+        if feature is None:
+            continue
+        bar_duration = max(0.001, feature.end_time - feature.start_time)
+        step = bar_duration / max(1, len(chart_bar.notes))
+        bars.append(
+            {
+                "index": chart_bar.index + 1,
+                "time": feature.start_time,
+                "endTime": feature.end_time,
+                "timeSignature": chart_bar.time_signature,
+            }
         )
+        for grid_index, note in enumerate(chart_bar.notes):
+            if note == "0":
+                continue
+            notes.append(
+                {
+                    "time": feature.start_time + grid_index * step,
+                    "type": note,
+                    "bar": chart_bar.index + 1,
+                    "grid": grid_index + 1,
+                }
+            )
+
+    return {
+        "startTime": start_time,
+        "endTime": end_time,
+        "notes": notes,
+        "bars": bars,
+    }
+
+
+def _json_script(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+
+
+def _timeline_marks(payload: dict) -> str:
+    start_time = float(payload["startTime"])
+    end_time = float(payload["endTime"])
+    duration = max(0.001, end_time - start_time)
+    return "".join(
+        f'<span class="timeline-bar-mark" style="left: {((float(bar["time"]) - start_time) / duration) * 100:.4f}%">'
+        f'{bar["index"]}<br>{float(bar["time"]):.3f}</span>'
+        for bar in payload["bars"]
     )
-    return f'<ul class="note-legend" aria-label="音符图例">{items}</ul>'
+
+
+def _timeline_notes(payload: dict) -> str:
+    start_time = float(payload["startTime"])
+    end_time = float(payload["endTime"])
+    duration = max(0.001, end_time - start_time)
+    return "".join(
+        f'<span class="timeline-note { _timeline_note_class(str(note["type"])) }" '
+        f'style="left: {((float(note["time"]) - start_time) / duration) * 100:.4f}%" '
+        f'title="Bar {note["bar"]} / grid {note["grid"]}"></span>'
+        for note in payload["notes"]
+    )
+
+
+def _timeline_note_class(note: str) -> str:
+    if note in {"1", "3"}:
+        return "don"
+    if note in {"2", "4"}:
+        return "ka"
+    if note == "5":
+        return "roll"
+    if note == "7":
+        return "balloon"
+    return "end"
 
 
 def _result_panel(
@@ -1344,16 +1986,12 @@ def _result_panel(
     return f"""
 <section class="stack" aria-labelledby="result-heading">
   <section class="panel">
-    <p class="eyebrow">Export ready</p>
-    <h1 id="result-heading">Regenerated bars</h1>
-    <p class="result-path">Generated: <code>{_escape(str(output_path))}</code></p>
-    <p class="lede">参考 PeepoDrumKit 这类太鼓谱面编辑器，把 TJA 文本变成可点选的鼓点网格；点击格子循环音符，再保存为新的 .tja。</p>
+    <p class="eyebrow">Preview ready</p>
+    <h1 id="result-heading">游玩预览</h1>
+    <p class="result-path">谱面已生成：<code>{_escape(str(output_path))}</code></p>
+    <p class="lede">生成完成后直接进入可视化预览。点击播放自动演奏，拖动进度条查看任意位置，不再把大段 TJA 数值直接丢给用户。</p>
   </section>
-  {_chart_editor(job_id, analysis, chart_bars, course, level)}
-  <section class="code-card" aria-label="TJA preview">
-    <p class="eyebrow">TJA preview</p>
-    <pre>{_escape(tja_text)}</pre>
-  </section>
+  {_game_preview(job_id, analysis, chart_bars, course, level)}
 </section>
 """
 

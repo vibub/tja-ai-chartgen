@@ -156,11 +156,23 @@ def web(
     port: int = typer.Option(8000, help="Port for the Web UI server."),
     output_dir: Path = typer.Option(Path("output/web"), help="Directory for Web UI jobs."),
 ) -> None:
+    import asyncio
+    import sys
+
     import uvicorn
 
     from tja_ai_chartgen.web import create_app
 
-    uvicorn.run(create_app(output_dir=output_dir), host=host, port=port)
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    uvicorn.run(
+        create_app(output_dir=output_dir),
+        host=host,
+        port=port,
+        timeout_keep_alive=1,
+        timeout_graceful_shutdown=1,
+    )
 
 
 def run_generate(
