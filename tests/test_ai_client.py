@@ -53,6 +53,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density"] == "high"
     assert payload["density_target"]["average_hits_per_16_grid_bar"] == "8-11"
     assert payload["forced_silent_bars"] == []
+    assert payload["bar_density_hints"][0]["kind"] == "dense"
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
     assert payload["bars"][0]["grids_per_bar"] == 16
@@ -86,12 +87,13 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "Grid 0 is the barline and primary downbeat candidate" in prompt
     assert "prefer starting the bar with a 1/2 note on grid 0" in prompt
     assert "Big notes 3/4 require both hands hitting together" in prompt
-    assert "Do not place big notes 3/4 inside dense alternating streams" in prompt
+    assert "Do not place big notes 3/4 inside dense streams" in prompt
     assert "3 or more consecutive playable hits" in prompt
     assert "without overusing big notes" in prompt
     assert "Density and difficulty targets" in prompt
-    assert "beat skeleton" in prompt
+    assert "bar_density_hints" in prompt
     assert "forced_silent_bars" in prompt
+    assert "bar_density_hints" in prompt
     assert "note_color_target" not in prompt
     assert "Do not use 1 as the default" in prompt
     assert "do not force a fixed ratio" in prompt
@@ -252,6 +254,39 @@ def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypa
     assert "chart quality is too sparse" in captured_messages[1][-1]["content"]
 
 
+def test_generate_chart_bars_with_ai_allows_empty_musical_rest_in_high_density(monkeypatch):
+    payload = {
+        "bars": [
+            {"bar": 1, "notes": "1022101210201220"},
+            {"bar": 2, "notes": "1212102210121020"},
+            {"bar": 3, "notes": "0000000000000000"},
+            {"bar": 4, "notes": "1022121010221010"},
+            {"bar": 5, "notes": "1210201210221020"},
+            {"bar": 6, "notes": "1022101212101022"},
+            {"bar": 7, "notes": "1212102010221012"},
+            {"bar": 8, "notes": "1022121010201220"},
+        ]
+    }
+
+    def fake_completion(**kwargs):
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis_with_middle_rest(),
+        "Oni",
+        10,
+        "technical",
+        density="max",
+        model="fake/model",
+        max_repair_attempts=0,
+    )
+
+    assert raw["attempts"][0]["status"] == "ok"
+    assert bars[2].notes == "0000000000000000"
+
+
 def test_generate_chart_bars_with_ai_repairs_all_don_output(monkeypatch):
     don_payload = {
         "bars": [
@@ -394,6 +429,48 @@ def test_generate_chart_bars_with_ai_raises_with_attempt_log_after_failed_repair
         "invalid",
         "invalid",
     ]
+
+
+def _analysis_with_middle_rest() -> SongAnalysis:
+    bars = []
+    for index in range(8):
+        if index == 2:
+            bars.append(
+                BarFeature(
+                    index=index,
+                    start_time=index * 2,
+                    end_time=(index + 1) * 2,
+                    energy=0.01,
+                    onset_16=[],
+                    beat_grids=[0, 4, 8, 12],
+                    downbeat_grid=0,
+                    phrase_position="phrase_middle",
+                    section="break",
+                )
+            )
+        else:
+            bars.append(
+                BarFeature(
+                    index=index,
+                    start_time=index * 2,
+                    end_time=(index + 1) * 2,
+                    energy=0.6,
+                    onset_16=[0, 2, 4, 6, 8, 10, 12, 14],
+                    beat_grids=[0, 4, 8, 12],
+                    downbeat_grid=0,
+                    phrase_position="phrase_start" if index % 4 == 0 else "phrase_middle",
+                    section="verse",
+                )
+            )
+    return SongAnalysis(
+        title="Song Title",
+        artist=None,
+        audio_file="song.mp3",
+        ogg_file="song.ogg",
+        bpm=120,
+        offset=0,
+        bars=bars,
+    )
 
 
 def _analysis_with_edge_silence() -> SongAnalysis:

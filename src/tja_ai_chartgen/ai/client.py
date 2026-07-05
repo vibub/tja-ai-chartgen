@@ -5,7 +5,8 @@ from typing import Any
 from litellm import completion
 
 from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
-from tja_ai_chartgen.features.silence import edge_silence_indexes, is_silent_bar
+from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
+from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 
 ALLOWED_AI_NOTES = set("01234578")
@@ -313,21 +314,29 @@ def _validate_chart_quality(
         return []
 
     issues: list[str] = []
+    expected_bars = analysis.bars[: len(bars)]
+    density_hints = build_density_hints(expected_bars)
     hit_counts = [_playable_hit_count(bar.notes) for bar in bars]
     normalized_hit_counts = [
         _normalized_hit_count(bar.notes, expected_length=_expected_note_length(analysis, index))
         for index, bar in enumerate(bars)
     ]
-    edge_indexes = edge_silence_indexes(analysis.bars[: len(bars)])
-    checked_indexes = [
+    quality_indexes = [
         index
-        for index, _bar in enumerate(analysis.bars[: len(bars)])
-        if index not in edge_indexes
+        for index, hint in enumerate(density_hints)
+        if hint.count_in_quality_average
+    ]
+    playable_indexes = [
+        index
+        for index, hint in enumerate(density_hints)
+        if hint.kind not in {"silent", "rest"}
     ]
 
-    if checked_indexes and quality_density in {"high", "max"}:
+    issues.extend(_density_hint_issues(hit_counts, density_hints))
+
+    if quality_indexes and quality_density in {"high", "max"}:
         thresholds = _quality_thresholds(quality_density)
-        average_hits = sum(normalized_hit_counts[index] for index in checked_indexes) / len(checked_indexes)
+        average_hits = sum(normalized_hit_counts[index] for index in quality_indexes) / len(quality_indexes)
         if average_hits < thresholds["average"]:
             issues.append(
                 "chart quality is too sparse: average playable hits per 16-grid bar "
@@ -337,11 +346,10 @@ def _validate_chart_quality(
 
         sparse_indexes = [
             index
-            for index in checked_indexes
+            for index in quality_indexes
             if normalized_hit_counts[index] < thresholds["normal_min"]
-            and not _allows_sparse_bar(analysis.bars[index])
         ]
-        sparse_limit = max(1, len(checked_indexes) // 12)
+        sparse_limit = max(1, len(quality_indexes) // 12)
         if len(sparse_indexes) > sparse_limit:
             examples = ", ".join(str(index + 1) for index in sparse_indexes[:8])
             issues.append(
@@ -350,12 +358,12 @@ def _validate_chart_quality(
                 f"normalized hits; examples: {examples}"
             )
 
-        empty_runs = _middle_empty_runs(hit_counts, analysis.bars[: len(bars)], edge_indexes)
+        empty_runs = _empty_runs_in_quality_bars(hit_counts, quality_indexes)
         if empty_runs:
             examples = ", ".join(f"bars {start + 1}-{end + 1}" for start, end in empty_runs[:4])
             issues.append(f"chart quality has empty middle bar runs that need beat skeletons: {examples}")
 
-    color_issue = _note_color_balance_issue(bars, checked_indexes=checked_indexes)
+    color_issue = _note_color_balance_issue(bars, quality_indexes=playable_indexes)
     if color_issue:
         issues.append(color_issue)
 
@@ -398,17 +406,36 @@ def _quality_thresholds(density: str) -> dict[str, float]:
     return {"average": 0.0, "normal_min": 0.0}
 
 
+def _density_hint_issues(
+    hit_counts: list[int],
+    density_hints: list[BarDensityHint],
+) -> list[str]:
+    issues: list[str] = []
+    for index, (hit_count, hint) in enumerate(zip(hit_counts, density_hints, strict=False)):
+        if hint.max_hits is not None and hit_count > hint.max_hits:
+            issues.append(
+                f"bars[{index}].notes is too dense for {hint.kind} density hint: "
+                f"{hit_count} hit(s), expected at most {hint.max_hits}; reason: {hint.reason}"
+            )
+        if not hint.allow_empty and hit_count < hint.min_hits:
+            issues.append(
+                f"bars[{index}].notes is too sparse for {hint.kind} density hint: "
+                f"{hit_count} hit(s), expected at least {hint.min_hits}; reason: {hint.reason}"
+            )
+    return issues
+
+
 def _note_color_balance_issue(
     bars: list[ChartBar],
     *,
-    checked_indexes: list[int],
+    quality_indexes: list[int],
 ) -> str | None:
     normal_don = 0
     normal_ka = 0
     longest_don_run = 0
     current_don_run = 0
 
-    for index in checked_indexes:
+    for index in quality_indexes:
         if index >= len(bars):
             continue
         for note in bars[index].notes:
@@ -440,31 +467,31 @@ def _note_color_balance_issue(
     return None
 
 
-def _allows_sparse_bar(bar: BarFeature) -> bool:
-    return (
-        is_silent_bar(bar)
-        and bar.section in {"intro", "outro", "unknown"}
-        and bar.phrase_position in {"phrase_start", "song_end", "unknown"}
-    )
-
-
-def _middle_empty_runs(
+def _empty_runs_in_quality_bars(
     hit_counts: list[int],
-    bars: list[BarFeature],
-    edge_indexes: set[int],
+    quality_indexes: list[int],
 ) -> list[tuple[int, int]]:
     runs: list[tuple[int, int]] = []
     start: int | None = None
-    for index, hit_count in enumerate(hit_counts):
-        bar = bars[index] if index < len(bars) else None
-        is_empty_middle = hit_count == 0 and bar is not None and index not in edge_indexes
-        if is_empty_middle and start is None:
-            start = index
-        if (not is_empty_middle or index == len(hit_counts) - 1) and start is not None:
-            end = index if is_empty_middle else index - 1
-            if end >= start:
-                runs.append((start, end))
+    previous_index: int | None = None
+
+    for index in quality_indexes:
+        continues_run = previous_index is not None and index == previous_index + 1
+        if not continues_run and start is not None and previous_index is not None:
+            runs.append((start, previous_index))
             start = None
+
+        if hit_counts[index] == 0:
+            if start is None:
+                start = index
+        elif start is not None and previous_index is not None:
+            runs.append((start, previous_index))
+            start = None
+
+        previous_index = index
+
+    if start is not None and previous_index is not None:
+        runs.append((start, previous_index))
     return runs
 
 
@@ -516,7 +543,8 @@ Rules:
 - If using balloon note 7, include one positive integer in balloon_counts for each 7 in that bar.
 - Course/difficulty request: {course} level {level}, density {density}.
 - Forced silent bars: {forced_silent_bars}. These song-start/song-end silence bars must be all 0 for their full notes length.
-- If validation errors mention low chart quality, increase 1/2 note density on normal phrase and break bars, keep beat-grid skeletons in the middle of the song, add more 2/4 ka notes for offbeat/answer/fill hits, and vary repeated or all-don patterns without changing bar count or note lengths.
+- Respect bar_density_hints from the original input: rest bars may stay empty, sparse bars may stay light, and normal/dense/fill bars should carry the requested course density.
+- If validation errors mention low chart quality, increase 1/2 note density on normal/dense/fill bars, keep real rest bars empty or sparse, add more 2/4 ka notes for offbeat/answer/fill hits, and vary repeated or all-don patterns without changing bar count or note lengths.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()
 

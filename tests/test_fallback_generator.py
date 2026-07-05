@@ -63,6 +63,22 @@ def test_generate_fallback_chart_bars_keeps_edge_silence_empty():
     ]
 
 
+def test_generate_fallback_chart_bars_keeps_middle_musical_rest_empty():
+    bars = [
+        BarFeature(index=0, start_time=0, end_time=2, energy=0.9, onset_16=[0, 4, 8, 12]),
+        BarFeature(index=1, start_time=2, end_time=4, energy=0.01, section="break"),
+        BarFeature(index=2, start_time=4, end_time=6, energy=0.9, onset_16=[0, 4, 8, 12]),
+    ]
+
+    chart_bars = generate_fallback_chart_bars(bars, density="max")
+
+    assert [bar.notes for bar in chart_bars] == [
+        "1122112233441122",
+        "0000000000000000",
+        "1122112233441122",
+    ]
+
+
 def test_generate_fallback_chart_bars_rejects_invalid_density():
     bars = [BarFeature(index=0, start_time=0, end_time=2, energy=0.5)]
 

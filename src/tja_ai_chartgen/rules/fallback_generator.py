@@ -1,4 +1,4 @@
-from tja_ai_chartgen.features.silence import edge_silence_indexes
+from tja_ai_chartgen.features.density import build_density_hints
 from tja_ai_chartgen.rules.styles import StyleTemplate, get_style_template
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar
 
@@ -30,10 +30,10 @@ def generate_fallback_chart_bars(
 ) -> list[ChartBar]:
     validate_density(density)
     template = get_style_template(style)
-    silent_indexes = edge_silence_indexes(bars)
+    density_hints = build_density_hints(bars)
     chart_bars: list[ChartBar] = []
     for index, bar in enumerate(bars):
-        if index in silent_indexes:
+        if density_hints[index].kind in {"silent", "rest"}:
             chart_bars.append(
                 ChartBar(
                     index=bar.index,
