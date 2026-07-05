@@ -11,6 +11,8 @@ MAX_DETECTED_BPM = 220.0
 BPM_SCAN_STEP = 0.5
 PHASE_BIN_SECONDS = 0.005
 PHASE_WINDOW_SECONDS = 0.045
+WAVEFORM_REFINE_WINDOW_SECONDS = 0.035
+WAVEFORM_REFINE_STEP_SECONDS = 0.002
 
 
 class AudioAnalysisRaw(BaseModel):
@@ -120,8 +122,33 @@ def _phase_confidence(onset_times: np.ndarray, weights: np.ndarray, interval: fl
     best_bin = int(np.argmax(smoothed))
     offbeat_bin = (best_bin + (bin_count // 2)) % bin_count
     score = float(smoothed[best_bin] + (smoothed[offbeat_bin] * 0.5))
-    offset = (best_bin / bin_count) * interval
+    coarse_offset = ((best_bin + 0.5) / bin_count) * interval
+    offset = _weighted_circular_mean_phase(onset_times, weights, coarse_offset, interval)
     return score, float(offset)
+
+
+def _weighted_circular_mean_phase(
+    phases: np.ndarray,
+    weights: np.ndarray,
+    center: float,
+    interval: float,
+) -> float:
+    if interval <= 0:
+        return center
+
+    distances = np.mod(phases - center + (interval * 0.5), interval) - (interval * 0.5)
+    selected = np.abs(distances) <= PHASE_WINDOW_SECONDS
+    if not np.any(selected):
+        return center % interval
+
+    selected_phases = phases[selected]
+    selected_weights = weights[selected]
+    full_turn = 2.0 * np.pi
+    angles = selected_phases / interval * full_turn
+    vector = np.sum(selected_weights * np.exp(1j * angles))
+    if np.isclose(abs(vector), 0.0):
+        return center % interval
+    return float((np.angle(vector) % full_turn) / full_turn * interval)
 
 
 def _adjust_offset_for_offbeats(
@@ -131,16 +158,49 @@ def _adjust_offset_for_offbeats(
     bpm: float,
 ) -> float:
     if samples.size == 0 or sample_rate <= 0 or bpm <= 0:
-        return offset
+        return _canonical_phase(offset, 60.0 / bpm) if bpm > 0 else offset
 
     seconds_per_beat = 60.0 / bpm
-    offbeat = offset + (seconds_per_beat * 0.5)
-    if offbeat > seconds_per_beat:
-        offbeat -= seconds_per_beat
+    offbeat = _canonical_phase(offset + (seconds_per_beat * 0.5), seconds_per_beat)
 
-    support_a = _slope_support(samples, sample_rate, offset, seconds_per_beat)
-    support_b = _slope_support(samples, sample_rate, offbeat, seconds_per_beat)
-    return offset if support_a >= support_b else offbeat
+    refined_offset = _refine_offset_with_waveform(samples, sample_rate, offset, seconds_per_beat)
+    refined_offbeat = _refine_offset_with_waveform(samples, sample_rate, offbeat, seconds_per_beat)
+    support_a = _slope_support(samples, sample_rate, refined_offset, seconds_per_beat)
+    support_b = _slope_support(samples, sample_rate, refined_offbeat, seconds_per_beat)
+    return _canonical_phase(refined_offset if support_a >= support_b else refined_offbeat, seconds_per_beat)
+
+
+def _canonical_phase(offset: float, interval: float) -> float:
+    if interval <= 0:
+        return offset
+    phase = offset % interval
+    if np.isclose(phase, interval) or np.isclose(phase, 0.0):
+        return 0.0
+    return float(phase)
+
+
+def _refine_offset_with_waveform(
+    samples: np.ndarray,
+    sample_rate: int,
+    offset: float,
+    interval: float,
+) -> float:
+    if samples.size == 0 or sample_rate <= 0 or interval <= 0:
+        return offset
+
+    best_offset = offset
+    best_support = _slope_support(samples, sample_rate, offset, interval)
+    for delta in np.arange(
+        -WAVEFORM_REFINE_WINDOW_SECONDS,
+        WAVEFORM_REFINE_WINDOW_SECONDS + WAVEFORM_REFINE_STEP_SECONDS,
+        WAVEFORM_REFINE_STEP_SECONDS,
+    ):
+        candidate = (offset + float(delta)) % interval
+        support = _slope_support(samples, sample_rate, candidate, interval)
+        if support > best_support:
+            best_offset = candidate
+            best_support = support
+    return best_offset
 
 
 def _slope_support(samples: np.ndarray, sample_rate: int, offset: float, interval: float) -> float:
@@ -171,8 +231,7 @@ def _regular_beat_times(offset: float, bpm: float, duration: float) -> list[floa
     beat_times: list[float] = []
     time = offset
     while time <= duration + (interval * 0.5):
-        if time >= 0:
-            beat_times.append(round(time, 6))
+        beat_times.append(round(time, 6))
         time += interval
     return beat_times
 

@@ -39,6 +39,23 @@ def test_estimate_tempo_and_offset_from_onsets_selects_periodic_grid():
     assert offset == pytest.approx(0.2, abs=0.006)
 
 
+def test_estimate_tempo_and_offset_from_onsets_preserves_sub_bin_phase():
+    onset_times = [0.203 + i * 0.5 for i in range(24)]
+    weights = [1.0 for _ in onset_times]
+    samples = np.zeros(8_000, dtype=float)
+
+    bpm, offset = _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        weights,
+        samples,
+        sample_rate=1_000,
+        fallback_bpm=120,
+    )
+
+    assert bpm == 120
+    assert offset == pytest.approx(0.203, abs=0.001)
+
+
 def test_estimate_tempo_and_offset_from_onsets_uses_waveform_to_reject_offbeat():
     onset_times = [0.25 + i * 0.5 for i in range(16)] + [0.5 + i * 0.5 for i in range(16)]
     weights = [1.0 for _ in onset_times]
@@ -60,6 +77,10 @@ def test_estimate_tempo_and_offset_from_onsets_uses_waveform_to_reject_offbeat()
 
 def test_regular_beat_times_starts_at_refined_offset():
     assert _regular_beat_times(0.2, 120, 1.3) == [0.2, 0.7, 1.2]
+
+
+def test_regular_beat_times_keeps_negative_offset_grid_start():
+    assert _regular_beat_times(-0.05, 120, 1.0) == [-0.05, 0.45, 0.95]
 
 
 def test_apply_analysis_overrides_updates_bpm_and_offset():
