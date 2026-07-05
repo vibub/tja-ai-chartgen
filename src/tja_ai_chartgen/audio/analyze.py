@@ -177,6 +177,39 @@ def _regular_beat_times(offset: float, bpm: float, duration: float) -> list[floa
     return beat_times
 
 
+def _regular_beat_numbers(beat_count: int, time_signature: str) -> list[int]:
+    beats_per_bar = {"3/4": 3, "6/8": 6}.get(time_signature, 4)
+    return [(index % beats_per_bar) + 1 for index in range(beat_count)]
+
+
+def _nearest_regular_time(reference: float, phase: float, interval: float) -> float:
+    if interval <= 0:
+        return reference
+    step = round((reference - phase) / interval)
+    return round(phase + (step * interval), 6)
+
+
+def _weights_from_raw_onsets(raw: AudioAnalysisRaw) -> list[float]:
+    if not raw.onset_strengths:
+        return [1.0 for _ in raw.onset_times]
+
+    max_strength = max(raw.onset_strengths, default=0.0)
+    if max_strength <= 0:
+        return [1.0 for _ in raw.onset_times]
+
+    weights: list[float] = []
+    for onset_time in raw.onset_times:
+        if raw.sample_rate:
+            frame_index = round(onset_time * raw.sample_rate / raw.hop_length)
+        elif raw.duration > 0:
+            frame_index = round((onset_time / raw.duration) * (len(raw.onset_strengths) - 1))
+        else:
+            frame_index = 0
+        frame_index = max(0, min(len(raw.onset_strengths) - 1, frame_index))
+        weights.append(0.1 + (max(0.0, raw.onset_strengths[frame_index]) / max_strength))
+    return weights
+
+
 def apply_analysis_overrides(
     raw: AudioAnalysisRaw,
     bpm: float | None = None,
@@ -288,25 +321,56 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
     if not beat_times:
         return raw
 
-    downbeat_times = [time for time, number in zip(beat_times, beat_numbers, strict=True) if number == 1]
-    updates: dict[str, Any] = {
-        "beat_times": beat_times,
-        "beat_numbers": beat_numbers,
-        "downbeat_times": downbeat_times,
-        "offset": downbeat_times[0] if downbeat_times else beat_times[0],
-        "time_signature": estimate_time_signature(beat_numbers),
-        "analyzer": "beatnet+librosa",
-    }
-
+    beatnet_beat_times = beat_times
+    beatnet_beat_numbers = beat_numbers
+    time_signature = estimate_time_signature(beatnet_beat_numbers)
+    bpm = raw.bpm
+    offset = beatnet_beat_times[0]
     positive_intervals = [
         later - earlier
         for earlier, later in zip(beat_times, beat_times[1:], strict=False)
         if later > earlier
     ]
     if positive_intervals:
-        updates["bpm"] = normalize_bpm(60.0 / float(np.mean(positive_intervals)))
+        bpm = normalize_bpm(60.0 / float(np.mean(positive_intervals)))
 
-    return raw.model_copy(update=updates)
+    refined = _estimate_tempo_and_offset_from_onsets(
+        raw.onset_times,
+        _weights_from_raw_onsets(raw),
+        np.asarray([], dtype=float),
+        sample_rate=raw.sample_rate or 0,
+        fallback_bpm=bpm,
+    )
+    if refined is not None:
+        bpm, offset = refined
+
+    beat_times = _regular_beat_times(offset, bpm, raw.duration)
+    if not beat_times:
+        return raw
+
+    beat_numbers = _regular_beat_numbers(len(beat_times), time_signature)
+    beat_interval = 60.0 / bpm
+    beatnet_downbeats = [
+        _nearest_regular_time(time, offset, beat_interval)
+        for time, number in zip(beatnet_beat_times, beatnet_beat_numbers, strict=True)
+        if number == 1
+    ]
+    beat_time_set = set(beat_times)
+    downbeat_times = sorted({time for time in beatnet_downbeats if time in beat_time_set})
+    if not downbeat_times:
+        downbeat_times = [time for time, number in zip(beat_times, beat_numbers, strict=True) if number == 1]
+
+    return raw.model_copy(
+        update={
+            "beat_times": beat_times,
+            "beat_numbers": beat_numbers,
+            "downbeat_times": downbeat_times,
+            "offset": downbeat_times[0] if downbeat_times else offset,
+            "time_signature": time_signature,
+            "bpm": bpm,
+            "analyzer": "beatnet+librosa+onset-grid",
+        }
+    )
 
 
 def estimate_time_signature(beat_numbers: list[int]) -> str:
