@@ -19,6 +19,7 @@ def test_web_index_shows_upload_form(tmp_path):
     assert "multipart/form-data" in response.text
     assert 'accept="audio/*,video/mp4,.mp4,.m4s"' in response.text
     assert "m4s" in response.text
+    assert 'name="use_beatnet" type="checkbox" value="true" checked' in response.text
 
 
 def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):

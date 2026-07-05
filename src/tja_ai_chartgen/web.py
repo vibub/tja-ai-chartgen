@@ -2024,7 +2024,7 @@ def _analysis_form() -> str:
           </select>
         </label>
         <label class="checkbox-card field-wide">
-          <input name="use_beatnet" type="checkbox" value="true">
+          <input name="use_beatnet" type="checkbox" value="true" checked>
           <span>使用 BeatNet <span class="field-hint">尝试增强强拍、拍号和 offset。</span></span>
         </label>
       </div>
