@@ -48,12 +48,8 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
             strength,
         )
 
-    beat_numbers_by_bar, downbeat_grids_by_bar = _map_beats_to_grids(
-        raw,
+    beat_numbers_by_bar, downbeat_grids_by_bar = _map_meter_beats_to_grids(
         meter=meter,
-        analysis_start=analysis_start,
-        bar_length=bar_length,
-        grid_length=grid_length,
         bar_count=bar_count,
     )
 
@@ -139,49 +135,21 @@ def _normalized_onset_strength(raw: AudioAnalysisRaw, onset_time: float, max_ons
     return round(max(0.0, raw.onset_strengths[frame_index]) / max_onset_strength, 3)
 
 
-def _map_beats_to_grids(
-    raw: AudioAnalysisRaw,
+def _map_meter_beats_to_grids(
     *,
     meter: MeterSpec,
-    analysis_start: float,
-    bar_length: float,
-    grid_length: float,
     bar_count: int,
 ) -> tuple[list[dict[int, int]], list[set[int]]]:
-    beat_numbers_by_bar: list[dict[int, int]] = [{} for _ in range(bar_count)]
-    downbeat_grids_by_bar: list[set[int]] = [set() for _ in range(bar_count)]
-    downbeat_times = set(round(time, 6) for time in raw.downbeat_times)
-
-    for beat_index, beat_time in enumerate(raw.beat_times):
-        bar_index, grid_index = _time_to_bar_grid(
-            beat_time,
-            analysis_start=analysis_start,
-            bar_length=bar_length,
-            grid_length=grid_length,
-            grids_per_bar=meter.grids_per_bar,
-            bar_count=bar_count,
-        )
-        if bar_index is None or grid_index is None:
-            continue
-
-        beat_number = _beat_number_for_grid(raw, beat_index, grid_index, meter)
-        beat_numbers_by_bar[bar_index][grid_index] = beat_number
-        if beat_number == 1 or round(beat_time, 6) in downbeat_times:
-            downbeat_grids_by_bar[bar_index].add(grid_index)
-
-    for bar_index, beat_numbers in enumerate(beat_numbers_by_bar):
-        if 0 in beat_numbers and not downbeat_grids_by_bar[bar_index]:
-            downbeat_grids_by_bar[bar_index].add(0)
-
-    return beat_numbers_by_bar, downbeat_grids_by_bar
+    beat_numbers = _meter_beat_numbers(meter)
+    return [beat_numbers.copy() for _ in range(bar_count)], [{0} for _ in range(bar_count)]
 
 
-def _beat_number_for_grid(raw: AudioAnalysisRaw, beat_index: int, grid_index: int, meter: MeterSpec) -> int:
-    if beat_index < len(raw.beat_numbers):
-        return raw.beat_numbers[beat_index]
-
+def _meter_beat_numbers(meter: MeterSpec) -> dict[int, int]:
     grids_per_beat = meter.grids_per_bar / meter.beats_per_bar
-    return int(grid_index // grids_per_beat) + 1
+    return {
+        round((beat_number - 1) * grids_per_beat): beat_number
+        for beat_number in range(1, int(meter.beats_per_bar) + 1)
+    }
 
 
 def _strongest_onset_grids(strengths: dict[int, float]) -> list[int]:

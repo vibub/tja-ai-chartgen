@@ -60,6 +60,8 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
         reference_examples_prompt="static reference prompt",
     )
 
+    assert "Grid 0 is the barline and primary downbeat candidate" in prompt
+    assert "prefer starting the bar with a 1/2 note on grid 0" in prompt
     assert "Big notes 3/4 require both hands hitting together" in prompt
     assert "Do not place big notes 3/4 inside dense alternating streams" in prompt
     assert "3 or more consecutive playable hits" in prompt
