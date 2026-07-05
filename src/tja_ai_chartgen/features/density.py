@@ -53,10 +53,11 @@ def _density_hint_for_bar(
         )
 
     if _is_musical_rest(bar, onset_count):
+        max_hits = 0 if is_silent_bar(bar) else 2
         return BarDensityHint(
             kind="rest",
             min_hits=0,
-            max_hits=2,
+            max_hits=max_hits,
             allow_empty=True,
             count_in_quality_average=False,
             reason="low-energy musical pause or break",
@@ -65,37 +66,37 @@ def _density_hint_for_bar(
     if _is_sparse_musical_bar(bar, onset_count):
         return BarDensityHint(
             kind="sparse",
-            min_hits=0,
+            min_hits=1 if onset_count else 0,
             max_hits=4,
             allow_empty=onset_count == 0,
             count_in_quality_average=False,
             reason="low-energy sparse passage",
         )
 
-    if bar.fill_candidate or bar.phrase_position in {"phrase_end", "song_end"}:
-        return BarDensityHint(
-            kind="fill",
-            min_hits=2,
-            max_hits=None,
-            allow_empty=False,
-            count_in_quality_average=True,
-            reason="phrase ending or fill candidate",
-        )
-
     if bar.energy >= 0.45 or onset_count >= max(6, bar.grids_per_bar // 2):
         return BarDensityHint(
             kind="dense",
-            min_hits=3,
-            max_hits=None,
+            min_hits=5,
+            max_hits=12,
             allow_empty=False,
             count_in_quality_average=True,
             reason="high-energy or onset-rich bar",
         )
 
+    if bar.fill_candidate or bar.phrase_position in {"phrase_end", "song_end"}:
+        return BarDensityHint(
+            kind="fill",
+            min_hits=3,
+            max_hits=10,
+            allow_empty=False,
+            count_in_quality_average=True,
+            reason="phrase ending or fill candidate",
+        )
+
     return BarDensityHint(
         kind="normal",
-        min_hits=1,
-        max_hits=None,
+        min_hits=2,
+        max_hits=8,
         allow_empty=False,
         count_in_quality_average=True,
         reason="regular playable phrase bar",

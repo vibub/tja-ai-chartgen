@@ -13,8 +13,12 @@ def test_build_density_hints_marks_middle_rest_and_edge_silence():
     hints = build_density_hints(bars)
 
     assert [hint.kind for hint in hints] == ["normal", "rest", "dense", "silent"]
+    assert hints[0].min_hits == 2
+    assert hints[0].max_hits == 8
     assert hints[1].allow_empty is True
     assert hints[1].count_in_quality_average is False
+    assert hints[2].min_hits == 5
+    assert hints[2].max_hits == 12
     assert hints[2].count_in_quality_average is True
     assert hints[3].max_hits == 0
 
@@ -29,9 +33,33 @@ def test_density_hint_payload_is_json_ready():
             "bar": 1,
             "kind": "rest",
             "min_hits": 0,
-            "max_hits": 2,
+            "max_hits": 0,
             "allow_empty": True,
             "count_in_quality_average": False,
             "reason": "low-energy musical pause or break",
         }
+    ]
+
+
+def test_build_density_hints_caps_silent_rest_and_phrase_fill():
+    bars = [
+        BarFeature(index=9, start_time=18, end_time=20, energy=0, section="break"),
+        BarFeature(index=10, start_time=20, end_time=22, energy=0.03, onset_16=[0, 4], section="break"),
+        BarFeature(
+            index=11,
+            start_time=22,
+            end_time=24,
+            energy=0.04,
+            onset_16=[0, 4, 8, 12],
+            phrase_position="phrase_end",
+            section="verse",
+        ),
+    ]
+
+    hints = build_density_hints(bars)
+
+    assert [(hint.kind, hint.min_hits, hint.max_hits) for hint in hints] == [
+        ("rest", 0, 0),
+        ("sparse", 1, 4),
+        ("fill", 3, 10),
     ]

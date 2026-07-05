@@ -761,10 +761,11 @@ def _patch_audio_pipeline(monkeypatch, duration=2.0):
         return output_path
 
     def fake_analyze_audio(input_path, use_beatnet=False):
+        beat_times = [index * 0.5 for index in range(int(duration / 0.5) + 1)]
         return AudioAnalysisRaw(
             bpm=120,
-            beat_times=[0, 0.5, 1.0, 1.5, 2.0],
-            onset_times=[0.0, 0.5, 1.0, 1.5],
+            beat_times=beat_times,
+            onset_times=beat_times[:-1],
             onset_strengths=[],
             duration=duration,
             offset=0.0,

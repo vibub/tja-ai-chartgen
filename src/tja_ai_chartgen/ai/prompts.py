@@ -110,7 +110,7 @@ Rules:
 10. High energy bars can use denser patterns.
 11. Respect the requested density: auto follows bar energy; low is sparse; medium is balanced; high is dense; max is the densest playable MVP draft.
 12. Density and difficulty targets: {density_guidance}
-13. Follow bar_density_hints for per-bar density. silent bars must be all 0; rest bars may be all 0; sparse bars may use 0-4 hits; normal/dense/fill bars should carry the requested course density.
+13. Follow bar_density_hints for per-bar density. Treat min_hits and max_hits as the preferred local range: silent/rest bars with max_hits=0 must be empty, rest bars with max_hits=2 may stay empty or tiny, sparse bars should stay light, normal bars should stay moderate, dense/fill bars may be busier but not suddenly full-density unless their hint allows it.
 14. For Oni 9-10, keep expert-level note volume through normal/dense/fill bars. Do not force notes into rest bars that represent actual musical pauses.
 15. Avoid repeating the exact same pattern for too many consecutive non-rest bars, and avoid reusing one notes string across many phrases. Keep a motif, but vary don/ka answers, offbeats, and phrase-end fills every 4-8 bars.
 16. Note colors are part of the chart design: 1/3 are don notes, 2/4 are ka notes. Do not use 1 as the default for every playable hit.
