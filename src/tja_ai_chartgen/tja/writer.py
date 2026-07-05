@@ -7,6 +7,10 @@ DEFAULT_BALLOON_COUNT = 8
 TJA_FILE_ENCODING = "cp932"
 
 
+class TjaEncodingError(ValueError):
+    """Raised when rendered TJA text cannot be saved for non-UTF-8 players."""
+
+
 def render_tja(chart: TjaChart) -> str:
     metadata = chart.metadata
     lines = [
@@ -50,9 +54,30 @@ def render_tja(chart: TjaChart) -> str:
 
 
 def write_tja_text(path: Path, text: str) -> Path:
+    validate_tja_text_encoding(text)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding=TJA_FILE_ENCODING, newline="\n")
     return path
+
+
+def validate_tja_text_encoding(text: str) -> None:
+    try:
+        text.encode(TJA_FILE_ENCODING)
+    except UnicodeEncodeError as error:
+        raise TjaEncodingError(_format_encoding_error(text, error)) from error
+
+
+def _format_encoding_error(text: str, error: UnicodeEncodeError) -> str:
+    character = error.object[error.start : error.end]
+    line = text.count("\n", 0, error.start) + 1
+    line_start = text.rfind("\n", 0, error.start) + 1
+    column = error.start - line_start + 1
+    codepoints = " ".join(f"U+{ord(char):04X}" for char in character)
+    return (
+        f"TJA text contains character(s) that cannot be encoded with {TJA_FILE_ENCODING}: "
+        f"line {line}, column {column}: {character!r} ({codepoints}). "
+        "Use CP932 / Shift-JIS compatible metadata and file names, for example Japanese kanji/kana or ASCII."
+    )
 
 
 def read_tja_text(path: Path) -> str:

@@ -17,7 +17,7 @@ from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bar
 from tja_ai_chartgen.rules.styles import validate_style
 from tja_ai_chartgen.tja.model import ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.validator import ValidationIssue, validate_tja_text
-from tja_ai_chartgen.tja.writer import render_tja, write_tja_text
+from tja_ai_chartgen.tja.writer import TjaEncodingError, render_tja, write_tja_text
 from tja_ai_chartgen.utils.paths import write_json
 
 app = typer.Typer(help="AI-assisted TJA chart draft generator")
@@ -358,7 +358,11 @@ def run_generate(
         tja_text = render_tja(chart)
         issues = validate_tja_text(tja_text)
 
-        write_tja_text(course_tja_path, tja_text)
+        try:
+            write_tja_text(course_tja_path, tja_text)
+        except TjaEncodingError as error:
+            _write_failure_report(report_path, str(error), generation_config_path)
+            _fail(str(error))
         tja_paths.append(course_tja_path)
         all_issues.extend(issues)
         if ai_failure:

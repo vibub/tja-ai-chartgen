@@ -1,5 +1,7 @@
+import pytest
+
 from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, TjaChart
-from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING, read_tja_text, render_tja, write_tja_text
+from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING, TjaEncodingError, read_tja_text, render_tja, write_tja_text
 
 
 def test_render_tja_outputs_required_sections():
@@ -84,3 +86,18 @@ def test_write_tja_text_saves_shift_jis_compatible_file(tmp_path):
 
     assert path.read_bytes() == text.encode(TJA_FILE_ENCODING)
     assert read_tja_text(path) == text
+
+
+def test_write_tja_text_reports_shift_jis_incompatible_character(tmp_path):
+    path = tmp_path / "song.tja"
+    text = "TITLE:乌鸦\nWAVE:karasu.ogg\n#START\n1000,\n#END\n"
+
+    with pytest.raises(TjaEncodingError) as error:
+        write_tja_text(path, text)
+
+    message = str(error.value)
+    assert "cp932" in message
+    assert "line 1, column 7" in message
+    assert "'乌'" in message
+    assert "U+4E4C" in message
+    assert not path.exists()

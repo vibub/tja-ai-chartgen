@@ -1,12 +1,13 @@
 import json
 from pathlib import Path
 from shutil import copy2
+from threading import Thread
 from typing import Annotated
 from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import ValidationError
 
 from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
@@ -503,6 +504,214 @@ form[data-loading="true"] button[type="submit"]::after {
   gap: 1.25rem;
 }
 
+.progress-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 0.82fr) minmax(22rem, 1fr);
+  gap: clamp(1rem, 4vw, 2.5rem);
+  align-items: stretch;
+}
+
+.progress-visual {
+  position: relative;
+  min-height: 28rem;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 30% 28%, rgba(250, 64, 40, 0.18), transparent 13rem),
+    radial-gradient(circle at 78% 66%, rgba(70, 193, 196, 0.2), transparent 14rem),
+    linear-gradient(145deg, rgba(246, 240, 226, 0.1), rgba(246, 240, 226, 0.045));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.progress-drum {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(72vw, 19rem);
+  aspect-ratio: 1;
+  place-items: center;
+  background: #2e2b26;
+  border: 1.15rem solid #f1eadc;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1.1rem 0 rgba(0, 0, 0, 0.42), inset 0 0 0 1rem #463f35;
+}
+
+.progress-drum::before,
+.progress-drum::after {
+  position: absolute;
+  width: 4.8rem;
+  height: 4.8rem;
+  content: "";
+  background: #fa4028;
+  border: 0.38rem solid #f1eadc;
+  border-radius: 999px;
+  box-shadow: 0 0.35rem 0 rgba(0, 0, 0, 0.38);
+  animation: orbit-note 2600ms linear infinite;
+}
+
+.progress-drum::after {
+  background: #46c1c4;
+  animation-delay: -1300ms;
+}
+
+.progress-drum-core {
+  z-index: 1;
+  color: #f1eadc;
+  font-size: clamp(4rem, 9vw, 7rem);
+  font-weight: 860;
+  letter-spacing: -0.12em;
+}
+
+.progress-beatline {
+  position: absolute;
+  right: 9%;
+  bottom: 11%;
+  left: 9%;
+  height: 0.8rem;
+  overflow: hidden;
+  background: rgba(246, 240, 226, 0.09);
+  border: 1px solid rgba(246, 240, 226, 0.14);
+  border-radius: 999px;
+}
+
+.progress-beatline span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, #d6a85f, transparent);
+  border-radius: inherit;
+  animation: scan-beat 1500ms ease-in-out infinite;
+}
+
+.progress-panel {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.progress-meter {
+  overflow: hidden;
+  height: 0.82rem;
+  background: rgba(12, 13, 16, 0.62);
+  border: 1px solid rgba(246, 240, 226, 0.14);
+  border-radius: 999px;
+}
+
+.progress-meter-fill {
+  display: block;
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #fa4028, #d6a85f 55%, #46c1c4);
+  border-radius: inherit;
+  transition: width 420ms ease;
+}
+
+.progress-stage-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.progress-step {
+  display: grid;
+  grid-template-columns: 2.3rem 1fr;
+  gap: 0.8rem;
+  padding: 0.85rem;
+  color: #d7d0c0;
+  background: rgba(12, 13, 16, 0.34);
+  border: 1px solid rgba(246, 240, 226, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+.progress-step-marker {
+  display: grid;
+  width: 2.3rem;
+  height: 2.3rem;
+  place-items: center;
+  color: var(--muted);
+  font-weight: 820;
+  font-variant-numeric: tabular-nums;
+  background: rgba(246, 240, 226, 0.08);
+  border-radius: 999px;
+}
+
+.progress-step-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--ink);
+  font-weight: 760;
+}
+
+.progress-step-copy {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.progress-step-state {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.progress-step[data-state="running"] {
+  border-color: rgba(214, 168, 95, 0.46);
+  box-shadow: 0 0 0 4px rgba(214, 168, 95, 0.08);
+}
+
+.progress-step[data-state="running"] .progress-step-marker {
+  color: #16130d;
+  background: var(--accent);
+  animation: pulse-step 900ms ease-in-out infinite alternate;
+}
+
+.progress-step[data-state="done"] .progress-step-marker {
+  color: #15200f;
+  background: #8ebc76;
+}
+
+.progress-step[data-state="error"] {
+  border-color: rgba(224, 138, 116, 0.48);
+}
+
+.progress-step[data-state="error"] .progress-step-marker {
+  color: #2a100a;
+  background: var(--danger);
+}
+
+@keyframes orbit-note {
+  from { transform: rotate(0deg) translateX(11.5rem) rotate(0deg); }
+  to { transform: rotate(1turn) translateX(11.5rem) rotate(-1turn); }
+}
+
+@keyframes scan-beat {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(250%); }
+}
+
+@keyframes pulse-step {
+  from { transform: scale(0.96); }
+  to { transform: scale(1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-drum::before,
+  .progress-drum::after,
+  .progress-beatline span,
+  .progress-step[data-state="running"] .progress-step-marker {
+    animation: none;
+  }
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -936,7 +1145,8 @@ pre {
 
 @media (max-width: 860px) {
   .hero,
-  .summary-grid {
+  .summary-grid,
+  .progress-shell {
     grid-template-columns: 1fr;
   }
 
@@ -1071,6 +1281,60 @@ function setupAnalyzeForm(form) {
     aiToggle.addEventListener('change', syncAiOptions);
     syncAiOptions();
   }
+}
+
+function setupProgressPage(root) {
+  const statusUrl = root.dataset.statusUrl;
+  const message = root.querySelector('[data-role="progress-message"]');
+  const meter = root.querySelector('[data-role="progress-meter"]');
+  const error = root.querySelector('[data-role="progress-error"]');
+  const steps = Array.from(root.querySelectorAll('[data-progress-step]'));
+  if (!statusUrl) return;
+
+  function labelForState(state) {
+    if (state === 'done') return '完成';
+    if (state === 'running') return '进行中';
+    if (state === 'error') return '出错';
+    return '等待';
+  }
+
+  function renderProgress(data) {
+    if (message) message.textContent = data.message || '正在处理音频。';
+    if (meter) meter.style.width = `${Math.max(0, Math.min(100, Number(data.progress) || 0))}%`;
+    const stepStateByKey = Object.fromEntries((data.steps || []).map((step) => [step.key, step.state]));
+    steps.forEach((step) => {
+      const state = stepStateByKey[step.dataset.progressStep] || 'pending';
+      step.dataset.state = state;
+      const stateLabel = step.querySelector('[data-role="progress-step-state"]');
+      if (stateLabel) stateLabel.textContent = labelForState(state);
+    });
+    if (data.status === 'done' && data.result_url) {
+      window.location.href = data.result_url;
+      return false;
+    }
+    if (data.status === 'error') {
+      if (error) {
+        error.hidden = false;
+        error.textContent = data.error || '任务失败，请返回首页重试。';
+      }
+      return false;
+    }
+    return true;
+  }
+
+  function poll() {
+    fetch(statusUrl, { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((data) => {
+        if (renderProgress(data)) window.setTimeout(poll, 900);
+      })
+      .catch(() => {
+        if (message) message.textContent = '暂时无法读取进度，正在重试。';
+        window.setTimeout(poll, 1400);
+      });
+  }
+
+  poll();
 }
 
 function setupGamePreview(root) {
@@ -1386,6 +1650,7 @@ function setupGamePreview(root) {
 }
 
 document.querySelectorAll('[data-analyze-form]').forEach(setupAnalyzeForm);
+document.querySelectorAll('[data-progress-page]').forEach(setupProgressPage);
 document.querySelectorAll('[data-game-preview]').forEach(setupGamePreview);
 
 document.querySelectorAll('form').forEach((form) => {
@@ -1438,92 +1703,73 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                 raise ValueError("AI repair retries must be greater than or equal to 0")
             job_dir = _new_job_dir(app.state.output_dir)
             input_path = _save_upload(job_dir, audio)
-            ogg_path = job_dir / f"{input_path.stem}.ogg"
-            convert_to_ogg(input_path, ogg_path)
-
-            raw = analyze_audio(ogg_path, use_beatnet=use_beatnet)
-            raw = apply_analysis_overrides(raw, bpm=bpm, offset=offset)
-            if time_signature:
-                validate_time_signature(time_signature)
-                raw = raw.model_copy(update={"time_signature": time_signature})
-            bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
-            analysis = SongAnalysis(
-                title=title,
-                artist=artist or None,
-                audio_file=str(input_path),
-                ogg_file=str(ogg_path),
-                bpm=raw.bpm,
-                offset=raw.offset,
-                time_signature=raw.time_signature,
-                bars=bars,
+            _write_progress(
+                job_dir,
+                status=_PROGRESS_RUNNING,
+                step="upload",
+                message="音频已接收，准备转换为 OGG。",
             )
-            write_json(job_dir / "analysis.json", analysis)
-            chart_bars = None
-            ai_failure: str | None = None
-            if use_ai:
-                try:
-                    chart_bars = _generate_ai_chart_bars_for_web(
-                        job_dir=job_dir,
-                        analysis=analysis,
-                        selected_bars=bars,
-                        start_bar=1,
-                        end_bar=len(bars),
-                        course=course,
-                        level=level,
-                        style=style,
-                        density=density,
-                        model=_optional_form_text(ai_model),
-                        api_base=_optional_form_text(ai_base_url),
-                        api_key=_optional_form_text(ai_api_key),
-                        ai_repair_retries=ai_repair_retries,
-                        special_notes=special_notes,
-                    )
-                except Exception as error:  # noqa: BLE001 - Web UI should still render a usable draft.
-                    ai_failure = str(error)
-
-            if chart_bars is None:
-                chart_bars = generate_fallback_chart_bars(
-                    bars,
-                    style=style,
-                    density=density,
-                    special_notes=special_notes,
-                )
-            chart = TjaChart(
-                metadata=ChartMetadata(
-                    title=analysis.title,
-                    artist=analysis.artist,
-                    wave=Path(analysis.ogg_file).name,
-                    bpm=analysis.bpm,
-                    offset=analysis.offset,
-                    course=course,
-                    level=level,
-                ),
-                bars=chart_bars,
-            )
-            tja_text = render_tja(chart)
-            output_path = job_dir / "preview.tja"
-            write_tja_text(output_path, tja_text)
-            return HTMLResponse(
-                _page(
-                    "Game preview",
-                    (_ai_generation_notice(ai_failure) if use_ai else "")
-                    + _result_panel(
-                        job_id=job_dir.name,
-                        output_path=output_path,
-                        tja_text=tja_text,
-                        analysis=analysis,
-                        chart_bars=chart_bars,
-                        course=course,
-                        level=level,
-                    )
-                    + _regenerate_form(job_dir.name, len(analysis.bars), course),
-                )
-            )
+            Thread(
+                target=_run_analyze_job,
+                kwargs={
+                    "job_dir": job_dir,
+                    "input_path": input_path,
+                    "title": title,
+                    "artist": artist,
+                    "max_bars": max_bars,
+                    "bpm": bpm,
+                    "offset": offset,
+                    "time_signature": time_signature,
+                    "use_beatnet": use_beatnet,
+                    "course": course,
+                    "level": level,
+                    "style": style,
+                    "density": density,
+                    "special_notes": special_notes,
+                    "use_ai": use_ai,
+                    "ai_model": ai_model,
+                    "ai_base_url": ai_base_url,
+                    "ai_api_key": ai_api_key,
+                    "ai_repair_retries": ai_repair_retries,
+                },
+                daemon=True,
+            ).start()
+            return HTMLResponse(_progress_page(job_dir.name))
         except Exception as error:  # noqa: BLE001 - Web boundary returns a readable error page.
             return HTMLResponse(
                 _page("Analysis failed", _error_notice(str(error))),
                 status_code=400,
             )
+
+    @app.get("/jobs/{job_id}/progress", response_class=HTMLResponse)
+    async def progress_page(job_id: str) -> str:
+        try:
+            _job_dir(app.state.output_dir, job_id)
+        except (FileNotFoundError, ValueError) as error:
+            return _page("Progress unavailable", _error_notice(str(error)))
+        return _progress_page(job_id)
+
+    @app.get("/jobs/{job_id}/status")
+    async def job_status(job_id: str) -> JSONResponse:
+        try:
+            job_dir = _job_dir(app.state.output_dir, job_id)
+        except (FileNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return JSONResponse(_read_progress(job_dir))
+
+    @app.get("/jobs/{job_id}/result", response_class=HTMLResponse)
+    async def job_result(job_id: str):
+        try:
+            job_dir = _job_dir(app.state.output_dir, job_id)
+        except (FileNotFoundError, ValueError) as error:
+            return HTMLResponse(_page("Result unavailable", _error_notice(str(error))), status_code=404)
+        progress = _read_progress(job_dir)
+        if progress.get("status") != _PROGRESS_DONE:
+            return RedirectResponse(f"/jobs/{job_id}/progress", status_code=303)
+        result_path = job_dir / _PROGRESS_RESULT_HTML
+        if not result_path.is_file():
+            return HTMLResponse(_page("Result unavailable", _error_notice("结果页面尚未写入。")), status_code=404)
+        return HTMLResponse(result_path.read_text(encoding="utf-8"))
 
     @app.get("/assets/{filename}")
     async def web_asset(filename: str) -> FileResponse:
@@ -1769,6 +2015,159 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
 
 
 app = create_app()
+
+
+def _run_analyze_job(
+    *,
+    job_dir: Path,
+    input_path: Path,
+    title: str,
+    artist: str,
+    max_bars: int | None,
+    bpm: float | None,
+    offset: float | None,
+    time_signature: str,
+    use_beatnet: bool,
+    course: str,
+    level: int,
+    style: str,
+    density: str,
+    special_notes: bool,
+    use_ai: bool,
+    ai_model: str,
+    ai_base_url: str,
+    ai_api_key: str,
+    ai_repair_retries: int,
+) -> None:
+    try:
+        _write_progress(
+            job_dir,
+            status=_PROGRESS_RUNNING,
+            step="convert",
+            message="正在调用 ffmpeg 转换音频，完成后会进入节拍分析。",
+        )
+        ogg_path = job_dir / f"{input_path.stem}.ogg"
+        convert_to_ogg(input_path, ogg_path)
+
+        _write_progress(
+            job_dir,
+            status=_PROGRESS_RUNNING,
+            step="analyze",
+            message="正在提取 BPM、OFFSET、拍号和小节能量。",
+        )
+        raw = analyze_audio(ogg_path, use_beatnet=use_beatnet)
+        raw = apply_analysis_overrides(raw, bpm=bpm, offset=offset)
+        if time_signature:
+            validate_time_signature(time_signature)
+            raw = raw.model_copy(update={"time_signature": time_signature})
+        bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
+        analysis = SongAnalysis(
+            title=title,
+            artist=artist or None,
+            audio_file=str(input_path),
+            ogg_file=str(ogg_path),
+            bpm=raw.bpm,
+            offset=raw.offset,
+            time_signature=raw.time_signature,
+            bars=bars,
+        )
+        write_json(job_dir / "analysis.json", analysis)
+
+        _write_progress(
+            job_dir,
+            status=_PROGRESS_RUNNING,
+            step="generate",
+            message=(
+                "正在调用 AI 生成全曲谱面，失败时会自动回退规则生成。"
+                if use_ai
+                else "正在用规则生成器生成全曲谱面。"
+            ),
+        )
+        chart_bars = None
+        ai_failure: str | None = None
+        if use_ai:
+            try:
+                chart_bars = _generate_ai_chart_bars_for_web(
+                    job_dir=job_dir,
+                    analysis=analysis,
+                    selected_bars=bars,
+                    start_bar=1,
+                    end_bar=len(bars),
+                    course=course,
+                    level=level,
+                    style=style,
+                    density=density,
+                    model=_optional_form_text(ai_model),
+                    api_base=_optional_form_text(ai_base_url),
+                    api_key=_optional_form_text(ai_api_key),
+                    ai_repair_retries=ai_repair_retries,
+                    special_notes=special_notes,
+                )
+            except Exception as error:  # noqa: BLE001 - Web UI should still render a usable draft.
+                ai_failure = str(error)
+
+        if chart_bars is None:
+            chart_bars = generate_fallback_chart_bars(
+                bars,
+                style=style,
+                density=density,
+                special_notes=special_notes,
+            )
+
+        _write_progress(
+            job_dir,
+            status=_PROGRESS_RUNNING,
+            step="render",
+            message="正在写入 preview.tja，并准备可视化游玩预览。",
+        )
+        chart = TjaChart(
+            metadata=ChartMetadata(
+                title=analysis.title,
+                artist=analysis.artist,
+                wave=Path(analysis.ogg_file).name,
+                bpm=analysis.bpm,
+                offset=analysis.offset,
+                course=course,
+                level=level,
+            ),
+            bars=chart_bars,
+        )
+        tja_text = render_tja(chart)
+        output_path = job_dir / "preview.tja"
+        write_tja_text(output_path, tja_text)
+        result_body = (
+            (_ai_generation_notice(ai_failure) if use_ai else "")
+            + _result_panel(
+                job_id=job_dir.name,
+                output_path=output_path,
+                tja_text=tja_text,
+                analysis=analysis,
+                chart_bars=chart_bars,
+                course=course,
+                level=level,
+            )
+            + _regenerate_form(job_dir.name, len(analysis.bars), course)
+        )
+        (job_dir / _PROGRESS_RESULT_HTML).write_text(
+            _page("Game preview", result_body),
+            encoding="utf-8",
+        )
+        _write_progress(
+            job_dir,
+            status=_PROGRESS_DONE,
+            step="render",
+            message="谱面生成完成，正在打开游玩预览。",
+            result_url=f"/jobs/{job_dir.name}/result",
+        )
+    except Exception as error:  # noqa: BLE001 - Background job reports failures through status JSON.
+        step = str(_read_progress(job_dir).get("step", "upload"))
+        _write_progress(
+            job_dir,
+            status=_PROGRESS_ERROR,
+            step=step,
+            message="任务停止，请根据错误信息调整参数后重试。",
+            error=str(error),
+        )
 
 
 def _new_job_dir(output_dir: Path) -> Path:
@@ -2221,6 +2620,51 @@ def _analysis_form() -> str:
   </section>
 </section>
 """
+
+
+def _progress_page(job_id: str) -> str:
+    steps = "".join(
+        f"""
+        <li class="progress-step" data-progress-step="{_escape(str(step['key']))}" data-state="{'running' if index == 0 else 'pending'}">
+          <span class="progress-step-marker">{index + 1}</span>
+          <span>
+            <span class="progress-step-title">
+              {_escape(str(step['label']))}
+              <span class="progress-step-state" data-role="progress-step-state">{'进行中' if index == 0 else '等待'}</span>
+            </span>
+            <span class="progress-step-copy">{_escape(str(step['detail']))}</span>
+          </span>
+        </li>
+        """
+        for index, step in enumerate(_PROGRESS_STEPS)
+    )
+    return _page(
+        "Generating chart",
+        f"""
+<section class="progress-shell" data-progress-page data-status-url="/jobs/{_escape(job_id)}/status" aria-labelledby="progress-heading">
+  <section class="progress-visual" aria-hidden="true">
+    <div class="progress-drum"><span class="progress-drum-core">太</span></div>
+    <div class="progress-beatline"><span></span></div>
+  </section>
+  <section class="panel progress-panel">
+    <p class="eyebrow">生成进度</p>
+    <h1 id="progress-heading">正在制谱</h1>
+    <p class="lede" data-role="progress-message">音频已接收，准备转换为 OGG。</p>
+    <div class="progress-meter" aria-label="任务进度">
+      <span class="progress-meter-fill" data-role="progress-meter"></span>
+    </div>
+    <ol class="progress-stage-list" aria-label="当前生成阶段">
+      {steps}
+    </ol>
+    <p class="notice error" data-role="progress-error" hidden></p>
+    <div class="helper-strip">
+      <span>任务 <code>{_escape(job_id)}</code></span>
+      <a class="button-link" href="/">返回首页</a>
+    </div>
+  </section>
+</section>
+""",
+    )
 
 
 def _tja_preview_form() -> str:
@@ -2694,3 +3138,116 @@ def _escape(value: str) -> str:
         .replace('"', "&quot;")
         .replace("'", "&#x27;")
     )
+
+
+_PROGRESS_STEPS = (
+    {
+        "key": "upload",
+        "label": "接收音频",
+        "detail": "把上传文件写入本地 job 目录。",
+    },
+    {
+        "key": "convert",
+        "label": "转换 OGG",
+        "detail": "调用 ffmpeg 准备可预览的音频。",
+    },
+    {
+        "key": "analyze",
+        "label": "分析节拍",
+        "detail": "提取 BPM、OFFSET、拍号、小节和段落特征。",
+    },
+    {
+        "key": "generate",
+        "label": "生成谱面",
+        "detail": "按选择的难度、风格和密度生成 TJA 小节。",
+    },
+    {
+        "key": "render",
+        "label": "写入预览",
+        "detail": "渲染 preview.tja 并准备游玩预览页面。",
+    },
+)
+
+
+_PROGRESS_STEP_INDEX = {step["key"]: index for index, step in enumerate(_PROGRESS_STEPS)}
+_PROGRESS_PENDING = "pending"
+_PROGRESS_RUNNING = "running"
+_PROGRESS_DONE = "done"
+_PROGRESS_ERROR = "error"
+_PROGRESS_JSON = "progress.json"
+_PROGRESS_RESULT_HTML = "result.html"
+
+
+def _progress_payload(
+    *,
+    status: str,
+    step: str,
+    message: str,
+    result_url: str | None = None,
+    error: str | None = None,
+) -> dict[str, object]:
+    current_index = _PROGRESS_STEP_INDEX.get(step, -1)
+    steps = []
+    for index, item in enumerate(_PROGRESS_STEPS):
+        if status == _PROGRESS_ERROR and index == current_index:
+            state = _PROGRESS_ERROR
+        elif index < current_index or status == _PROGRESS_DONE:
+            state = _PROGRESS_DONE
+        elif index == current_index:
+            state = status if status in {_PROGRESS_RUNNING, _PROGRESS_ERROR} else _PROGRESS_RUNNING
+        else:
+            state = _PROGRESS_PENDING
+        steps.append({**item, "state": state})
+
+    return {
+        "status": status,
+        "step": step,
+        "message": message,
+        "progress": _progress_percent(status, current_index),
+        "steps": steps,
+        "result_url": result_url,
+        "error": error,
+    }
+
+
+def _progress_percent(status: str, current_index: int) -> int:
+    if status == _PROGRESS_DONE:
+        return 100
+    if current_index < 0:
+        return 0
+    unit = 100 / max(1, len(_PROGRESS_STEPS))
+    if status == _PROGRESS_ERROR:
+        return round((current_index + 1) * unit)
+    return round((current_index + 0.35) * unit)
+
+
+def _write_progress(
+    job_dir: Path,
+    *,
+    status: str,
+    step: str,
+    message: str,
+    result_url: str | None = None,
+    error: str | None = None,
+) -> None:
+    write_json(
+        job_dir / _PROGRESS_JSON,
+        _progress_payload(
+            status=status,
+            step=step,
+            message=message,
+            result_url=result_url,
+            error=error,
+        ),
+    )
+
+
+def _read_progress(job_dir: Path) -> dict[str, object]:
+    path = job_dir / _PROGRESS_JSON
+    if not path.is_file():
+        return _progress_payload(
+            status=_PROGRESS_RUNNING,
+            step="upload",
+            message="任务已创建，正在准备接收音频。",
+        )
+    return json.loads(path.read_text(encoding="utf-8"))

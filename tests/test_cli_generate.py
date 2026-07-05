@@ -448,6 +448,35 @@ def test_generate_with_bpm_and_offset_overrides_outputs_metadata(tmp_path, monke
     assert '"offset": 0.25' in analysis_text
 
 
+def test_generate_reports_tja_encoding_error_without_traceback(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "乌鸦",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "cannot be encoded with cp932" in result.output
+    assert "column 7" in result.output
+    assert "U+4E4C" in result.output
+    assert "Traceback" not in result.output
+    assert not (output_dir / "song.tja").exists()
+    report_text = (output_dir / "report.txt").read_text(encoding="utf-8")
+    assert "cannot be encoded with cp932" in report_text
+    assert "line 1, column 7" in report_text
+
+
 def test_generate_reports_missing_input_without_traceback(tmp_path):
     output_dir = tmp_path / "output"
 

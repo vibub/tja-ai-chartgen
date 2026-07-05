@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
@@ -38,22 +40,28 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert "游玩预览" in response.text
-    assert "data-game-preview" in response.text
-    assert 'name="start_bar" type="number" min="1" value="1"' in response.text
-    assert 'name="end_bar" type="number" min="1" value="1"' in response.text
-    assert '<select name="course">' in response.text
-    assert '魔王（Oni）' in response.text
-    assert '技巧（technical）' in response.text
-    assert 'name="special_notes" type="checkbox" value="true" checked' in response.text
-    assert 'name="use_ai" type="checkbox" value="true" checked' in response.text
-    assert '<details class="advanced-panel field-wide">' in response.text
-    assert '<summary>AI 参数</summary>' in response.text
-    assert '<details class="advanced-panel field-wide" open>' not in response.text
-    assert "BPM: 180.0" not in response.text
-    assert "OFFSET: 0.25" not in response.text
-    assert "小节预览" not in response.text
+    assert "正在制谱" in response.text
+    assert "data-progress-page" in response.text
     job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    assert status["status"] == "done"
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    assert result.status_code == 200
+    assert "游玩预览" in result.text
+    assert "data-game-preview" in result.text
+    assert 'name="start_bar" type="number" min="1" value="1"' in result.text
+    assert 'name="end_bar" type="number" min="1" value="1"' in result.text
+    assert '<select name="course">' in result.text
+    assert '魔王（Oni）' in result.text
+    assert '技巧（technical）' in result.text
+    assert 'name="special_notes" type="checkbox" value="true" checked' in result.text
+    assert 'name="use_ai" type="checkbox" value="true" checked' in result.text
+    assert '<details class="advanced-panel field-wide">' in result.text
+    assert '<summary>AI 参数</summary>' in result.text
+    assert '<details class="advanced-panel field-wide" open>' not in result.text
+    assert "BPM: 180.0" not in result.text
+    assert "OFFSET: 0.25" not in result.text
+    assert "小节预览" not in result.text
     assert (job_dir / "analysis.json").exists()
     assert (job_dir / "preview.tja").exists()
 
@@ -67,8 +75,10 @@ def test_web_export_chart_saves_ogg_and_tja_with_matching_names(tmp_path, monkey
         files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
     )
     assert analyze_response.status_code == 200
-    assert "保存 OGG 和 TJA" in analyze_response.text
     job_id = next((tmp_path / "jobs").iterdir()).name
+    _wait_for_job_done(client, job_id)
+    analyze_result = client.get(f"/jobs/{job_id}/result")
+    assert "保存 OGG 和 TJA" in analyze_result.text
     export_dir = tmp_path / "exported"
 
     response = client.post(
@@ -87,6 +97,28 @@ def test_web_export_chart_saves_ogg_and_tja_with_matching_names(tmp_path, monkey
     assert "WAVE:song.ogg" in (export_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
 
 
+def test_web_progress_status_reports_failed_stage(tmp_path, monkeypatch):
+    def fake_convert_to_ogg(input_path, output_path):
+        raise RuntimeError("ffmpeg missing")
+
+    monkeypatch.setattr("tja_ai_chartgen.web.convert_to_ogg", fake_convert_to_ogg)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    assert "正在制谱" in response.text
+    job_id = next(tmp_path.iterdir()).name
+    status = _wait_for_job_done(client, job_id, final_status="error")
+    assert status["status"] == "error"
+    assert status["step"] == "convert"
+    assert "ffmpeg missing" in status["error"]
+
+
 def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     _patch_web_audio_pipeline(monkeypatch, duration=4.0)
     client = TestClient(create_app(output_dir=tmp_path))
@@ -96,9 +128,11 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
         files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
     )
     assert analyze_response.status_code == 200
-    assert 'name="start_bar" type="number" min="1" value="1"' in analyze_response.text
-    assert 'name="end_bar" type="number" min="1" value="2"' in analyze_response.text
     job_id = next(tmp_path.iterdir()).name
+    _wait_for_job_done(client, job_id)
+    analyze_result = client.get(f"/jobs/{job_id}/result")
+    assert 'name="start_bar" type="number" min="1" value="1"' in analyze_result.text
+    assert 'name="end_bar" type="number" min="1" value="2"' in analyze_result.text
 
     response = client.post(
         "/regenerate",
@@ -181,8 +215,11 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert "AI 增强已完成" in response.text
+    assert "正在制谱" in response.text
     job_dir = next(tmp_path.iterdir())
+    _wait_for_job_done(client, job_dir.name)
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    assert "AI 增强已完成" in result.text
     assert (job_dir / "ai_input_1_2.json").exists()
     assert (job_dir / "ai_output_1_2.json").exists()
     generated_text = (job_dir / "preview.tja").read_text(encoding=TJA_FILE_ENCODING)
@@ -236,6 +273,7 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
     )
     assert analyze_response.status_code == 200
     job_id = next(tmp_path.iterdir()).name
+    _wait_for_job_done(client, job_id)
 
     response = client.post(
         "/regenerate",
@@ -277,8 +315,11 @@ def test_web_regenerate_shows_ai_option(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert "使用 AI 增强" in response.text
-    assert "name=\"ai_model\"" in response.text
+    job_id = next(tmp_path.iterdir()).name
+    _wait_for_job_done(client, job_id)
+    result = client.get(f"/jobs/{job_id}/result")
+    assert "使用 AI 增强" in result.text
+    assert "name=\"ai_model\"" in result.text
 
 
 def test_web_save_chart_edits(tmp_path, monkeypatch):
@@ -291,6 +332,7 @@ def test_web_save_chart_edits(tmp_path, monkeypatch):
     )
     assert analyze_response.status_code == 200
     job_id = next(tmp_path.iterdir()).name
+    _wait_for_job_done(client, job_id)
 
     response = client.post(
         "/save-chart",
@@ -378,11 +420,27 @@ def test_web_serves_job_audio(tmp_path, monkeypatch):
     )
     assert analyze_response.status_code == 200
     job_id = next(tmp_path.iterdir()).name
+    _wait_for_job_done(client, job_id)
 
     response = client.get(f"/jobs/{job_id}/song.ogg")
 
     assert response.status_code == 200
     assert response.content == b"fake ogg"
+
+
+def _wait_for_job_done(client, job_id, *, final_status="done"):
+    deadline = time.monotonic() + 3
+    last_status = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/jobs/{job_id}/status")
+        assert response.status_code == 200
+        last_status = response.json()
+        if last_status["status"] == final_status:
+            return last_status
+        if last_status["status"] == "error" and final_status != "error":
+            raise AssertionError(last_status)
+        time.sleep(0.02)
+    raise AssertionError(last_status)
 
 
 def _patch_web_audio_pipeline(monkeypatch, duration=2.0):
