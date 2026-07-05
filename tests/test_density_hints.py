@@ -63,3 +63,23 @@ def test_build_density_hints_caps_silent_rest_and_phrase_fill():
         ("sparse", 1, 4),
         ("fill", 3, 10),
     ]
+
+
+def test_build_density_hints_treats_sustained_activity_as_normal():
+    bars = [
+        BarFeature(
+            index=20,
+            start_time=40,
+            end_time=42,
+            energy=0.03,
+            onset_16=[],
+            activity_16=[0.0, 0.4, 0.5, 0.45] + [0.0] * 12,
+            section="break",
+        )
+    ]
+
+    hints = build_density_hints(bars)
+
+    assert [(hint.kind, hint.min_hits, hint.max_hits, hint.reason) for hint in hints] == [
+        ("normal", 3, 8, "sustained musical activity without strong onsets")
+    ]

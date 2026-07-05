@@ -41,6 +41,7 @@ def _density_hint_for_bar(
     silent_indexes: set[int],
 ) -> BarDensityHint:
     onset_count = len(bar.onset_16)
+    activity_level = _activity_level(bar)
 
     if index in silent_indexes:
         return BarDensityHint(
@@ -52,7 +53,7 @@ def _density_hint_for_bar(
             reason="song-start/song-end silence",
         )
 
-    if _is_musical_rest(bar, onset_count):
+    if _is_musical_rest(bar, onset_count, activity_level):
         max_hits = 0 if is_silent_bar(bar) else 2
         return BarDensityHint(
             kind="rest",
@@ -63,7 +64,17 @@ def _density_hint_for_bar(
             reason="low-energy musical pause or break",
         )
 
-    if _is_sparse_musical_bar(bar, onset_count):
+    if _is_sustained_musical_bar(bar, onset_count, activity_level):
+        return BarDensityHint(
+            kind="normal",
+            min_hits=3,
+            max_hits=8,
+            allow_empty=False,
+            count_in_quality_average=True,
+            reason="sustained musical activity without strong onsets",
+        )
+
+    if _is_sparse_musical_bar(bar, onset_count, activity_level):
         return BarDensityHint(
             kind="sparse",
             min_hits=1 if onset_count else 0,
@@ -103,7 +114,15 @@ def _density_hint_for_bar(
     )
 
 
-def _is_musical_rest(bar: BarFeature, onset_count: int) -> bool:
+def _activity_level(bar: BarFeature) -> float:
+    if not bar.activity_16:
+        return 0.0
+    return max(bar.activity_16)
+
+
+def _is_musical_rest(bar: BarFeature, onset_count: int, activity_level: float) -> bool:
+    if activity_level >= 0.18:
+        return False
     if is_silent_bar(bar):
         return bar.section in {"break", "verse", "unknown"}
     if bar.section != "break":
@@ -113,7 +132,13 @@ def _is_musical_rest(bar: BarFeature, onset_count: int) -> bool:
     return bar.energy <= 0.04 and onset_count == 0
 
 
-def _is_sparse_musical_bar(bar: BarFeature, onset_count: int) -> bool:
+def _is_sustained_musical_bar(bar: BarFeature, onset_count: int, activity_level: float) -> bool:
+    return activity_level >= 0.25 and onset_count <= 3
+
+
+def _is_sparse_musical_bar(bar: BarFeature, onset_count: int, activity_level: float) -> bool:
+    if activity_level >= 0.18:
+        return False
     if bar.section == "break" and bar.energy <= 0.08 and onset_count <= 3:
         return True
     return bar.energy <= 0.045 and onset_count <= 2

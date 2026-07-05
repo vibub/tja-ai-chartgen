@@ -97,3 +97,26 @@ def test_build_bar_features_adds_grid_strength_and_phrase_context():
     assert bars[0].grid_features[4].strength == 0.5
     assert bars[0].phrase_position == "song_end"
     assert bars[0].fill_candidate is True
+
+
+def test_build_bar_features_maps_activity_envelope_to_grid_features():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0, 0.5, 1.0, 1.5, 2.0],
+        onset_times=[],
+        onset_strengths=[],
+        activity_envelope=[0.0, 0.5, 1.0, 0.25],
+        duration=2.0,
+        offset=0.0,
+        sample_rate=2,
+        hop_length=1,
+    )
+
+    bars = build_bar_features(raw)
+
+    assert bars[0].onset_16 == []
+    assert bars[0].activity_16[4] == 0.5
+    assert bars[0].activity_16[8] == 1.0
+    assert bars[0].grid_features[8].activity == 1.0
+    assert bars[0].grid_features[8].strength == 1.0
+    assert bars[0].energy > 0

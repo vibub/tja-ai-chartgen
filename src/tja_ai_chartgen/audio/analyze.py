@@ -22,6 +22,7 @@ class AudioAnalysisRaw(BaseModel):
     onset_strengths: list[float]
     duration: float
     offset: float
+    activity_envelope: list[float] = Field(default_factory=list)
     sample_rate: int | None = None
     hop_length: int = 512
     downbeat_times: list[float] = Field(default_factory=list)
@@ -39,6 +40,17 @@ def normalize_bpm(bpm: float) -> float:
     while bpm > MAX_DETECTED_BPM:
         bpm /= 2
     return round(bpm, 3)
+
+
+def _activity_envelope(samples: np.ndarray, *, hop_length: int) -> list[float]:
+    rms = librosa.feature.rms(y=samples, hop_length=hop_length)[0]
+    if rms.size == 0:
+        return []
+
+    max_rms = float(np.max(rms))
+    if max_rms <= 0:
+        return [0.0 for _ in rms]
+    return [round(float(value / max_rms), 3) for value in rms]
 
 
 def _onset_weights(
@@ -299,6 +311,7 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
 
     hop_length = 512
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
+    activity_env = _activity_envelope(y, hop_length=hop_length)
     tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, onset_envelope=onset_env)
     tempo_value = float(np.asarray(tempo).reshape(-1)[0])
 
@@ -334,6 +347,7 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         beat_times=[float(value) for value in beat_times],
         onset_times=onset_times_list,
         onset_strengths=[float(value) for value in onset_env.tolist()],
+        activity_envelope=activity_env,
         duration=duration,
         offset=offset,
         sample_rate=int(sr),

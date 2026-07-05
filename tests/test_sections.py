@@ -41,3 +41,27 @@ def test_assign_sections_marks_middle_low_energy_onset_bars_as_playable():
     assert assigned[9].section == "verse"
     assert assigned[10].section == "chorus"
     assert assigned[11].section == "break"
+
+
+def test_assign_sections_uses_activity_for_sustained_music():
+    bars = [
+        BarFeature(index=index, start_time=index * 2, end_time=(index + 1) * 2, energy=0, onset_16=[])
+        for index in range(8)
+    ]
+    bars.extend(
+        [
+            BarFeature(index=8, start_time=16, end_time=18, energy=0, onset_16=[], activity_16=[0.4] * 16),
+            BarFeature(index=9, start_time=18, end_time=20, energy=0, onset_16=[]),
+        ]
+    )
+    bars.extend(
+        [
+            BarFeature(index=index, start_time=index * 2, end_time=(index + 1) * 2, energy=0, onset_16=[])
+            for index in range(10, 18)
+        ]
+    )
+
+    assigned = assign_sections(bars)
+
+    assert assigned[8].section == "verse"
+    assert assigned[9].section == "break"
