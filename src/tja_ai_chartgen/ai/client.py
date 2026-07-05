@@ -5,6 +5,7 @@ from typing import Any
 from litellm import completion
 
 from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
+from tja_ai_chartgen.features.silence import edge_silence_indexes, is_silent_bar
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 
 ALLOWED_AI_NOTES = set("01234578")
@@ -140,6 +141,7 @@ def sanitize_ai_bars(
     expected_bars: list[BarFeature] | None = None,
 ) -> list[ChartBar]:
     sanitized: list[ChartBar] = []
+    silent_indexes = edge_silence_indexes(expected_bars or [])
 
     for index in range(expected_count):
         expected_length = expected_bars[index].grids_per_bar if expected_bars and index < len(expected_bars) else 16
@@ -155,7 +157,7 @@ def sanitize_ai_bars(
             time_signature = expected_time_signature
             balloon_counts = []
 
-        cleaned_notes = _sanitize_notes(notes, expected_length)
+        cleaned_notes = "0" * expected_length if index in silent_indexes else _sanitize_notes(notes, expected_length)
         sanitized.append(
             ChartBar(
                 index=index,
@@ -266,6 +268,8 @@ def _validate_ai_data(
         )
 
     if not issues:
+        issues.extend(_validate_edge_silence(bars, analysis.bars))
+    if not issues:
         issues.extend(
             _validate_chart_quality(
                 bars,
@@ -280,6 +284,20 @@ def _validate_ai_data(
         raise _AiOutputValidationError(issues)
 
     return bars
+
+
+def _validate_edge_silence(bars: list[ChartBar], expected_bars: list[BarFeature]) -> list[str]:
+    issues: list[str] = []
+    for index in sorted(edge_silence_indexes(expected_bars)):
+        if index >= len(bars):
+            continue
+        if _playable_hit_count(bars[index].notes) == 0:
+            continue
+        issues.append(
+            f"bars[{index}].notes must be all 0 because the matching input bar is "
+            "song-start/song-end silence"
+        )
+    return issues
 
 
 def _validate_chart_quality(
@@ -301,10 +319,11 @@ def _validate_chart_quality(
         for index, bar in enumerate(bars)
     ]
     thresholds = _quality_thresholds(quality_density)
+    edge_indexes = edge_silence_indexes(analysis.bars[: len(bars)])
     checked_indexes = [
         index
-        for index, bar in enumerate(analysis.bars[: len(bars)])
-        if not _is_edge_silence_bar(index, bar, len(bars))
+        for index, _bar in enumerate(analysis.bars[: len(bars)])
+        if index not in edge_indexes
     ]
 
     if checked_indexes:
@@ -331,7 +350,7 @@ def _validate_chart_quality(
                 f"normalized hits; examples: {examples}"
             )
 
-        empty_runs = _middle_empty_runs(hit_counts, analysis.bars[: len(bars)])
+        empty_runs = _middle_empty_runs(hit_counts, analysis.bars[: len(bars)], edge_indexes)
         if empty_runs:
             examples = ", ".join(f"bars {start + 1}-{end + 1}" for start, end in empty_runs[:4])
             issues.append(f"chart quality has empty middle bar runs that need beat skeletons: {examples}")
@@ -375,33 +394,24 @@ def _quality_thresholds(density: str) -> dict[str, float]:
     return {"average": 0.0, "normal_min": 0.0}
 
 
-def _is_edge_silence_bar(index: int, bar: BarFeature, bar_count: int) -> bool:
-    if bar.energy > 0.015 or bar.onset_16:
-        return False
-    if index < 2:
-        return True
-    return index >= max(0, bar_count - 2)
-
-
 def _allows_sparse_bar(bar: BarFeature) -> bool:
     return (
-        bar.energy < 0.015
-        and not bar.onset_16
+        is_silent_bar(bar)
         and bar.section in {"intro", "outro", "unknown"}
         and bar.phrase_position in {"phrase_start", "song_end", "unknown"}
     )
 
 
-def _middle_empty_runs(hit_counts: list[int], bars: list[BarFeature]) -> list[tuple[int, int]]:
+def _middle_empty_runs(
+    hit_counts: list[int],
+    bars: list[BarFeature],
+    edge_indexes: set[int],
+) -> list[tuple[int, int]]:
     runs: list[tuple[int, int]] = []
     start: int | None = None
     for index, hit_count in enumerate(hit_counts):
         bar = bars[index] if index < len(bars) else None
-        is_empty_middle = (
-            hit_count == 0
-            and bar is not None
-            and not _is_edge_silence_bar(index, bar, len(hit_counts))
-        )
+        is_empty_middle = hit_count == 0 and bar is not None and index not in edge_indexes
         if is_empty_middle and start is None:
             start = index
         if (not is_empty_middle or index == len(hit_counts) - 1) and start is not None:
@@ -437,6 +447,7 @@ def _build_repair_prompt(
 ) -> str:
     lengths = [_expected_note_length(analysis, index) for index in range(len(analysis.bars))]
     allowed = ", ".join(sorted(_allowed_ai_notes(special_notes)))
+    forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
     return f"""
 Your previous output was invalid and cannot be used as a TJA chart draft.
 
@@ -458,6 +469,7 @@ Rules:
 - Allowed notes characters: {allowed}.
 - If using balloon note 7, include one positive integer in balloon_counts for each 7 in that bar.
 - Course/difficulty request: {course} level {level}, density {density}.
+- Forced silent bars: {forced_silent_bars}. These song-start/song-end silence bars must be all 0 for their full notes length.
 - If validation errors mention low chart quality, increase 1/2 note density on normal phrase and break bars, keep beat-grid skeletons in the middle of the song, and vary repeated patterns without changing bar count or note lengths.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()

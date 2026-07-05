@@ -2,6 +2,7 @@ import json
 from typing import Any
 
 from tja_ai_chartgen.ai.examples import get_reference_examples_prompt
+from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.rules.styles import get_style_template
 from tja_ai_chartgen.tja.model import SongAnalysis
 
@@ -43,6 +44,7 @@ def build_chart_generation_payload(
     density_target = DENSITY_TARGETS.get(density)
     if density == "auto":
         density_target = _auto_density_target(level)
+    forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
 
     payload = {
         "title": analysis.title,
@@ -59,6 +61,7 @@ def build_chart_generation_payload(
         },
         "density": density,
         "density_target": density_target,
+        "forced_silent_bars": forced_silent_bars,
         "special_notes": special_notes,
         "bars": [bar.model_dump() for bar in analysis.bars],
     }
@@ -99,23 +102,24 @@ Rules:
 4. Each notes string length must equal that input bar's grids_per_bar value.
 5. Allowed note characters: 0, 1, 2, 3, 4; when special_notes is true, 5, 7, and 8 are also allowed for simple drumrolls and balloons.
 6. Do not use branches, BPM changes, delays, or scroll changes.
-7. Do not make every bar full density.
-8. Low energy bars should have more rests.
-9. High energy bars can use denser patterns.
-10. Respect the requested density: auto follows bar energy; low is sparse; medium is balanced; high is dense; max is the densest playable MVP draft.
-11. Density and difficulty targets: {density_guidance}
-12. For Oni 9-10, keep expert-level note volume through normal phrase and break sections; breaks may be simpler, but should still keep a playable beat skeleton unless they are clear song-start or song-end silence.
-13. Do not output empty or 1-2 hit bars in the middle of high/max/Oni charts just because energy is low. Use beat_grids and downbeat_grid to add a stable skeleton on low-energy break bars.
-14. Avoid repeating the exact same pattern for too many consecutive bars, and avoid reusing one notes string across many phrases. Keep a motif, but vary don/ka answers, offbeats, and phrase-end fills every 4-8 bars.
-15. Use each bar's grid_features to align notes: onset=true marks likely playable hits, accent=true/downbeat=true marks stronger positions, strength is normalized 0.0-1.0.
-16. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=false, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
-17. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density asks for more.
-18. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
-19. Do not place big notes 3/4 inside dense alternating streams. If a passage has 3 or more consecutive playable hits, use normal 1/2 notes in the stream instead of 3/4.
-20. Avoid multiple big notes in one bar unless the bar is intentionally sparse; high/max density should increase 1/2 stream density, not big-note frequency.
-21. Use beat_grids, downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
-22. If special_notes is true, use 5/8 drumrolls or 7 balloons only for occasional phrase-end/fill highlights, and include balloon_counts with one positive integer per 7.
-23. If reference_examples_prompt is present in the input, use it as style and audio-alignment guidance only: study how its precomputed energy, onset, accent, beat, phrase, and section fields map to reference_notes, but do not copy reference note-string length. Your output notes must still match the requested input bars' grids_per_bar values.
+7. Bars listed in forced_silent_bars are song-start/song-end silence and must be all 0 for their full notes length, regardless of density, course, level, or grid 0 preference.
+8. Do not make every bar full density.
+9. Low energy bars should have more rests.
+10. High energy bars can use denser patterns.
+11. Respect the requested density: auto follows bar energy; low is sparse; medium is balanced; high is dense; max is the densest playable MVP draft.
+12. Density and difficulty targets: {density_guidance}
+13. For Oni 9-10, keep expert-level note volume through normal phrase and break sections; breaks may be simpler, but should still keep a playable beat skeleton unless they are clear song-start or song-end silence.
+14. Do not output empty or 1-2 hit bars in the middle of high/max/Oni charts just because energy is low. Use beat_grids and downbeat_grid to add a stable skeleton on low-energy break bars.
+15. Avoid repeating the exact same pattern for too many consecutive bars, and avoid reusing one notes string across many phrases. Keep a motif, but vary don/ka answers, offbeats, and phrase-end fills every 4-8 bars.
+16. Use each bar's grid_features to align notes: onset=true marks likely playable hits, accent=true/downbeat=true marks stronger positions, strength is normalized 0.0-1.0.
+17. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=false, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
+18. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density asks for more.
+19. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
+20. Do not place big notes 3/4 inside dense alternating streams. If a passage has 3 or more consecutive playable hits, use normal 1/2 notes in the stream instead of 3/4.
+21. Avoid multiple big notes in one bar unless the bar is intentionally sparse; high/max density should increase 1/2 stream density, not big-note frequency.
+22. Use beat_grids, downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
+23. If special_notes is true, use 5/8 drumrolls or 7 balloons only for occasional phrase-end/fill highlights, and include balloon_counts with one positive integer per 7.
+24. If reference_examples_prompt is present in the input, use it as style and audio-alignment guidance only: study how its precomputed energy, onset, accent, beat, phrase, and section fields map to reference_notes, but do not copy reference note-string length. Your output notes must still match the requested input bars' grids_per_bar values.
 
 Input:
 {json.dumps(payload, ensure_ascii=False)}

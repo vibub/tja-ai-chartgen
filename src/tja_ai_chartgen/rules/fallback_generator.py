@@ -1,3 +1,4 @@
+from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.rules.styles import StyleTemplate, get_style_template
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar
 
@@ -29,8 +30,19 @@ def generate_fallback_chart_bars(
 ) -> list[ChartBar]:
     validate_density(density)
     template = get_style_template(style)
+    silent_indexes = edge_silence_indexes(bars)
     chart_bars: list[ChartBar] = []
-    for bar in bars:
+    for index, bar in enumerate(bars):
+        if index in silent_indexes:
+            chart_bars.append(
+                ChartBar(
+                    index=bar.index,
+                    notes="0" * bar.grids_per_bar,
+                    time_signature=bar.time_signature,
+                )
+            )
+            continue
+
         special_pattern = _special_pattern_for_bar(bar, density, template) if special_notes else None
         if special_pattern == "balloon":
             chart_bars.append(

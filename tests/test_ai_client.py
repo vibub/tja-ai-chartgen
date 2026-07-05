@@ -25,6 +25,26 @@ def test_sanitize_ai_bars_normalizes_count_length_and_characters():
     assert sanitized[2].notes == "1000100010001000"
 
 
+def test_sanitize_ai_bars_forces_expected_edge_silence_to_empty():
+    bars = [
+        ChartBar(index=0, notes="1000100010001000"),
+        ChartBar(index=1, notes="1010101010101011"),
+        ChartBar(index=2, notes="1000100010001000"),
+    ]
+
+    sanitized = sanitize_ai_bars(
+        bars,
+        expected_count=3,
+        expected_bars=_analysis_with_edge_silence().bars,
+    )
+
+    assert [bar.notes for bar in sanitized] == [
+        "0000000000000000",
+        "1010101010101011",
+        "0000000000000000",
+    ]
+
+
 def test_build_chart_generation_payload_includes_density():
     analysis = _analysis()
 
@@ -32,6 +52,7 @@ def test_build_chart_generation_payload_includes_density():
 
     assert payload["density"] == "high"
     assert payload["density_target"]["average_hits_per_16_grid_bar"] == "8-11"
+    assert payload["forced_silent_bars"] == []
     assert payload["style"] == "technical"
     assert payload["bars"][0]["grids_per_bar"] == 16
     assert "grid_features" in payload["bars"][0]
@@ -69,6 +90,7 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "without overusing big notes" in prompt
     assert "Density and difficulty targets" in prompt
     assert "beat skeleton" in prompt
+    assert "forced_silent_bars" in prompt
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
@@ -225,6 +247,49 @@ def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypa
     assert "chart quality is too sparse" in captured_messages[1][-1]["content"]
 
 
+def test_generate_chart_bars_with_ai_repairs_notes_in_edge_silence(monkeypatch):
+    noisy_payload = {
+        "bars": [
+            {"bar": 1, "notes": "1000100010001000"},
+            {"bar": 2, "notes": "1010101010101011"},
+            {"bar": 3, "notes": "1000100010001000"},
+        ]
+    }
+    fixed_payload = {
+        "bars": [
+            {"bar": 1, "notes": "0000000000000000"},
+            {"bar": 2, "notes": "1010101010101011"},
+            {"bar": 3, "notes": "0000000000000000"},
+        ]
+    }
+    responses = [noisy_payload, fixed_payload]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis_with_edge_silence(),
+        "Oni",
+        10,
+        "technical",
+        density="max",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert [bar.notes for bar in bars] == [
+        "0000000000000000",
+        "1010101010101011",
+        "0000000000000000",
+    ]
+    assert "song-start/song-end silence" in captured_messages[1][-1]["content"]
+
+
 def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "100010001000"}]}
     analysis = SongAnalysis(
@@ -280,6 +345,46 @@ def test_generate_chart_bars_with_ai_raises_with_attempt_log_after_failed_repair
         "invalid",
         "invalid",
     ]
+
+
+def _analysis_with_edge_silence() -> SongAnalysis:
+    return SongAnalysis(
+        title="Song Title",
+        artist=None,
+        audio_file="song.mp3",
+        ogg_file="song.ogg",
+        bpm=120,
+        offset=0,
+        bars=[
+            BarFeature(
+                index=0,
+                start_time=0,
+                end_time=2,
+                energy=0,
+                phrase_position="phrase_start",
+                section="intro",
+            ),
+            BarFeature(
+                index=1,
+                start_time=2,
+                end_time=4,
+                energy=0.5,
+                onset_16=[0, 4, 8, 12],
+                beat_grids=[0, 4, 8, 12],
+                downbeat_grid=0,
+                phrase_position="phrase_middle",
+                section="verse",
+            ),
+            BarFeature(
+                index=2,
+                start_time=4,
+                end_time=6,
+                energy=0,
+                phrase_position="song_end",
+                section="outro",
+            ),
+        ],
+    )
 
 
 def _analysis(bar_count: int = 1, energy: float = 0.5) -> SongAnalysis:

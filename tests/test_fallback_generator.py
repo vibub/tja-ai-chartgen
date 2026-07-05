@@ -47,6 +47,22 @@ def test_generate_fallback_chart_bars_applies_style_templates():
     assert [bar.notes for bar in stamina_bars] == ["2220222022202220", "1110111011101110"]
 
 
+def test_generate_fallback_chart_bars_keeps_edge_silence_empty():
+    bars = [
+        BarFeature(index=0, start_time=0, end_time=2, energy=0, section="intro"),
+        BarFeature(index=1, start_time=2, end_time=4, energy=0.9, onset_16=[0, 4, 8, 12]),
+        BarFeature(index=2, start_time=4, end_time=6, energy=0, phrase_position="song_end", section="outro"),
+    ]
+
+    chart_bars = generate_fallback_chart_bars(bars, density="max", special_notes=True)
+
+    assert [bar.notes for bar in chart_bars] == [
+        "0000000000000000",
+        "1211221211223344",
+        "0000000000000000",
+    ]
+
+
 def test_generate_fallback_chart_bars_rejects_invalid_density():
     bars = [BarFeature(index=0, start_time=0, end_time=2, energy=0.5)]
 
