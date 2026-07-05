@@ -111,15 +111,19 @@ Rules:
 13. For Oni 9-10, keep expert-level note volume through normal phrase and break sections; breaks may be simpler, but should still keep a playable beat skeleton unless they are clear song-start or song-end silence.
 14. Do not output empty or 1-2 hit bars in the middle of high/max/Oni charts just because energy is low. Use beat_grids and downbeat_grid to add a stable skeleton on low-energy break bars.
 15. Avoid repeating the exact same pattern for too many consecutive bars, and avoid reusing one notes string across many phrases. Keep a motif, but vary don/ka answers, offbeats, and phrase-end fills every 4-8 bars.
-16. Use each bar's grid_features to align notes: onset=true marks likely playable hits, accent=true/downbeat=true marks stronger positions, strength is normalized 0.0-1.0.
-17. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=false, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
-18. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density asks for more.
-19. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
-20. Do not place big notes 3/4 inside dense alternating streams. If a passage has 3 or more consecutive playable hits, use normal 1/2 notes in the stream instead of 3/4.
-21. Avoid multiple big notes in one bar unless the bar is intentionally sparse; high/max density should increase 1/2 stream density, not big-note frequency.
-22. Use beat_grids, downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
-23. If special_notes is true, use 5/8 drumrolls or 7 balloons only for occasional phrase-end/fill highlights, and include balloon_counts with one positive integer per 7.
-24. If reference_examples_prompt is present in the input, use it as style and audio-alignment guidance only: study how its precomputed energy, onset, accent, beat, phrase, and section fields map to reference_notes, but do not copy reference note-string length. Your output notes must still match the requested input bars' grids_per_bar values.
+16. Note colors are part of the chart design: 1/3 are don notes, 2/4 are ka notes. Do not use 1 as the default for every playable hit.
+17. Let the chart's style and music decide the don/ka mix, but avoid outputs where nearly all normal 1/2 notes are 1. Use some 2 notes for offbeat responses, back-half answers, syncopated hits, or phrase-end fills.
+18. Common useful cells include 1020, 1200, 1012, 1210, 1122, 1221, 1022, and 2012, but do not force a fixed ratio.
+19. Avoid long all-don streams such as 1010101010101010 unless the input clearly describes a very plain stamina passage; even then, vary later bars with occasional 2 notes.
+20. Use each bar's grid_features to align notes: onset=true marks likely playable hits, accent=true/downbeat=true marks stronger positions, strength is normalized 0.0-1.0.
+21. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=false, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
+22. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density asks for more.
+23. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
+24. Do not place big notes 3/4 inside dense alternating streams. If a passage has 3 or more consecutive playable hits, use normal 1/2 notes in the stream instead of 3/4.
+25. Avoid multiple big notes in one bar unless the bar is intentionally sparse; high/max density should increase 1/2 stream density, not big-note frequency.
+26. Use beat_grids, downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
+27. If special_notes is true, use 5/8 drumrolls or 7 balloons only for occasional phrase-end/fill highlights, and include balloon_counts with one positive integer per 7.
+28. If reference_examples_prompt is present in the input, use it as style and audio-alignment guidance only: study how its precomputed energy, onset, accent, beat, phrase, and section fields map to reference_notes, but do not copy reference note-string length. Your output notes must still match the requested input bars' grids_per_bar values.
 
 Input:
 {json.dumps(payload, ensure_ascii=False)}
@@ -131,6 +135,32 @@ Output schema:
   ]
 }}
 """.strip()
+
+
+def _note_color_target(style: str) -> dict[str, Any]:
+    targets = {
+        "technical": {
+            "ka_ratio_target": "0.35-0.50",
+            "max_consecutive_normal_don": 4,
+            "guidance": "use ka notes for technical offbeat answers and phrase-end color",
+        },
+        "stamina": {
+            "ka_ratio_target": "0.25-0.40",
+            "max_consecutive_normal_don": 6,
+            "guidance": "keep streams readable but alternate don/ka often enough to avoid all-don runs",
+        },
+        "hybrid": {
+            "ka_ratio_target": "0.30-0.45",
+            "max_consecutive_normal_don": 5,
+            "guidance": "mix stamina-friendly don anchors with ka responses and fills",
+        },
+        "performance": {
+            "ka_ratio_target": "0.40-0.55",
+            "max_consecutive_normal_don": 4,
+            "guidance": "use strong visible don/ka contrast for stage-like call and response",
+        },
+    }
+    return targets.get(style, targets["technical"])
 
 
 def _auto_density_target(level: int) -> dict[str, Any]:

@@ -309,7 +309,7 @@ def _validate_chart_quality(
     density: str,
 ) -> list[str]:
     quality_density = _quality_density(density, course, level)
-    if len(bars) < 8 or quality_density not in {"high", "max"}:
+    if len(bars) < 8:
         return []
 
     issues: list[str] = []
@@ -318,7 +318,6 @@ def _validate_chart_quality(
         _normalized_hit_count(bar.notes, expected_length=_expected_note_length(analysis, index))
         for index, bar in enumerate(bars)
     ]
-    thresholds = _quality_thresholds(quality_density)
     edge_indexes = edge_silence_indexes(analysis.bars[: len(bars)])
     checked_indexes = [
         index
@@ -326,7 +325,8 @@ def _validate_chart_quality(
         if index not in edge_indexes
     ]
 
-    if checked_indexes:
+    if checked_indexes and quality_density in {"high", "max"}:
+        thresholds = _quality_thresholds(quality_density)
         average_hits = sum(normalized_hit_counts[index] for index in checked_indexes) / len(checked_indexes)
         if average_hits < thresholds["average"]:
             issues.append(
@@ -354,6 +354,10 @@ def _validate_chart_quality(
         if empty_runs:
             examples = ", ".join(f"bars {start + 1}-{end + 1}" for start, end in empty_runs[:4])
             issues.append(f"chart quality has empty middle bar runs that need beat skeletons: {examples}")
+
+    color_issue = _note_color_balance_issue(bars, checked_indexes=checked_indexes)
+    if color_issue:
+        issues.append(color_issue)
 
     repeated = _overused_patterns(bars)
     if repeated:
@@ -392,6 +396,48 @@ def _quality_thresholds(density: str) -> dict[str, float]:
     if density == "medium":
         return {"average": 3.5, "normal_min": 1.0}
     return {"average": 0.0, "normal_min": 0.0}
+
+
+def _note_color_balance_issue(
+    bars: list[ChartBar],
+    *,
+    checked_indexes: list[int],
+) -> str | None:
+    normal_don = 0
+    normal_ka = 0
+    longest_don_run = 0
+    current_don_run = 0
+
+    for index in checked_indexes:
+        if index >= len(bars):
+            continue
+        for note in bars[index].notes:
+            if note == "1":
+                normal_don += 1
+                current_don_run += 1
+                longest_don_run = max(longest_don_run, current_don_run)
+            elif note == "2":
+                normal_ka += 1
+                current_don_run = 0
+            elif note != "0":
+                current_don_run = 0
+
+    normal_notes = normal_don + normal_ka
+    if normal_notes < 32:
+        return None
+
+    ka_ratio = normal_ka / normal_notes
+    if normal_ka < 4 and ka_ratio < 0.03:
+        return (
+            "chart quality is nearly all don notes: normal note 2 ratio "
+            f"is {ka_ratio:.2f}; add a few 2 notes to offbeat/answer/fill hits"
+        )
+    if longest_don_run > 32 and ka_ratio < 0.08:
+        return (
+            "chart quality has an overlong all-don run: "
+            f"{longest_don_run} consecutive normal 1 notes; break long 1 streams with occasional 2 notes"
+        )
+    return None
 
 
 def _allows_sparse_bar(bar: BarFeature) -> bool:
@@ -470,7 +516,7 @@ Rules:
 - If using balloon note 7, include one positive integer in balloon_counts for each 7 in that bar.
 - Course/difficulty request: {course} level {level}, density {density}.
 - Forced silent bars: {forced_silent_bars}. These song-start/song-end silence bars must be all 0 for their full notes length.
-- If validation errors mention low chart quality, increase 1/2 note density on normal phrase and break bars, keep beat-grid skeletons in the middle of the song, and vary repeated patterns without changing bar count or note lengths.
+- If validation errors mention low chart quality, increase 1/2 note density on normal phrase and break bars, keep beat-grid skeletons in the middle of the song, add more 2/4 ka notes for offbeat/answer/fill hits, and vary repeated or all-don patterns without changing bar count or note lengths.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()
 

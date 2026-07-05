@@ -53,6 +53,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density"] == "high"
     assert payload["density_target"]["average_hits_per_16_grid_bar"] == "8-11"
     assert payload["forced_silent_bars"] == []
+    assert "note_color_target" not in payload
     assert payload["style"] == "technical"
     assert payload["bars"][0]["grids_per_bar"] == 16
     assert "grid_features" in payload["bars"][0]
@@ -91,6 +92,10 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "Density and difficulty targets" in prompt
     assert "beat skeleton" in prompt
     assert "forced_silent_bars" in prompt
+    assert "note_color_target" not in prompt
+    assert "Do not use 1 as the default" in prompt
+    assert "do not force a fixed ratio" in prompt
+    assert "1010101010101010" in prompt
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
@@ -211,14 +216,14 @@ def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypa
         "bars": [{"bar": index + 1, "notes": "1000000000000000"} for index in range(8)]
     }
     dense_notes = [
-        "1010101010101011",
-        "1010101010101021",
-        "1010101010101210",
-        "1010101010111010",
-        "1010101012101010",
-        "1010101020101010",
-        "1010101210101010",
-        "1010111010101010",
+        "1022101210201220",
+        "1212102210121020",
+        "1022121010221010",
+        "1210201210221020",
+        "1022101212101022",
+        "1212102010221012",
+        "1022121010201220",
+        "1210202210121020",
     ]
     dense_payload = {
         "bars": [{"bar": index + 1, "notes": notes} for index, notes in enumerate(dense_notes)]
@@ -245,6 +250,50 @@ def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypa
     assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
     assert [bar.notes for bar in bars] == dense_notes
     assert "chart quality is too sparse" in captured_messages[1][-1]["content"]
+
+
+def test_generate_chart_bars_with_ai_repairs_all_don_output(monkeypatch):
+    don_payload = {
+        "bars": [
+            {"bar": index + 1, "notes": "1010101010101010"}
+            for index in range(8)
+        ]
+    }
+    mixed_notes = [
+        "1020102010201020",
+        "1012101210121022",
+        "1022101210221012",
+        "1210102012101020",
+        "1020102210201012",
+        "1012102010121020",
+        "1022101210201220",
+        "1210102012102012",
+    ]
+    mixed_payload = {
+        "bars": [{"bar": index + 1, "notes": notes} for index, notes in enumerate(mixed_notes)]
+    }
+    responses = [don_payload, mixed_payload]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis(bar_count=8, energy=0.5),
+        "Oni",
+        8,
+        "performance",
+        density="low",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert [bar.notes for bar in bars] == mixed_notes
+    assert "nearly all don notes" in captured_messages[1][-1]["content"]
 
 
 def test_generate_chart_bars_with_ai_repairs_notes_in_edge_silence(monkeypatch):
