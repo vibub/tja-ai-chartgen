@@ -15,7 +15,7 @@ from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
 from tja_ai_chartgen.features.sections import assign_sections
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
-from tja_ai_chartgen.rules.styles import STYLE_LEVELS, validate_style
+from tja_ai_chartgen.rules.styles import validate_style
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.writer import read_tja_text, render_tja, write_tja_text
 from tja_ai_chartgen.utils.paths import write_json
@@ -1042,6 +1042,8 @@ function setupAnalyzeForm(form) {
   const titleInput = form.querySelector('[data-role="title-input"]');
   const artistInput = form.querySelector('[data-role="artist-input"]');
   const swapButton = form.querySelector('[data-role="swap-title-artist"]');
+  const aiToggle = form.querySelector('[data-role="ai-toggle"]');
+  const aiOptions = form.querySelector('[data-role="ai-options"]');
   if (audioInput && titleInput && artistInput) {
     audioInput.addEventListener('change', () => {
       const file = audioInput.files && audioInput.files[0];
@@ -1058,6 +1060,16 @@ function setupAnalyzeForm(form) {
       artistInput.value = title;
       titleInput.focus();
     });
+  }
+  if (aiToggle && aiOptions) {
+    const aiInputs = Array.from(aiOptions.querySelectorAll('input'));
+    const syncAiOptions = () => {
+      aiInputs.forEach((input) => {
+        input.disabled = !aiToggle.checked;
+      });
+    };
+    aiToggle.addEventListener('change', syncAiOptions);
+    syncAiOptions();
   }
 }
 
@@ -1408,8 +1420,22 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
         offset: Annotated[float | None, Form()] = None,
         time_signature: Annotated[str, Form()] = "",
         use_beatnet: Annotated[bool, Form()] = False,
+        course: Annotated[str, Form()] = "Oni",
+        level: Annotated[int, Form()] = 10,
+        style: Annotated[str, Form()] = "technical",
+        density: Annotated[str, Form()] = "auto",
+        special_notes: Annotated[bool, Form()] = False,
+        use_ai: Annotated[bool, Form()] = False,
+        ai_model: Annotated[str, Form()] = "",
+        ai_base_url: Annotated[str, Form()] = "",
+        ai_api_key: Annotated[str, Form()] = "",
+        ai_repair_retries: Annotated[int, Form()] = 2,
     ) -> HTMLResponse:
         try:
+            validate_density(density)
+            validate_style(style)
+            if ai_repair_retries < 0:
+                raise ValueError("AI repair retries must be greater than or equal to 0")
             job_dir = _new_job_dir(app.state.output_dir)
             input_path = _save_upload(job_dir, audio)
             ogg_path = job_dir / f"{input_path.stem}.ogg"
@@ -1432,7 +1458,36 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                 bars=bars,
             )
             write_json(job_dir / "analysis.json", analysis)
-            chart_bars = generate_fallback_chart_bars(bars)
+            chart_bars = None
+            ai_failure: str | None = None
+            if use_ai:
+                try:
+                    chart_bars = _generate_ai_chart_bars_for_web(
+                        job_dir=job_dir,
+                        analysis=analysis,
+                        selected_bars=bars,
+                        start_bar=1,
+                        end_bar=len(bars),
+                        course=course,
+                        level=level,
+                        style=style,
+                        density=density,
+                        model=_optional_form_text(ai_model),
+                        api_base=_optional_form_text(ai_base_url),
+                        api_key=_optional_form_text(ai_api_key),
+                        ai_repair_retries=ai_repair_retries,
+                        special_notes=special_notes,
+                    )
+                except Exception as error:  # noqa: BLE001 - Web UI should still render a usable draft.
+                    ai_failure = str(error)
+
+            if chart_bars is None:
+                chart_bars = generate_fallback_chart_bars(
+                    bars,
+                    style=style,
+                    density=density,
+                    special_notes=special_notes,
+                )
             chart = TjaChart(
                 metadata=ChartMetadata(
                     title=analysis.title,
@@ -1440,6 +1495,8 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                     wave=Path(analysis.ogg_file).name,
                     bpm=analysis.bpm,
                     offset=analysis.offset,
+                    course=course,
+                    level=level,
                 ),
                 bars=chart_bars,
             )
@@ -1449,16 +1506,17 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             return HTMLResponse(
                 _page(
                     "Game preview",
-                    _result_panel(
+                    (_ai_generation_notice(ai_failure) if use_ai else "")
+                    + _result_panel(
                         job_id=job_dir.name,
                         output_path=output_path,
                         tja_text=tja_text,
                         analysis=analysis,
                         chart_bars=chart_bars,
-                        course=chart.metadata.course,
-                        level=chart.metadata.level,
+                        course=course,
+                        level=level,
                     )
-                    + _regenerate_form(job_dir.name, len(analysis.bars), chart.metadata.course),
+                    + _regenerate_form(job_dir.name, len(analysis.bars), course),
                 )
             )
         except Exception as error:  # noqa: BLE001 - Web boundary returns a readable error page.
@@ -2108,10 +2166,55 @@ def _analysis_form() -> str:
           <input name="use_beatnet" type="checkbox" value="true" checked>
           <span>使用 BeatNet <span class="field-hint">尝试增强强拍、拍号和 offset。</span></span>
         </label>
+        <label class="field">
+          难度类型
+          <select name="course">{_course_option_tags("Oni")}</select>
+        </label>
+        <label class="field">
+          难度等级
+          <input name="level" type="number" min="1" max="10" value="10">
+        </label>
+        <label class="field">
+          风格
+          <select name="style">{_style_option_tags("technical")}</select>
+        </label>
+        <label class="field">
+          密度
+          <select name="density">{_option_tags(("auto", "low", "medium", "high", "max"), "auto")}</select>
+        </label>
+        <label class="checkbox-card field-wide">
+          <input name="special_notes" type="checkbox" value="true">
+          <span>特殊音符 <span class="field-hint">允许简单滚奏和气球。</span></span>
+        </label>
+        <label class="checkbox-card field-wide">
+          <input name="use_ai" type="checkbox" value="true" data-role="ai-toggle" checked>
+          <span>使用 AI 增强 <span class="field-hint">分析完成后立即用全曲小节调用 AI，失败时自动回退规则生成。</span></span>
+        </label>
+        <details class="advanced-panel field-wide" data-role="ai-options">
+          <summary>AI 参数</summary>
+          <div class="form-grid">
+            <label class="field">
+              AI 模型
+              <input name="ai_model" placeholder="留空读取 MODEL">
+            </label>
+            <label class="field">
+              AI Base URL
+              <input name="ai_base_url" placeholder="留空读取 OPENAI_BASE_URL">
+            </label>
+            <label class="field">
+              AI API Key
+              <input name="ai_api_key" type="password" autocomplete="off" placeholder="留空读取 OPENAI_API_KEY">
+            </label>
+            <label class="field">
+              修复重试
+              <input name="ai_repair_retries" type="number" min="0" value="2">
+            </label>
+          </div>
+        </details>
       </div>
       <div class="helper-strip">
         <button type="submit" data-loading-text="分析中">上传并分析</button>
-        <span>可用风格：{', '.join(STYLE_LEVELS)}</span>
+        <span>AI API Key 只用于本次请求，不写入输出文件。</span>
       </div>
     </form>
     {_tja_preview_form()}

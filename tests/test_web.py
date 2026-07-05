@@ -20,6 +20,11 @@ def test_web_index_shows_upload_form(tmp_path):
     assert 'accept="audio/*,video/mp4,.mp4,.m4s"' in response.text
     assert "m4s" in response.text
     assert 'name="use_beatnet" type="checkbox" value="true" checked' in response.text
+    assert '<select name="course">' in response.text
+    assert '魔王（Oni）' in response.text
+    assert 'name="use_ai" type="checkbox" value="true" data-role="ai-toggle" checked' in response.text
+    assert '<details class="advanced-panel field-wide" data-role="ai-options">' in response.text
+    assert 'name="ai_model"' in response.text
 
 
 def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
@@ -116,6 +121,76 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     assert "data-game-preview" in response.text
     assert "TJA preview" not in response.text
     assert (tmp_path / job_id / "regenerated_1_2.tja").exists()
+
+
+def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch, duration=4.0)
+
+    def fake_generate_chart_bars_with_ai(
+        analysis,
+        course,
+        level,
+        style,
+        density,
+        model,
+        *,
+        api_base=None,
+        api_key=None,
+        max_repair_attempts=2,
+        special_notes=False,
+    ):
+        assert course == "Hard"
+        assert level == 8
+        assert style == "performance"
+        assert density == "max"
+        assert model == "openai/test-model"
+        assert api_base == "https://llm.example.com/v1"
+        assert api_key == "secret-key"
+        assert max_repair_attempts == 1
+        assert special_notes is True
+        assert [bar.index for bar in analysis.bars] == [0, 1]
+        return [
+            ChartBar(index=0, notes="111100000000", time_signature="3/4"),
+            ChartBar(index=1, notes="222200000000", time_signature="3/4"),
+        ], {"final": {"bars": []}, "api_key_provided": True}
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={
+            "title": "Song Title",
+            "max_bars": "2",
+            "time_signature": "3/4",
+            "course": "Hard",
+            "level": "8",
+            "style": "performance",
+            "density": "max",
+            "special_notes": "true",
+            "use_ai": "true",
+            "ai_model": "openai/test-model",
+            "ai_base_url": "https://llm.example.com/v1",
+            "ai_api_key": "secret-key",
+            "ai_repair_retries": "1",
+        },
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    assert "AI 增强已完成" in response.text
+    job_dir = next(tmp_path.iterdir())
+    assert (job_dir / "ai_input_1_2.json").exists()
+    assert (job_dir / "ai_output_1_2.json").exists()
+    generated_text = (job_dir / "preview.tja").read_text(encoding=TJA_FILE_ENCODING)
+    assert "COURSE:Hard" in generated_text
+    assert "LEVEL:8" in generated_text
+    assert "111100000000," in generated_text
+    assert "222200000000," in generated_text
+
 
 
 def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
