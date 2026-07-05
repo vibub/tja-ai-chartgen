@@ -31,6 +31,7 @@ def test_build_chart_generation_payload_includes_density():
     payload = build_chart_generation_payload(analysis, "Oni", 10, "technical", "high")
 
     assert payload["density"] == "high"
+    assert payload["density_target"]["average_hits_per_16_grid_bar"] == "8-11"
     assert payload["style"] == "technical"
     assert payload["bars"][0]["grids_per_bar"] == 16
     assert "grid_features" in payload["bars"][0]
@@ -66,6 +67,8 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "Do not place big notes 3/4 inside dense alternating streams" in prompt
     assert "3 or more consecutive playable hits" in prompt
     assert "without overusing big notes" in prompt
+    assert "Density and difficulty targets" in prompt
+    assert "beat skeleton" in prompt
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
@@ -181,6 +184,47 @@ def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(m
     assert bars == [ChartBar(index=0, notes="7000000080000000", balloon_counts=[8])]
 
 
+def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypatch):
+    sparse_payload = {
+        "bars": [{"bar": index + 1, "notes": "1000000000000000"} for index in range(8)]
+    }
+    dense_notes = [
+        "1010101010101011",
+        "1010101010101021",
+        "1010101010101210",
+        "1010101010111010",
+        "1010101012101010",
+        "1010101020101010",
+        "1010101210101010",
+        "1010111010101010",
+    ]
+    dense_payload = {
+        "bars": [{"bar": index + 1, "notes": notes} for index, notes in enumerate(dense_notes)]
+    }
+    responses = [sparse_payload, dense_payload]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis(bar_count=8, energy=0.5),
+        "Oni",
+        10,
+        "technical",
+        density="max",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert [bar.notes for bar in bars] == dense_notes
+    assert "chart quality is too sparse" in captured_messages[1][-1]["content"]
+
+
 def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "100010001000"}]}
     analysis = SongAnalysis(
@@ -238,7 +282,7 @@ def test_generate_chart_bars_with_ai_raises_with_attempt_log_after_failed_repair
     ]
 
 
-def _analysis() -> SongAnalysis:
+def _analysis(bar_count: int = 1, energy: float = 0.5) -> SongAnalysis:
     return SongAnalysis(
         title="Song Title",
         artist=None,
@@ -246,5 +290,18 @@ def _analysis() -> SongAnalysis:
         ogg_file="song.ogg",
         bpm=120,
         offset=0,
-        bars=[BarFeature(index=0, start_time=0, end_time=2, energy=0.5)],
+        bars=[
+            BarFeature(
+                index=index,
+                start_time=index * 2,
+                end_time=(index + 1) * 2,
+                energy=energy,
+                onset_16=[0, 4, 8, 12],
+                beat_grids=[0, 4, 8, 12],
+                downbeat_grid=0,
+                phrase_position="phrase_start" if index % 4 == 0 else "phrase_middle",
+                section="verse",
+            )
+            for index in range(bar_count)
+        ],
     )

@@ -64,7 +64,14 @@ def generate_chart_bars_with_ai(
 
         try:
             data = _parse_ai_json(content)
-            bars = _validate_ai_data(data, analysis=analysis, special_notes=special_notes)
+            bars = _validate_ai_data(
+                data,
+                analysis=analysis,
+                course=course,
+                level=level,
+                density=density,
+                special_notes=special_notes,
+            )
         except _AiOutputValidationError as error:
             issues = error.issues
         except json.JSONDecodeError as error:
@@ -104,6 +111,9 @@ def generate_chart_bars_with_ai(
                     "content": _build_repair_prompt(
                         issues,
                         analysis=analysis,
+                        course=course,
+                        level=level,
+                        density=density,
                         special_notes=special_notes,
                     ),
                 }
@@ -189,6 +199,9 @@ def _parse_ai_json(content: str) -> dict[str, Any]:
 def _validate_ai_data(
     data: dict[str, Any],
     analysis: SongAnalysis,
+    course: str,
+    level: int,
+    density: str,
     special_notes: bool,
 ) -> list[ChartBar]:
     raw_bars = data.get("bars")
@@ -252,15 +265,174 @@ def _validate_ai_data(
             )
         )
 
+    if not issues:
+        issues.extend(
+            _validate_chart_quality(
+                bars,
+                analysis=analysis,
+                course=course,
+                level=level,
+                density=density,
+            )
+        )
+
     if issues:
         raise _AiOutputValidationError(issues)
 
     return bars
 
 
+def _validate_chart_quality(
+    bars: list[ChartBar],
+    *,
+    analysis: SongAnalysis,
+    course: str,
+    level: int,
+    density: str,
+) -> list[str]:
+    quality_density = _quality_density(density, course, level)
+    if len(bars) < 8 or quality_density not in {"high", "max"}:
+        return []
+
+    issues: list[str] = []
+    hit_counts = [_playable_hit_count(bar.notes) for bar in bars]
+    normalized_hit_counts = [
+        _normalized_hit_count(bar.notes, expected_length=_expected_note_length(analysis, index))
+        for index, bar in enumerate(bars)
+    ]
+    thresholds = _quality_thresholds(quality_density)
+    checked_indexes = [
+        index
+        for index, bar in enumerate(analysis.bars[: len(bars)])
+        if not _is_edge_silence_bar(index, bar, len(bars))
+    ]
+
+    if checked_indexes:
+        average_hits = sum(normalized_hit_counts[index] for index in checked_indexes) / len(checked_indexes)
+        if average_hits < thresholds["average"]:
+            issues.append(
+                "chart quality is too sparse: average playable hits per 16-grid bar "
+                f"is {average_hits:.1f}, expected at least {thresholds['average']:.1f} "
+                f"for density {density} / {course} level {level}"
+            )
+
+        sparse_indexes = [
+            index
+            for index in checked_indexes
+            if normalized_hit_counts[index] < thresholds["normal_min"]
+            and not _allows_sparse_bar(analysis.bars[index])
+        ]
+        sparse_limit = max(1, len(checked_indexes) // 12)
+        if len(sparse_indexes) > sparse_limit:
+            examples = ", ".join(str(index + 1) for index in sparse_indexes[:8])
+            issues.append(
+                "chart quality has too many sparse middle bars: "
+                f"{len(sparse_indexes)} bar(s) below {thresholds['normal_min']:.1f} "
+                f"normalized hits; examples: {examples}"
+            )
+
+        empty_runs = _middle_empty_runs(hit_counts, analysis.bars[: len(bars)])
+        if empty_runs:
+            examples = ", ".join(f"bars {start + 1}-{end + 1}" for start, end in empty_runs[:4])
+            issues.append(f"chart quality has empty middle bar runs that need beat skeletons: {examples}")
+
+    repeated = _overused_patterns(bars)
+    if repeated:
+        examples = ", ".join(f"{pattern} x{count}" for pattern, count in repeated[:4])
+        issues.append(f"chart quality repeats exact note strings too often: {examples}")
+
+    return issues
+
+
+def _playable_hit_count(notes: str) -> int:
+    return sum(character != "0" for character in notes)
+
+
+def _normalized_hit_count(notes: str, expected_length: int) -> float:
+    if expected_length <= 0:
+        return 0.0
+    return _playable_hit_count(notes) * 16 / expected_length
+
+
+def _quality_density(density: str, course: str, level: int) -> str:
+    if density in {"high", "max"}:
+        return density
+    if density == "auto" and course.lower() == "oni":
+        if level >= 10:
+            return "max"
+        if level >= 8:
+            return "high"
+    return density
+
+
+def _quality_thresholds(density: str) -> dict[str, float]:
+    if density == "max":
+        return {"average": 8.5, "normal_min": 4.0}
+    if density == "high":
+        return {"average": 6.5, "normal_min": 3.0}
+    if density == "medium":
+        return {"average": 3.5, "normal_min": 1.0}
+    return {"average": 0.0, "normal_min": 0.0}
+
+
+def _is_edge_silence_bar(index: int, bar: BarFeature, bar_count: int) -> bool:
+    if bar.energy > 0.015 or bar.onset_16:
+        return False
+    if index < 2:
+        return True
+    return index >= max(0, bar_count - 2)
+
+
+def _allows_sparse_bar(bar: BarFeature) -> bool:
+    return (
+        bar.energy < 0.015
+        and not bar.onset_16
+        and bar.section in {"intro", "outro", "unknown"}
+        and bar.phrase_position in {"phrase_start", "song_end", "unknown"}
+    )
+
+
+def _middle_empty_runs(hit_counts: list[int], bars: list[BarFeature]) -> list[tuple[int, int]]:
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, hit_count in enumerate(hit_counts):
+        bar = bars[index] if index < len(bars) else None
+        is_empty_middle = (
+            hit_count == 0
+            and bar is not None
+            and not _is_edge_silence_bar(index, bar, len(hit_counts))
+        )
+        if is_empty_middle and start is None:
+            start = index
+        if (not is_empty_middle or index == len(hit_counts) - 1) and start is not None:
+            end = index if is_empty_middle else index - 1
+            if end >= start:
+                runs.append((start, end))
+            start = None
+    return runs
+
+
+def _overused_patterns(bars: list[ChartBar]) -> list[tuple[str, int]]:
+    counts: dict[str, int] = {}
+    for bar in bars:
+        if _playable_hit_count(bar.notes) == 0:
+            continue
+        counts[bar.notes] = counts.get(bar.notes, 0) + 1
+
+    limit = max(4, len(bars) // 12)
+    return sorted(
+        ((pattern, count) for pattern, count in counts.items() if count > limit),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+
 def _build_repair_prompt(
     issues: list[str],
     analysis: SongAnalysis,
+    course: str,
+    level: int,
+    density: str,
     special_notes: bool,
 ) -> str:
     lengths = [_expected_note_length(analysis, index) for index in range(len(analysis.bars))]
@@ -285,6 +457,8 @@ Rules:
 - Notes length per bar must match the input bar grids: {lengths}.
 - Allowed notes characters: {allowed}.
 - If using balloon note 7, include one positive integer in balloon_counts for each 7 in that bar.
+- Course/difficulty request: {course} level {level}, density {density}.
+- If validation errors mention low chart quality, increase 1/2 note density on normal phrase and break bars, keep beat-grid skeletons in the middle of the song, and vary repeated patterns without changing bar count or note lengths.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()
 
