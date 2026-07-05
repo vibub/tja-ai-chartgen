@@ -83,3 +83,15 @@ def test_build_density_hints_treats_sustained_activity_as_normal():
     assert [(hint.kind, hint.min_hits, hint.max_hits, hint.reason) for hint in hints] == [
         ("normal", 3, 8, "sustained musical activity without strong onsets")
     ]
+
+
+def test_build_density_hints_extends_quiet_edge_silence_with_activity_floor():
+    bars = [
+        BarFeature(index=0, start_time=0, end_time=2, energy=0, activity_16=[0.0] * 16),
+        BarFeature(index=1, start_time=2, end_time=4, energy=0.026, activity_16=[0.0] * 15 + [0.41]),
+        BarFeature(index=2, start_time=4, end_time=6, energy=0.6, activity_16=[0.7] * 16),
+    ]
+
+    hints = build_density_hints(bars)
+
+    assert [hint.kind for hint in hints] == ["silent", "silent", "normal"]
