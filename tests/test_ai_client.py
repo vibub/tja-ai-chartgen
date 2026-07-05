@@ -7,7 +7,7 @@ from tja_ai_chartgen.ai.client import (
     generate_chart_bars_with_ai,
     sanitize_ai_bars,
 )
-from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
+from tja_ai_chartgen.ai.prompts import build_chart_generation_payload, build_chart_generation_prompt
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 
 
@@ -48,6 +48,22 @@ def test_build_chart_generation_payload_can_include_static_reference_prompt():
     )
 
     assert payload["reference_examples_prompt"] == "static reference prompt"
+
+
+def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
+    prompt = build_chart_generation_prompt(
+        _analysis(),
+        "Oni",
+        10,
+        "performance",
+        density="high",
+        reference_examples_prompt="static reference prompt",
+    )
+
+    assert "Big notes 3/4 require both hands hitting together" in prompt
+    assert "Do not place big notes 3/4 inside dense alternating streams" in prompt
+    assert "3 or more consecutive playable hits" in prompt
+    assert "without overusing big notes" in prompt
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):

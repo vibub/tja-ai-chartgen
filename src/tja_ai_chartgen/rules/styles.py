@@ -50,7 +50,7 @@ STYLE_TEMPLATES = {
     ),
     "performance": StyleTemplate(
         name="performance",
-        description="Showy big-note accents and sparse visual highlights.",
+        description="Stage-like isolated accents and sparse visual highlights without overusing big notes.",
         pattern_shift=0,
         low_patterns=("3000400030004000", "1000300010004000"),
         medium_patterns=("1030204010302040", "3010401030104010"),
