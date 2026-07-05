@@ -273,6 +273,9 @@ LEVEL:10
     assert "Debug Song" in response.text
     assert "0.500s" in response.text
     assert "data-game-preview" in response.text
+    assert '"startTime": 0.5' in response.text
+    assert '"time": 0.5, "type": "1"' in response.text
+    assert '"time": 1.0, "type": "2"' in response.text
     assert "taiko_don_16bit_44100.wav" in response.text
     assert "taiko_ka_16bit_44100.wav" in response.text
     assert (next(tmp_path.iterdir()) / "debug.tja").exists()

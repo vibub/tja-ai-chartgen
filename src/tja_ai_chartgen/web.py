@@ -1081,6 +1081,8 @@ function setupGamePreview(root) {
   const bars = data.bars || [];
   const pixelsPerSecond = 360;
   const hitEpsilonSeconds = 0.012;
+  const noteHideAfterSeconds = 0.035;
+  const soundLookAheadSeconds = 0.05;
   const soundPools = Object.fromEntries(
     Object.entries(NOTE_SOUND_URLS).map(([key, url]) => [
       key,
@@ -1098,6 +1100,11 @@ function setupGamePreview(root) {
   let visibleAheadSeconds = 0;
   let activeIndexes = new Set();
   let nextSoundIndex = 0;
+  let audioContext = null;
+  let soundBuffers = {};
+  let soundBuffersPromise = null;
+  let scheduledSources = [];
+  let scheduledFallbackTimers = [];
 
   seek.min = start.toString();
   seek.max = end.toString();
@@ -1161,25 +1168,91 @@ function setupGamePreview(root) {
   }
 
   function syncSoundCursor(currentTime) {
-    nextSoundIndex = firstNoteIndexAtOrAfter(currentTime - hitEpsilonSeconds);
+    nextSoundIndex = firstNoteIndexAtOrAfter(currentTime);
   }
 
-  function playNoteSound(noteType) {
+  function getAudioContext() {
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (!Context) return null;
+    if (!audioContext) audioContext = new Context();
+    return audioContext;
+  }
+
+  function prepareSoundBuffers() {
+    const context = getAudioContext();
+    if (!context) return Promise.resolve(null);
+    if (!soundBuffersPromise) {
+      soundBuffersPromise = Promise.all(
+        Object.entries(NOTE_SOUND_URLS).map(([key, url]) =>
+          fetch(url)
+            .then((response) => response.arrayBuffer())
+            .then((buffer) => context.decodeAudioData(buffer))
+            .then((decoded) => {
+              soundBuffers[key] = decoded;
+            })
+            .catch(() => {}),
+        ),
+      ).then(() => soundBuffers);
+    }
+    return soundBuffersPromise;
+  }
+
+  function stopScheduledSounds() {
+    scheduledSources.forEach((source) => {
+      try {
+        source.stop();
+      } catch (_error) {}
+    });
+    scheduledSources = [];
+    scheduledFallbackTimers.forEach((timer) => window.clearTimeout(timer));
+    scheduledFallbackTimers = [];
+  }
+
+  function playNoteSound(noteType, delaySeconds = 0, targetTime = null) {
     const soundKey = noteSoundKey(noteType);
     if (!soundKey) return;
-    const pool = soundPools[soundKey];
-    if (!pool || pool.length === 0) return;
-    const player = pool[soundPoolIndexes[soundKey] % pool.length];
-    soundPoolIndexes[soundKey] += 1;
-    player.currentTime = 0;
-    player.play().catch(() => {});
+    const context = getAudioContext();
+    const buffer = soundBuffers[soundKey];
+    if (context && buffer) {
+      const source = context.createBufferSource();
+      const gain = context.createGain();
+      source.buffer = buffer;
+      gain.gain.value = 0.85;
+      source.connect(gain).connect(context.destination);
+      scheduledSources.push(source);
+      source.onended = () => {
+        scheduledSources = scheduledSources.filter((item) => item !== source);
+      };
+      source.start(context.currentTime + Math.max(0, delaySeconds));
+      return;
+    }
+
+    const playFallback = () => {
+      if (targetTime !== null && (audio.paused || Math.abs(audio.currentTime - targetTime) > 0.12)) return;
+      const pool = soundPools[soundKey];
+      if (!pool || pool.length === 0) return;
+      const player = pool[soundPoolIndexes[soundKey] % pool.length];
+      soundPoolIndexes[soundKey] += 1;
+      player.currentTime = 0;
+      player.play().catch(() => {});
+    };
+    if (delaySeconds > 0) {
+      const timer = window.setTimeout(() => {
+        scheduledFallbackTimers = scheduledFallbackTimers.filter((item) => item !== timer);
+        playFallback();
+      }, delaySeconds * 1000);
+      scheduledFallbackTimers.push(timer);
+    } else {
+      playFallback();
+    }
   }
 
   function playDueSounds(currentTime) {
     if (audio.paused) return;
-    const soundUntil = currentTime + hitEpsilonSeconds;
+    const soundUntil = currentTime + soundLookAheadSeconds;
     while (nextSoundIndex < noteNodes.length && noteNodes[nextSoundIndex].time <= soundUntil) {
-      playNoteSound(noteNodes[nextSoundIndex].type);
+      const note = noteNodes[nextSoundIndex];
+      playNoteSound(note.type, note.time - currentTime, note.time);
       nextSoundIndex += 1;
     }
   }
@@ -1221,7 +1294,7 @@ function setupGamePreview(root) {
     for (let index = 0; index < noteNodes.length; index += 1) {
       const note = noteNodes[index];
       const delta = note.time - currentTime;
-      if (delta <= hitEpsilonSeconds) {
+      if (delta < -noteHideAfterSeconds) {
         hitCount += 1;
         continue;
       }
@@ -1231,7 +1304,7 @@ function setupGamePreview(root) {
       const x = hitX + delta * pixelsPerSecond;
       note.node.style.opacity = '1';
       note.node.style.transform = `translate3d(${x}px, -50%, 0) translateX(-50%)`;
-      note.node.classList.toggle('is-hit', delta < 0.055);
+      note.node.classList.toggle('is-hit', Math.abs(delta) < 0.055);
       nextActiveIndexes.add(index);
     }
     activeIndexes.forEach((index) => {
@@ -1268,11 +1341,17 @@ function setupGamePreview(root) {
 
   audio.addEventListener('play', () => {
     playButton.textContent = '暂停';
+    const context = getAudioContext();
+    if (context) {
+      prepareSoundBuffers();
+      context.resume().catch(() => {});
+    }
     syncSoundCursor(audio.currentTime);
     startLoop();
   });
   audio.addEventListener('pause', () => {
     playButton.textContent = '播放';
+    stopScheduledSounds();
   });
   audio.addEventListener('loadedmetadata', () => {
     if (audio.currentTime < start) audio.currentTime = start;
@@ -1281,11 +1360,13 @@ function setupGamePreview(root) {
     update(audio.currentTime);
   });
   seek.addEventListener('input', () => {
+    stopScheduledSounds();
     audio.currentTime = Number(seek.value);
     syncSoundCursor(audio.currentTime);
     update(audio.currentTime);
   });
 
+  prepareSoundBuffers();
   measurePreview();
   syncSoundCursor(start);
   update(start);
