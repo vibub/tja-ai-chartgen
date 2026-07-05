@@ -88,6 +88,16 @@ def test_write_tja_text_saves_shift_jis_compatible_file(tmp_path):
     assert read_tja_text(path) == text
 
 
+def test_write_tja_text_normalizes_decomposed_dakuten(tmp_path):
+    path = tmp_path / "song.tja"
+    text = "TITLE:が\nWAVE:ga.ogg\n#START\n1000,\n#END\n"
+
+    write_tja_text(path, text)
+
+    assert read_tja_text(path).startswith("TITLE:が\n")
+    assert path.read_bytes().startswith("TITLE:が".encode(TJA_FILE_ENCODING))
+
+
 def test_write_tja_text_reports_shift_jis_incompatible_character(tmp_path):
     path = tmp_path / "song.tja"
     text = "TITLE:乌鸦\nWAVE:karasu.ogg\n#START\n1000,\n#END\n"

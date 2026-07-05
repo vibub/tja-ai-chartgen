@@ -1,4 +1,5 @@
 from pathlib import Path
+from unicodedata import normalize
 
 from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.tja.model import ChartBar, TjaChart
@@ -54,10 +55,15 @@ def render_tja(chart: TjaChart) -> str:
 
 
 def write_tja_text(path: Path, text: str) -> Path:
-    validate_tja_text_encoding(text)
+    normalized_text = normalize_tja_text(text)
+    validate_tja_text_encoding(normalized_text)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding=TJA_FILE_ENCODING, newline="\n")
+    path.write_text(normalized_text, encoding=TJA_FILE_ENCODING, newline="\n")
     return path
+
+
+def normalize_tja_text(text: str) -> str:
+    return normalize("NFC", text)
 
 
 def validate_tja_text_encoding(text: str) -> None:
