@@ -172,6 +172,7 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
         api_key=None,
         max_repair_attempts=2,
         special_notes=False,
+        attempt_log_path=None,
     ):
         assert course == "Hard"
         assert level == 8
@@ -182,6 +183,8 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
         assert api_key == "secret-key"
         assert max_repair_attempts == 1
         assert special_notes is True
+        assert attempt_log_path is not None
+        assert attempt_log_path.name == "ai_attempts_1_2.json"
         assert [bar.index for bar in analysis.bars] == [0, 1]
         return [
             ChartBar(index=0, notes="111100000000", time_signature="3/4"),
@@ -245,6 +248,7 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
         api_key=None,
         max_repair_attempts=2,
         special_notes=False,
+        attempt_log_path=None,
     ):
         assert course == "Oni"
         assert level == 10
@@ -255,6 +259,8 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
         assert api_key == "secret-key"
         assert max_repair_attempts == 1
         assert special_notes is True
+        assert attempt_log_path is not None
+        assert attempt_log_path.name == "ai_attempts_1_2.json"
         assert len(analysis.bars) == 2
         return [
             ChartBar(index=0, notes="1111000000000000", time_signature="4/4"),

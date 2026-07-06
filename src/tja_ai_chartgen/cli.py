@@ -289,6 +289,9 @@ def run_generate(
         course_tja_path = _course_tja_path(tja_path, course_name, all_courses)
         course_ai_input_path = _course_sidecar_path(ai_input_path, course_name, all_courses)
         course_ai_output_path = _course_sidecar_path(ai_output_path, course_name, all_courses)
+        course_ai_attempts_path = course_ai_output_path.with_name(
+            course_ai_output_path.name.replace("ai_output", "ai_attempts", 1)
+        )
         chart_bars = None
         ai_failure: str | None = None
 
@@ -323,12 +326,14 @@ def run_generate(
                     api_key=ai_api_key,
                     max_repair_attempts=ai_repair_retries,
                     special_notes=special_notes,
+                    attempt_log_path=course_ai_attempts_path,
                 )
                 write_json(course_ai_output_path, ai_output)
                 chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars), expected_bars=bars)
             except AiOutputRepairError as error:
                 ai_failure = str(error)
                 console.print(f"AI generation failed for {course_name}. Falling back to rule-based generator.")
+                write_json(course_ai_attempts_path, {"error": ai_failure, **error.output})
                 write_json(course_ai_output_path, {"error": ai_failure, **error.output})
             except Exception as error:  # noqa: BLE001 - CLI must keep producing a usable draft.
                 ai_failure = str(error)

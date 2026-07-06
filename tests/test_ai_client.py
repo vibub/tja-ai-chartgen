@@ -211,6 +211,39 @@ def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
     assert "Fix the output" in captured_messages[1][-1]["content"]
 
 
+def test_generate_chart_bars_with_ai_writes_invalid_attempt_log(tmp_path, monkeypatch):
+    responses = [
+        {"bars": [{"bar": 1, "notes": "12x"}]},
+        {"bars": [{"bar": 1, "notes": "1000100010001000"}]},
+    ]
+    attempt_log_path = tmp_path / "ai_attempts.json"
+
+    def fake_completion(**kwargs):
+        payload = responses.pop(0)
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis(),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=1,
+        attempt_log_path=attempt_log_path,
+    )
+
+    logged = json.loads(attempt_log_path.read_text(encoding="utf-8"))
+    assert bars == [ChartBar(index=0, notes="1000100010001000")]
+    assert [attempt["status"] for attempt in logged["attempts"]] == ["invalid", "ok"]
+    assert logged["attempts"][0]["content"] == json.dumps({"bars": [{"bar": 1, "notes": "12x"}]})
+    assert any("must be exactly 16 characters" in issue for issue in logged["attempts"][0]["issues"])
+    assert any("illegal character" in issue for issue in logged["attempts"][0]["issues"])
+    assert logged["final"] == raw["final"]
+
+
+
 def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "7000000080000000", "balloon_counts": [8]}]}
 

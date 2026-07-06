@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from litellm import completion
@@ -37,6 +38,7 @@ def generate_chart_bars_with_ai(
     api_key: str | None = None,
     max_repair_attempts: int = DEFAULT_AI_REPAIR_RETRIES,
     special_notes: bool = False,
+    attempt_log_path: Path | None = None,
 ) -> tuple[list[ChartBar], dict[str, Any]]:
     model_name = model or os.getenv("MODEL", "openai/gpt-4o-mini")
     resolved_api_base = api_base or os.getenv("OPENAI_BASE_URL")
@@ -87,7 +89,7 @@ def generate_chart_bars_with_ai(
                     "data": data,
                 }
             )
-            return bars, _build_ai_output(
+            output = _build_ai_output(
                 model=model_name,
                 api_base=resolved_api_base,
                 api_key_provided=bool(resolved_api_key),
@@ -95,6 +97,17 @@ def generate_chart_bars_with_ai(
                 attempts=attempts,
                 final=data,
             )
+            if attempt_log_path and any(attempt.get("status") == "invalid" for attempt in attempts):
+                _write_attempt_log(
+                    attempt_log_path,
+                    model=model_name,
+                    api_base=resolved_api_base,
+                    api_key_provided=bool(resolved_api_key),
+                    max_repair_attempts=repair_attempts,
+                    attempts=attempts,
+                    final=data,
+                )
+            return bars, output
 
         attempts.append(
             {
@@ -103,6 +116,15 @@ def generate_chart_bars_with_ai(
                 "content": content,
                 "issues": issues,
             }
+        )
+        _write_attempt_log(
+            attempt_log_path,
+            model=model_name,
+            api_base=resolved_api_base,
+            api_key_provided=bool(resolved_api_key),
+            max_repair_attempts=repair_attempts,
+            attempts=attempts,
+            final=None,
         )
 
         if attempt_index < repair_attempts:
@@ -567,6 +589,37 @@ def _build_ai_output(
         "attempts": attempts,
         "final": final,
     }
+
+
+def _write_attempt_log(
+    path: Path | None,
+    *,
+    model: str,
+    api_base: str | None,
+    api_key_provided: bool,
+    max_repair_attempts: int,
+    attempts: list[dict[str, Any]],
+    final: dict[str, Any] | None,
+) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            _build_ai_output(
+                model=model,
+                api_base=api_base,
+                api_key_provided=api_key_provided,
+                max_repair_attempts=max_repair_attempts,
+                attempts=attempts,
+                final=final,
+            ),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
 
 
 def _sanitize_notes(notes: str, expected_length: int) -> str:

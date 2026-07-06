@@ -562,6 +562,7 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
         api_key,
         max_repair_attempts,
         special_notes,
+        attempt_log_path,
     ):
         assert model == "openai/custom-model"
         assert api_base == "https://llm.example.com/v1"
@@ -624,6 +625,7 @@ def test_generate_with_ai_records_default_model(tmp_path, monkeypatch):
         api_key,
         max_repair_attempts,
         special_notes,
+        attempt_log_path,
     ):
         assert model == "openai/gpt-4o-mini"
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
@@ -671,6 +673,7 @@ def test_generate_with_ai_records_model_from_environment(tmp_path, monkeypatch):
         api_key,
         max_repair_attempts,
         special_notes,
+        attempt_log_path,
     ):
         assert model == "openai/env-model"
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}

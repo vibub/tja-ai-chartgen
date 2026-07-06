@@ -2437,6 +2437,7 @@ def _generate_ai_chart_bars_for_web(
     selected_analysis = analysis.model_copy(update={"bars": selected_bars})
     ai_input_path = job_dir / f"ai_input_{start_bar}_{end_bar}.json"
     ai_output_path = job_dir / f"ai_output_{start_bar}_{end_bar}.json"
+    ai_attempts_path = job_dir / f"ai_attempts_{start_bar}_{end_bar}.json"
     write_json(
         ai_input_path,
         build_chart_generation_payload(
@@ -2460,8 +2461,10 @@ def _generate_ai_chart_bars_for_web(
             api_key=api_key,
             max_repair_attempts=ai_repair_retries,
             special_notes=special_notes,
+            attempt_log_path=ai_attempts_path,
         )
     except Exception as error:
+        _write_web_ai_failure(ai_attempts_path, error)
         _write_web_ai_failure(ai_output_path, error)
         raise
 
