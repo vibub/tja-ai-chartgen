@@ -53,11 +53,23 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density"] == "high"
     assert payload["density_target"]["average_hits_per_16_grid_bar"] == "8-11"
     assert payload["forced_silent_bars"] == []
-    assert payload["bar_density_hints"][0]["kind"] == "dense"
+    hint_columns = payload["legend"]["bar_density_hint_columns"]
+    kind_index = hint_columns.index("kind")
+    assert payload["bar_density_hints"][0][kind_index] == "dense"
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
+    assert payload["schema"] == "tja-ai-chartgen-compact-v1"
     assert payload["bars"][0]["grids_per_bar"] == 16
     assert "grid_features" in payload["bars"][0]
+    assert payload["legend"]["grid_feature_columns"] == [
+        "grid",
+        "onset",
+        "accent",
+        "beat",
+        "downbeat",
+        "strength",
+        "activity",
+    ]
 
 
 def test_build_chart_generation_payload_can_include_static_reference_prompt():

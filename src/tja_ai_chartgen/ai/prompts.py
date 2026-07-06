@@ -5,7 +5,7 @@ from tja_ai_chartgen.ai.examples import get_reference_examples_prompt
 from tja_ai_chartgen.features.density import density_hint_payload
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.rules.styles import get_style_template
-from tja_ai_chartgen.tja.model import SongAnalysis
+from tja_ai_chartgen.tja.model import BarFeature, GridFeature, SongAnalysis
 
 
 DENSITY_TARGETS = {
@@ -31,6 +31,32 @@ DENSITY_TARGETS = {
     },
 }
 
+GRID_FEATURE_COLUMNS = ["grid", "onset", "accent", "beat", "downbeat", "strength", "activity"]
+BAR_DENSITY_HINT_COLUMNS = [
+    "bar",
+    "kind",
+    "min_hits",
+    "max_hits",
+    "allow_empty",
+    "count_in_quality_average",
+    "reason",
+]
+REFERENCE_EXAMPLE_BAR_COLUMNS = [
+    "bar",
+    "energy",
+    "grids_per_bar",
+    "onset_16",
+    "accent_16",
+    "beat_grids",
+    "downbeat_grid",
+    "phrase_position",
+    "fill_candidate",
+    "section",
+    "reference_notes",
+    "reference_note_resolution",
+    "balloon_counts",
+]
+
 
 def build_chart_generation_payload(
     analysis: SongAnalysis,
@@ -48,10 +74,17 @@ def build_chart_generation_payload(
     forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
 
     payload = {
+        "schema": "tja-ai-chartgen-compact-v1",
+        "legend": {
+            "bool": "0=false, 1=true",
+            "grid_feature_columns": GRID_FEATURE_COLUMNS,
+            "bar_density_hint_columns": BAR_DENSITY_HINT_COLUMNS,
+            "reference_example_bar_columns": REFERENCE_EXAMPLE_BAR_COLUMNS,
+        },
         "title": analysis.title,
         "artist": analysis.artist,
-        "bpm": analysis.bpm,
-        "offset": analysis.offset,
+        "bpm": _compact_number(analysis.bpm),
+        "offset": _compact_number(analysis.offset),
         "time_signature": analysis.time_signature,
         "course": course,
         "level": level,
@@ -63,12 +96,12 @@ def build_chart_generation_payload(
         "density": density,
         "density_target": density_target,
         "forced_silent_bars": forced_silent_bars,
-        "bar_density_hints": density_hint_payload(analysis.bars),
+        "bar_density_hints": _compact_density_hints(analysis.bars),
         "special_notes": special_notes,
-        "bars": [bar.model_dump() for bar in analysis.bars],
+        "bars": [_compact_bar(bar) for bar in analysis.bars],
     }
     if reference_examples_prompt:
-        payload["reference_examples_prompt"] = reference_examples_prompt
+        payload.update(_reference_examples_payload(reference_examples_prompt))
     return payload
 
 
@@ -110,25 +143,25 @@ Rules:
 10. High energy bars can use denser patterns.
 11. Respect the requested density: auto follows bar energy; low is sparse; medium is balanced; high is dense; max is the densest playable MVP draft.
 12. Density and difficulty targets: {density_guidance}
-13. Follow bar_density_hints for per-bar density. Treat min_hits and max_hits as the preferred local range: silent/rest bars with max_hits=0 must be empty, rest bars with max_hits=2 may stay empty or tiny, sparse bars should stay light, normal bars should stay moderate, dense/fill bars may be busier but not suddenly full-density unless their hint allows it.
+13. Follow bar_density_hints using legend.bar_density_hint_columns. Treat min_hits and max_hits as the preferred local range: silent/rest bars with max_hits=0 must be empty, rest bars with max_hits=2 may stay empty or tiny, sparse bars should stay light, normal bars should stay moderate, dense/fill bars may be busier but not suddenly full-density unless their hint allows it.
 14. For Oni 9-10, keep expert-level note volume through normal/dense/fill bars. Do not force notes into rest bars that represent actual musical pauses.
 15. Avoid repeating the exact same pattern for too many consecutive non-rest bars, and avoid reusing one notes string across many phrases. Keep a motif, but vary don/ka answers, offbeats, and phrase-end fills every 4-8 bars.
 16. Note colors are part of the chart design: 1/3 are don notes, 2/4 are ka notes. Do not use 1 as the default for every playable hit.
 17. Let the chart's style and music decide the don/ka mix, but avoid outputs where nearly all normal 1/2 notes are 1. Use some 2 notes for offbeat responses, back-half answers, syncopated hits, or phrase-end fills.
 18. Common useful cells include 1020, 1200, 1012, 1210, 1122, 1221, 1022, and 2012, but do not force a fixed ratio.
 19. Avoid long all-don streams such as 1010101010101010 unless the input clearly describes a very plain stamina passage; even then, vary later bars with occasional 2 notes.
-20. Use each bar's grid_features to align notes: onset=true marks likely playable hits, activity/strength mark sustained musical sound such as vocals, guitar, strings, piano, or pads even when onset=false. If activity is high but onset is sparse, this is not a rest; place a simple beat/downbeat skeleton rather than leaving the bar empty.
-21. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=false, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
+20. Use each bar's grid_features to align notes. Decode each row with legend.grid_feature_columns: onset=1 marks likely playable hits, activity/strength mark sustained musical sound such as vocals, guitar, strings, piano, or pads even when onset=0. If activity is high but onset is sparse, this is not a rest; place a simple beat/downbeat skeleton rather than leaving the bar empty.
+21. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=0, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
 22. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density or sustained activity asks for more.
 23. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
 24. Do not place big notes 3/4 inside dense streams. If a passage has 3 or more consecutive playable hits, use normal 1/2 notes in the stream instead of 3/4.
 25. Avoid multiple big notes in one bar unless the bar is intentionally sparse; high/max density should increase 1/2 stream density, not big-note frequency.
 26. Use beat_grids, downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
 27. If special_notes is true, use 5/8 drumrolls or 7 balloons only for occasional phrase-end/fill highlights, and include balloon_counts with one positive integer per 7.
-28. If reference_examples_prompt is present in the input, use it as style and audio-alignment guidance only: study how its precomputed energy, onset, accent, beat, phrase, and section fields map to reference_notes, but do not copy reference note-string length. Your output notes must still match the requested input bars' grids_per_bar values.
+28. If reference_examples or reference_examples_prompt is present in the input, use it as style and audio-alignment guidance only: study how its precomputed energy, onset, accent, beat, phrase, and section fields map to reference_notes, but do not copy reference note-string length. Your output notes must still match the requested input bars' grids_per_bar values.
 
 Input:
-{json.dumps(payload, ensure_ascii=False)}
+{json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}
 
 Output schema:
 {{
@@ -137,6 +170,123 @@ Output schema:
   ]
 }}
 """.strip()
+
+
+def _compact_bar(bar: BarFeature) -> dict[str, Any]:
+    return {
+        "index": bar.index,
+        "start_time": _compact_number(bar.start_time),
+        "end_time": _compact_number(bar.end_time),
+        "energy": _compact_number(bar.energy),
+        "time_signature": bar.time_signature,
+        "grids_per_bar": bar.grids_per_bar,
+        "onset_16": bar.onset_16,
+        "accent_16": bar.accent_16,
+        "activity_16": [_compact_number(value) for value in bar.activity_16],
+        "grid_features": [_compact_grid_feature(feature) for feature in bar.grid_features],
+        "beat_grids": bar.beat_grids,
+        "downbeat_grid": bar.downbeat_grid,
+        "phrase_position": bar.phrase_position,
+        "fill_candidate": bar.fill_candidate,
+        "section": bar.section,
+    }
+
+
+def _compact_grid_feature(feature: GridFeature) -> list[Any]:
+    return [
+        feature.grid,
+        int(feature.onset),
+        int(feature.accent),
+        feature.beat,
+        int(feature.downbeat),
+        _compact_number(feature.strength),
+        _compact_number(feature.activity),
+    ]
+
+
+def _compact_density_hints(bars: list[BarFeature]) -> list[list[Any]]:
+    return [
+        [
+            hint["bar"],
+            hint["kind"],
+            hint["min_hits"],
+            hint["max_hits"],
+            int(bool(hint["allow_empty"])),
+            int(bool(hint["count_in_quality_average"])),
+            hint["reason"],
+        ]
+        for hint in density_hint_payload(bars)
+    ]
+
+
+def _reference_examples_payload(reference_examples_prompt: str) -> dict[str, Any]:
+    examples = _parse_reference_examples(reference_examples_prompt)
+    if examples is None:
+        return {"reference_examples_prompt": reference_examples_prompt}
+
+    return {
+        "reference_examples_note": (
+            "Reference chart examples, precomputed from study charts. These examples are evenly sampled "
+            "across each full chart, not only intros. Use them only as style and audio-alignment examples."
+        ),
+        "reference_examples": [_compact_reference_example(example) for example in examples],
+    }
+
+
+def _parse_reference_examples(reference_examples_prompt: str) -> list[dict[str, Any]] | None:
+    start = reference_examples_prompt.find("[")
+    end = reference_examples_prompt.rfind("]")
+    if start < 0 or end <= start:
+        return None
+
+    try:
+        data = json.loads(reference_examples_prompt[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(data, list) or not all(isinstance(example, dict) for example in data):
+        return None
+    return data
+
+
+def _compact_reference_example(example: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": example.get("title"),
+        "artist": example.get("artist"),
+        "course": example.get("course"),
+        "level": example.get("level"),
+        "sample_strategy": example.get("sample_strategy"),
+        "total_chart_bars": example.get("total_chart_bars"),
+        "total_audio_bars": example.get("total_audio_bars"),
+        "bars": [_compact_reference_bar(bar) for bar in example.get("bars", []) if isinstance(bar, dict)],
+    }
+
+
+def _compact_reference_bar(bar: dict[str, Any]) -> list[Any]:
+    return [
+        bar.get("bar"),
+        _compact_number(bar.get("energy")),
+        bar.get("grids_per_bar"),
+        bar.get("onset_16", []),
+        bar.get("accent_16", []),
+        bar.get("beat_grids", []),
+        bar.get("downbeat_grid"),
+        bar.get("phrase_position"),
+        int(bool(bar.get("fill_candidate"))),
+        bar.get("section"),
+        bar.get("reference_notes"),
+        bar.get("reference_note_resolution"),
+        bar.get("balloon_counts", []),
+    ]
+
+
+def _compact_number(value: Any) -> Any:
+    if not isinstance(value, int | float):
+        return value
+    rounded = round(float(value), 6)
+    if rounded.is_integer():
+        return int(rounded)
+    return rounded
 
 
 def _auto_density_target(level: int) -> dict[str, Any]:
