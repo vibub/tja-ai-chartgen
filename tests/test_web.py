@@ -119,6 +119,42 @@ def test_web_progress_status_reports_failed_stage(tmp_path, monkeypatch):
     assert "ffmpeg missing" in status["error"]
 
 
+def test_web_encoding_error_can_retry_metadata_without_regeneration(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "你的歌", "artist": "歌手", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_id = next(tmp_path.iterdir()).name
+    status = _wait_for_job_done(client, job_id, final_status="error")
+    assert status["step"] == "render"
+    assert status["can_retry_metadata"] is True
+    assert status["title"] == "你的歌"
+    assert "cannot be encoded with cp932" in status["error"]
+    progress = client.get(f"/jobs/{job_id}/progress")
+    assert "重试写入预览" in progress.text
+    assert (tmp_path / job_id / "chart_bars.json").exists()
+
+    retry = client.post(
+        f"/jobs/{job_id}/retry-metadata",
+        data={"title": "Song Title", "artist": "Artist"},
+    )
+
+    assert retry.status_code == 200
+    assert "游玩预览" in retry.text
+    assert (tmp_path / job_id / "preview.tja").exists()
+    generated_text = (tmp_path / job_id / "preview.tja").read_text(encoding=TJA_FILE_ENCODING)
+    assert "TITLE:Song Title" in generated_text
+    assert "SUBTITLE:-- Artist" in generated_text
+    status_after_retry = client.get(f"/jobs/{job_id}/status").json()
+    assert status_after_retry["status"] == "done"
+
+
 def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     _patch_web_audio_pipeline(monkeypatch, duration=4.0)
     client = TestClient(create_app(output_dir=tmp_path))

@@ -369,6 +369,20 @@ textarea:focus {
   margin-top: 1rem;
 }
 
+.metadata-retry-card {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  background: rgba(5, 6, 8, 0.32);
+  border: 1px solid rgba(224, 138, 116, 0.32);
+  border-radius: var(--radius-md);
+}
+
+.metadata-retry-card h2,
+.metadata-retry-card p {
+  margin-bottom: 0;
+}
+
 .inline-debug-card {
   display: grid;
   gap: 0.85rem;
@@ -1288,7 +1302,11 @@ function setupProgressPage(root) {
   const message = root.querySelector('[data-role="progress-message"]');
   const meter = root.querySelector('[data-role="progress-meter"]');
   const error = root.querySelector('[data-role="progress-error"]');
+  const retryPanel = root.querySelector('[data-role="metadata-retry"]');
+  const retryTitle = root.querySelector('[data-role="metadata-retry-title"]');
+  const retryArtist = root.querySelector('[data-role="metadata-retry-artist"]');
   const steps = Array.from(root.querySelectorAll('[data-progress-step]'));
+  let metadataRetryFilled = false;
   if (!statusUrl) return;
 
   function labelForState(state) {
@@ -1316,6 +1334,14 @@ function setupProgressPage(root) {
       if (error) {
         error.hidden = false;
         error.textContent = data.error || '任务失败，请返回首页重试。';
+      }
+      if (retryPanel && data.can_retry_metadata) {
+        retryPanel.hidden = false;
+        if (!metadataRetryFilled) {
+          if (retryTitle) retryTitle.value = data.title || '';
+          if (retryArtist) retryArtist.value = data.artist || '';
+          metadataRetryFilled = true;
+        }
       }
       return false;
     }
@@ -1771,6 +1797,22 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             return HTMLResponse(_page("Result unavailable", _error_notice("结果页面尚未写入。")), status_code=404)
         return HTMLResponse(result_path.read_text(encoding="utf-8"))
 
+    @app.post("/jobs/{job_id}/retry-metadata", response_class=HTMLResponse)
+    async def retry_metadata(
+        job_id: str,
+        title: Annotated[str, Form()],
+        artist: Annotated[str, Form()] = "",
+    ) -> HTMLResponse:
+        try:
+            job_dir = _job_dir(app.state.output_dir, job_id)
+            result_path = _render_job_preview_with_metadata(job_dir, title=title, artist=artist)
+            return HTMLResponse(result_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValidationError, ValueError) as error:
+            return HTMLResponse(
+                _page("Metadata retry failed", _error_notice(str(error))),
+                status_code=400,
+            )
+
     @app.get("/assets/{filename}")
     async def web_asset(filename: str) -> FileResponse:
         safe_filename = Path(filename).name
@@ -2113,6 +2155,11 @@ def _run_analyze_job(
                 density=density,
                 special_notes=special_notes,
             )
+        write_json(job_dir / _PROGRESS_CHART_BARS_JSON, chart_bars)
+        write_json(
+            job_dir / _PROGRESS_CHART_OPTIONS_JSON,
+            {"course": course, "level": level, "use_ai": use_ai, "ai_failure": ai_failure if use_ai else None},
+        )
 
         _write_progress(
             job_dir,
@@ -2120,37 +2167,14 @@ def _run_analyze_job(
             step="render",
             message="正在写入 preview.tja，并准备可视化游玩预览。",
         )
-        chart = TjaChart(
-            metadata=ChartMetadata(
-                title=analysis.title,
-                artist=analysis.artist,
-                wave=Path(analysis.ogg_file).name,
-                bpm=analysis.bpm,
-                offset=analysis.offset,
-                course=course,
-                level=level,
-            ),
-            bars=chart_bars,
-        )
-        tja_text = render_tja(chart)
-        output_path = job_dir / "preview.tja"
-        write_tja_text(output_path, tja_text)
-        result_body = (
-            (_ai_generation_notice(ai_failure) if use_ai else "")
-            + _result_panel(
-                job_id=job_dir.name,
-                output_path=output_path,
-                tja_text=tja_text,
-                analysis=analysis,
-                chart_bars=chart_bars,
-                course=course,
-                level=level,
-            )
-            + _regenerate_form(job_dir.name, len(analysis.bars), course)
-        )
-        (job_dir / _PROGRESS_RESULT_HTML).write_text(
-            _page("Game preview", result_body),
-            encoding="utf-8",
+        _write_preview_result(
+            job_dir=job_dir,
+            analysis=analysis,
+            chart_bars=chart_bars,
+            course=course,
+            level=level,
+            use_ai=use_ai,
+            ai_failure=ai_failure,
         )
         _write_progress(
             job_dir,
@@ -2161,13 +2185,122 @@ def _run_analyze_job(
         )
     except Exception as error:  # noqa: BLE001 - Background job reports failures through status JSON.
         step = str(_read_progress(job_dir).get("step", "upload"))
+        can_retry_metadata, retry_analysis = _metadata_retry_state(job_dir)
         _write_progress(
             job_dir,
             status=_PROGRESS_ERROR,
             step=step,
             message="任务停止，请根据错误信息调整参数后重试。",
             error=str(error),
+            can_retry_metadata=can_retry_metadata,
+            title=retry_analysis.title if retry_analysis else None,
+            artist=retry_analysis.artist if retry_analysis else None,
         )
+
+
+def _write_preview_result(
+    *,
+    job_dir: Path,
+    analysis: SongAnalysis,
+    chart_bars: list[ChartBar],
+    course: str,
+    level: int,
+    use_ai: bool = False,
+    ai_failure: str | None = None,
+) -> Path:
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title=analysis.title,
+            artist=analysis.artist,
+            wave=Path(analysis.ogg_file).name,
+            bpm=analysis.bpm,
+            offset=analysis.offset,
+            course=course,
+            level=level,
+        ),
+        bars=chart_bars,
+    )
+    tja_text = render_tja(chart)
+    output_path = job_dir / "preview.tja"
+    write_tja_text(output_path, tja_text)
+    result_body = (
+        (_ai_generation_notice(ai_failure) if use_ai else "")
+        + _result_panel(
+            job_id=job_dir.name,
+            output_path=output_path,
+            tja_text=tja_text,
+            analysis=analysis,
+            chart_bars=chart_bars,
+            course=course,
+            level=level,
+        )
+        + _regenerate_form(job_dir.name, len(analysis.bars), course)
+    )
+    result_path = job_dir / _PROGRESS_RESULT_HTML
+    result_path.write_text(_page("Game preview", result_body), encoding="utf-8")
+    return result_path
+
+
+def _render_job_preview_with_metadata(job_dir: Path, *, title: str, artist: str) -> Path:
+    normalized_title = title.strip()
+    if not normalized_title:
+        raise ValueError("Title is required")
+    analysis = SongAnalysis.model_validate_json((job_dir / "analysis.json").read_text(encoding="utf-8"))
+    analysis = analysis.model_copy(
+        update={"title": normalized_title, "artist": _optional_form_text(artist)}
+    )
+    chart_bars = _read_job_chart_bars(job_dir)
+    options = _read_job_chart_options(job_dir)
+    course = str(options.get("course") or "Oni")
+    level = int(options.get("level") or 10)
+    use_ai = bool(options.get("use_ai"))
+    ai_failure = options.get("ai_failure")
+    result_path = _write_preview_result(
+        job_dir=job_dir,
+        analysis=analysis,
+        chart_bars=chart_bars,
+        course=course,
+        level=level,
+        use_ai=use_ai,
+        ai_failure=str(ai_failure) if ai_failure is not None else None,
+    )
+    write_json(job_dir / "analysis.json", analysis)
+    _write_progress(
+        job_dir,
+        status=_PROGRESS_DONE,
+        step="render",
+        message="谱面生成完成，正在打开游玩预览。",
+        result_url=f"/jobs/{job_dir.name}/result",
+    )
+    return result_path
+
+
+def _read_job_chart_bars(job_dir: Path) -> list[ChartBar]:
+    path = job_dir / _PROGRESS_CHART_BARS_JSON
+    if not path.is_file():
+        raise FileNotFoundError("Generated chart bars are not available for this job")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("Generated chart bars file is invalid")
+    return [ChartBar.model_validate(item) for item in data]
+
+
+def _read_job_chart_options(job_dir: Path) -> dict[str, object]:
+    path = job_dir / _PROGRESS_CHART_OPTIONS_JSON
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Generated chart options file is invalid")
+    return data
+
+
+def _metadata_retry_state(job_dir: Path) -> tuple[bool, SongAnalysis | None]:
+    try:
+        analysis = SongAnalysis.model_validate_json((job_dir / "analysis.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValidationError, ValueError):
+        return False, None
+    return (job_dir / _PROGRESS_CHART_BARS_JSON).is_file(), analysis
 
 
 def _new_job_dir(output_dir: Path) -> Path:
@@ -2660,6 +2793,27 @@ def _progress_page(job_id: str) -> str:
       {steps}
     </ol>
     <p class="notice error" data-role="progress-error" hidden></p>
+    <section class="metadata-retry-card" data-role="metadata-retry" aria-labelledby="metadata-retry-heading" hidden>
+      <p class="eyebrow">元数据修正</p>
+      <h2 id="metadata-retry-heading">修改歌名后重试</h2>
+      <p class="lede">如果只是 TJA 编码不兼容，可以把歌名或歌手改成 CP932 / Shift-JIS 可保存的文本，然后直接重新写入预览。</p>
+      <form action="/jobs/{_escape(job_id)}/retry-metadata" method="post">
+        <div class="form-grid">
+          <label class="field">
+            歌名
+            <input name="title" data-role="metadata-retry-title" required>
+          </label>
+          <label class="field">
+            歌手
+            <input name="artist" data-role="metadata-retry-artist" placeholder="可选">
+          </label>
+        </div>
+        <div class="helper-strip">
+          <button type="submit" data-loading-text="重试中">重试写入预览</button>
+          <span>不会重新分析音频，也不会重新调用 AI。</span>
+        </div>
+      </form>
+    </section>
     <div class="helper-strip">
       <span>任务 <code>{_escape(job_id)}</code></span>
       <a class="button-link" href="/">返回首页</a>
@@ -3179,6 +3333,8 @@ _PROGRESS_DONE = "done"
 _PROGRESS_ERROR = "error"
 _PROGRESS_JSON = "progress.json"
 _PROGRESS_RESULT_HTML = "result.html"
+_PROGRESS_CHART_BARS_JSON = "chart_bars.json"
+_PROGRESS_CHART_OPTIONS_JSON = "chart_options.json"
 
 
 def _progress_payload(
@@ -3188,6 +3344,9 @@ def _progress_payload(
     message: str,
     result_url: str | None = None,
     error: str | None = None,
+    can_retry_metadata: bool = False,
+    title: str | None = None,
+    artist: str | None = None,
 ) -> dict[str, object]:
     current_index = _PROGRESS_STEP_INDEX.get(step, -1)
     steps = []
@@ -3210,6 +3369,9 @@ def _progress_payload(
         "steps": steps,
         "result_url": result_url,
         "error": error,
+        "can_retry_metadata": can_retry_metadata,
+        "title": title,
+        "artist": artist,
     }
 
 
@@ -3232,6 +3394,9 @@ def _write_progress(
     message: str,
     result_url: str | None = None,
     error: str | None = None,
+    can_retry_metadata: bool = False,
+    title: str | None = None,
+    artist: str | None = None,
 ) -> None:
     write_json(
         job_dir / _PROGRESS_JSON,
@@ -3241,6 +3406,9 @@ def _write_progress(
             message=message,
             result_url=result_url,
             error=error,
+            can_retry_metadata=can_retry_metadata,
+            title=title,
+            artist=artist,
         ),
     )
 
