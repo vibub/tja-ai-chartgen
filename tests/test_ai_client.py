@@ -55,7 +55,11 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["forced_silent_bars"] == []
     hint_columns = payload["legend"]["bar_density_hint_columns"]
     kind_index = hint_columns.index("kind")
+    target_index = hint_columns.index("target_hits")
     assert payload["bar_density_hints"][0][kind_index] == "dense"
+    assert payload["bar_density_hints"][0][target_index] == 10
+    assert payload["density_policy"]["quality_density"] == "high"
+    assert payload["density_policy"]["quality_average_min_per_16_grid_bar"] == 6.5
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
     assert payload["schema"] == "tja-ai-chartgen-compact-v1"
@@ -110,6 +114,8 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "Do not use 1 as the default" in prompt
     assert "do not force a fixed ratio" in prompt
     assert "1010101010101010" in prompt
+    assert "target_hits is more important than merely satisfying min_hits" in prompt
+    assert "density_policy.quality_average_min_per_16_grid_bar" in prompt
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
@@ -264,6 +270,7 @@ def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypa
     assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
     assert [bar.notes for bar in bars] == dense_notes
     assert "chart quality is too sparse" in captured_messages[1][-1]["content"]
+    assert "toward target_hits" in captured_messages[1][-1]["content"]
 
 
 def test_generate_chart_bars_with_ai_allows_empty_musical_rest_in_high_density(monkeypatch):

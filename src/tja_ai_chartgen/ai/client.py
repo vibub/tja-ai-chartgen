@@ -543,9 +543,9 @@ Rules:
 - If using balloon note 7, include one positive integer in balloon_counts for each 7 in that bar.
 - Course/difficulty request: {course} level {level}, density {density}.
 - Forced silent bars: {forced_silent_bars}. These song-start/song-end silence bars must be all 0 for their full notes length.
-- Respect bar_density_hints from the original input: keep each bar inside its min_hits/max_hits range when present; rest bars may stay empty, sparse bars may stay light, normal bars should be moderate, and dense/fill bars should be busier without sudden full-density spikes unless the hint allows it.
+- Respect bar_density_hints from the original input: keep each bar inside its min_hits/max_hits range and aim near target_hits when present; rest bars may stay empty, sparse bars may stay light, normal bars should be moderate, and dense/fill bars should be busier without sudden full-density spikes unless the hint allows it.
 - If a bar has high activity/strength but sparse onset markers, treat it as sustained music rather than silence; add a simple beat/downbeat skeleton instead of leaving it empty.
-- If validation errors mention low chart quality, increase 1/2 note density on normal/dense/fill bars, keep real rest bars empty or sparse, add more 2/4 ka notes for offbeat/answer/fill hits, and vary repeated or all-don patterns without changing bar count or note lengths.
+- If validation errors mention low chart quality, increase 1/2 note density on normal/dense/fill bars toward target_hits, keep real rest bars empty or sparse, add more 2/4 ka notes for offbeat/answer/fill hits, and vary repeated or all-don patterns without changing bar count or note lengths.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()
 
