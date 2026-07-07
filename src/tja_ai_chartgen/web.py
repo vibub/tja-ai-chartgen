@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from shutil import copy2
 from threading import Thread
+from time import sleep
 from typing import Annotated
 from uuid import uuid4
 
@@ -3421,4 +3422,11 @@ def _read_progress(job_dir: Path) -> dict[str, object]:
             step="upload",
             message="任务已创建，正在准备接收音频。",
         )
-    return json.loads(path.read_text(encoding="utf-8"))
+    for attempt in range(10):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except PermissionError:
+            if attempt == 9:
+                raise
+            sleep(0.01)
+    raise RuntimeError("unreachable progress read retry state")

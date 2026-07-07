@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.tja.model import ChartBar
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
-from tja_ai_chartgen.web import create_app
+from tja_ai_chartgen.web import create_app, _read_progress
 
 
 def test_web_index_shows_upload_form(tmp_path):
@@ -468,6 +468,27 @@ def test_web_serves_job_audio(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.content == b"fake ogg"
+
+
+def test_read_progress_retries_when_progress_file_is_temporarily_locked(tmp_path, monkeypatch):
+    progress_path = tmp_path / "progress.json"
+    progress_path.write_text(
+        '{"status": "done", "step": "render", "message": "ok"}',
+        encoding="utf-8",
+    )
+    original_read_text = type(progress_path).read_text
+    attempts = {"count": 0}
+
+    def temporarily_locked_read_text(self, encoding=None):
+        if self == progress_path and attempts["count"] == 0:
+            attempts["count"] += 1
+            raise PermissionError("simulated locked progress")
+        return original_read_text(self, encoding=encoding)
+
+    monkeypatch.setattr(type(progress_path), "read_text", temporarily_locked_read_text)
+
+    assert _read_progress(tmp_path)["status"] == "done"
+    assert attempts["count"] == 1
 
 
 def _wait_for_job_done(client, job_id, *, final_status="done"):
