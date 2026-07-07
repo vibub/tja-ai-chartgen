@@ -2,6 +2,10 @@
 
 AI-assisted TJA chart draft generator for Taiko simulators.
 
+Chinese documentation: [README.md](README.md).
+
+License: MIT. See [LICENSE](LICENSE).
+
 ## Requirements
 
 - Python 3.11+
@@ -21,7 +25,7 @@ Check the installed CLI version:
 tja-ai-chartgen version
 ```
 
-Rule-based draft:
+Generate a rule-based chart draft:
 
 ```bash
 tja-ai-chartgen generate song.mp3 --title "Song Title"
@@ -33,13 +37,24 @@ Generate only the first N bars for quick checks:
 tja-ai-chartgen generate song.mp3 --title "Song Title" --max-bars 16
 ```
 
-Control rule-based draft density:
+Control rule-based draft density and style template:
 
 ```bash
-tja-ai-chartgen generate song.mp3 --title "Song Title" --density high
+tja-ai-chartgen generate song.mp3 --title "Song Title" --density high --style hybrid
 ```
 
-Allowed density values are `auto`, `low`, `medium`, `high`, and `max`. `auto` follows analyzed bar energy.
+Allowed `--density` values are `auto`, `low`, `medium`, `high`, and `max`. `auto` follows analyzed bar energy. Allowed `--style` values are `technical`, `stamina`, `hybrid`, and `performance`; they affect rule-based templates and AI prompts.
+
+Allow the rule generator and AI to use simple drumroll and balloon notes:
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --density high \
+  --special-notes
+```
+
+When enabled, the rule generator may place a small number of `5...8` drumrolls and `7...8` balloons in high-energy bars, and the writer emits the matching `BALLOON:` header.
 
 Override analyzed BPM and OFFSET when manual calibration is needed:
 
@@ -49,6 +64,34 @@ tja-ai-chartgen generate song.mp3 \
   --max-bars 16 \
   --bpm 220.588 \
   --offset 0.725
+```
+
+Override or enhance time signature analysis. Supported values are `4/4`, `3/4`, and `6/8`:
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --time-signature 3/4
+```
+
+`3/4` and `6/8` use 12-grid bars and are exported with `#MEASURE 3/4` in the `.tja`; `4/4` keeps the default 16-grid bars.
+
+Try optional BeatNet analysis for downbeat, meter, and bar-start enhancement:
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --use-beatnet
+```
+
+BeatNet is not a default dependency. Install `BeatNet` separately before using it. If BeatNet is unavailable or analysis fails, the CLI keeps the default librosa analysis result.
+
+Generate Easy, Normal, Hard, and Oni charts in one run:
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --all-courses
 ```
 
 AI-assisted draft:
@@ -105,6 +148,14 @@ Re-run a saved generation config:
 tja-ai-chartgen generate-from-config output/generation_config.json
 ```
 
+Start the local Web UI MVP:
+
+```bash
+tja-ai-chartgen web
+```
+
+The Web UI supports audio upload, OGG playback, BPM/OFFSET/time-signature override, analysis preview, and regenerating a selected bar range. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`.
+
 ## Output
 
 ```txt
@@ -115,63 +166,39 @@ output/
 ├─ generation_config.json
 ├─ ai_input.json
 ├─ ai_output.json
-└─ report.txt
+├─ report.txt
+└─ web/
+   └─ <job-id>/
+      ├─ analysis.json
+      └─ regenerated_<start>_<end>.tja
 ```
 
 ## Reproducibility
 
-Each `generate` run writes `generation_config.json` next to the TJA output. It records the input path, metadata, difficulty, style, density, `--max-bars`, BPM/OFFSET overrides, AI flag, final resolved model name, and AI repair retry count so a useful draft can be reproduced later. Use `generate-from-config` to run the same generation parameters again. API keys and base URLs are not written to `generation_config.json`; provide connection settings again through `.env`, environment variables, or command options when rerunning AI generation.
+Each `generate` run writes `generation_config.json` next to the TJA output. It records input path, metadata, difficulty, all-course mode, style, density, `--max-bars`, BPM/OFFSET overrides, time-signature override, BeatNet flag, special-note flag, AI flag, final resolved model name, and AI repair retry count. Use `generate-from-config` to run the same generation parameters again. API keys and base URLs are not written to `generation_config.json`; provide connection settings again through `.env`, environment variables, or command options when rerunning AI generation.
 
 ## Limitations
 
 - Best for songs with stable BPM.
-- Assumes 4/4 time signature.
 - Generated charts are drafts and require human review.
 - OFFSET may need manual adjustment in OpenTaiko or another simulator.
 - `--max-bars` is intended for quick draft checks and truncates the generated chart to the first N bars.
 - `--bpm` and `--offset` override automatic analysis results for manual calibration.
+- `--time-signature 4/4|3/4|6/8` overrides the analyzed meter and affects bar length, AI prompts, and `.tja` `#MEASURE` output.
+- `--all-courses` writes `<stem>_easy.tja`, `<stem>_normal.tja`, `<stem>_hard.tja`, and `<stem>_oni.tja` with built-in level and density presets.
 - `--density auto|low|medium|high|max` controls rule-based draft density and is passed into the AI prompt when `--use-ai` is enabled.
+- `--style technical|stamina|hybrid|performance` selects the style template for rule patterns, special-note placement, and AI prompts.
+- `--special-notes` allows simple drumroll and balloon notes; complex drumroll performances are still unsupported.
+- `--use-beatnet` requires separately installing `BeatNet`; if BeatNet is unavailable or analysis fails, the CLI keeps the default librosa result.
 - `--use-ai` can still fall back to the rule-based generator when the model is unavailable, output repair is exhausted, or credentials are misconfigured.
-- MVP does not support BPM changes, branches, drumrolls, balloons, or scroll gimmicks.
+- The Web UI is a local MVP. It does not provide accounts, persistent task management, or a full chart editor.
+- The MVP does not support BPM changes, branch charts, complex drumroll performances, or scroll gimmicks.
 
-## Roadmap
+## Future Work
 
-These items are planned for later versions and are not part of the MVP scope.
+The following areas are still not implemented and are suitable for later versions:
 
-### v0.2
-
-- Support manual BPM override. ✅ Implemented in MVP iteration via `--bpm`.
-- Support manual OFFSET override. ✅ Implemented in MVP iteration via `--offset`.
-- Support `--max-bars` to generate only the first N bars for easier testing. ✅ Implemented in MVP iteration.
-- Add automatic AI output repair and retry. ✅ Implemented; defaults to 2 repair retries and can be adjusted with `--ai-repair-retries`.
-- Add `--density low|medium|high|max`. ✅ Implemented in MVP iteration via `--density auto|low|medium|high|max`.
-
-### v0.3
-
-- Try integrating BeatNet for:
-  - downbeat detection
-  - meter detection
-  - more accurate bar starts
-- Support `3/4` and `6/8` time signatures.
-- Support simple drumrolls and balloons.
-
-### v0.4
-
-- Support multiple difficulties:
-  - Easy
-  - Normal
-  - Hard
-  - Oni
-- Support style templates:
-  - technical
-  - stamina
-  - hybrid
-  - performance
-
-### v0.5
-
-- Build a Web UI.
-- Upload audio files.
-- Preview analysis results online.
-- Manually adjust BPM / OFFSET.
-- Regenerate selected bars.
+- Support BPM changes, complex drumroll performances, branch charts, and scroll gimmicks for fuller TJA syntax coverage.
+- Improve music structure analysis so generation is less dependent on stable-BPM songs.
+- Expand the Web UI with task management, chart editing, and longer-term result storage.
+- Build more reproducible reference-chart evaluation samples for comparing generation strategies.

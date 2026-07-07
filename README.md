@@ -4,6 +4,8 @@
 
 英文版文档见：[README_EN.md](README_EN.md)。
 
+许可证：MIT。详见 [LICENSE](LICENSE)。
+
 ## 环境要求
 
 - Python 3.11+
@@ -193,44 +195,11 @@ output/
 - Web UI 是本地 MVP，只提供上传、分析预览、手动覆盖和指定小节范围规则再生成，不提供账号、持久任务管理或在线播放器。
 - MVP 不支持 BPM 变化、分歧谱面、复杂滚奏演出、滚动演出等复杂语法。
 
-## 后续版本规划
+## 后续方向
 
-以下内容计划在后续版本中实现，不属于 MVP 范围。
+以下内容仍未实现，适合后续版本继续迭代：
 
-### v0.2
-
-- 支持用户手动指定 BPM。✅ 已在 MVP 迭代中通过 `--bpm` 实现。
-- 支持用户手动指定 OFFSET。✅ 已在 MVP 迭代中通过 `--offset` 实现。
-- 支持 `--max-bars` 只生成前 N 小节，方便测试。✅ 已在 MVP 迭代中实现。
-- AI 输出自动修复重试。✅ 已实现，默认最多修复重试 2 次，可通过 `--ai-repair-retries` 调整。
-- 加入 `--density low|medium|high|max`。✅ 已在 MVP 迭代中通过 `--density auto|low|medium|high|max` 实现。
-
-### v0.3
-
-- 尝试集成 BeatNet：✅ 已通过可选 `--use-beatnet` 增强实现，失败时回退到 librosa。
-  - downbeat
-  - meter
-  - 更准的小节开始
-- 支持 `3/4`、`6/8`。✅ 已通过 `--time-signature`、BeatNet meter、12 格小节和 `#MEASURE` 输出实现。
-- 支持简单滚奏和气球。✅ 已通过 `--special-notes`、`BALLOON:` 输出和 5/7/8 音符校验实现。
-
-### v0.4
-
-- 支持多难度：✅ 已通过 `--all-courses` 输出四个独立 `.tja` 文件。
-  - Easy
-  - Normal
-  - Hard
-  - Oni
-- 支持风格模板：✅ 已通过 `--style technical|stamina|hybrid|performance` 接入规则生成和 AI payload。
-  - technical
-  - stamina
-  - hybrid
-  - performance
-
-### v0.5
-
-- 做 Web UI。✅ 已通过 `tja-ai-chartgen web` 提供本地 FastAPI MVP。
-- 上传音频。✅ Web UI 支持上传并转换/分析。
-- 在线预览分析结果。✅ Web UI 展示 BPM、OFFSET、拍号、小节 energy 和 section。
-- 手动调 BPM / OFFSET。✅ 上传分析时可覆盖 BPM、OFFSET 和拍号。
-- 重新生成指定小节。✅ Web UI 可按起止小节重新生成规则谱面片段。
+- 支持变 BPM、复杂滚奏演出、分歧谱面和滚动演出等更完整的 TJA 语法。
+- 改进音频结构分析，减少对 BPM 稳定歌曲的依赖。
+- 增强 Web UI 的任务管理、谱面编辑和长期保存能力。
+- 沉淀更多可复现的参考谱面评测样例，便于比较不同生成策略。

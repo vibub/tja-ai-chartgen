@@ -8,4 +8,5 @@ __pycache__/
 output/
 *.egg-info/
 *.mp3
+.claude/
 CLAUDE.md
