@@ -1,5 +1,6 @@
 import json
 import os
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 
@@ -150,14 +151,33 @@ def generate_from_config(config_path: Path) -> None:
         _fail(f"Invalid generation config: {error}")
 
 
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 @app.command()
 def web(
     host: str = typer.Option("127.0.0.1", help="Host for the Web UI server."),
     port: int = typer.Option(8000, help="Port for the Web UI server."),
     output_dir: Path = typer.Option(Path("output/web"), help="Directory for Web UI jobs."),
+    allow_remote: bool = typer.Option(
+        False,
+        "--allow-remote",
+        help="Allow the unauthenticated Web UI to listen on a non-loopback address.",
+    ),
 ) -> None:
     import asyncio
     import sys
+
+    remote_mode = not _is_loopback_host(host)
+    if remote_mode and not allow_remote:
+        _fail("Non-loopback Web listening requires --allow-remote.")
 
     import uvicorn
 
@@ -167,7 +187,7 @@ def web(
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     uvicorn.run(
-        create_app(output_dir=output_dir),
+        create_app(output_dir=output_dir, remote_mode=remote_mode),
         host=host,
         port=port,
         timeout_keep_alive=1,

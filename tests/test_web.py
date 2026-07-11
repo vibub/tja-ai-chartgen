@@ -1,13 +1,21 @@
 import json
 import time
+from io import BytesIO
 
 import pytest
+from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.tja.model import ChartBar
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
-from tja_ai_chartgen.web import create_app, _read_progress
+from tja_ai_chartgen.web import (
+    WEB_UPLOAD_MAX_BYTES,
+    UploadTooLargeError,
+    _read_progress,
+    _save_upload,
+    create_app,
+)
 
 
 def test_web_index_shows_upload_form(tmp_path):
@@ -29,6 +37,27 @@ def test_web_index_shows_upload_form(tmp_path):
     assert 'name="use_ai" type="checkbox" value="true" data-role="ai-toggle" checked' in response.text
     assert '<details class="advanced-panel field-wide" data-role="ai-options">' in response.text
     assert 'name="ai_model"' in response.text
+
+
+def test_web_upload_limit_is_100_mib():
+    assert WEB_UPLOAD_MAX_BYTES == 100 * 1024 * 1024
+
+
+def test_save_upload_reads_in_bounded_chunks(tmp_path):
+    upload = UploadFile(filename="song.mp3", file=BytesIO(b"abcdef"))
+
+    path = _save_upload(tmp_path, upload, max_bytes=6, chunk_size=3)
+
+    assert path.read_bytes() == b"abcdef"
+
+
+def test_save_upload_removes_partial_file_when_limit_is_exceeded(tmp_path):
+    upload = UploadFile(filename="song.mp3", file=BytesIO(b"12345"))
+
+    with pytest.raises(UploadTooLargeError):
+        _save_upload(tmp_path, upload, max_bytes=4, chunk_size=2)
+
+    assert not (tmp_path / "song.mp3").exists()
 
 
 def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
@@ -68,6 +97,51 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert (job_dir / "preview.tja").exists()
 
 
+def test_web_analyze_oversized_upload_returns_413_and_removes_job(tmp_path, monkeypatch):
+    def fake_save_upload(job_dir, upload):
+        (job_dir / "partial.upload").write_bytes(b"partial")
+        raise UploadTooLargeError("Uploaded file exceeds the 100 MiB limit")
+
+    monkeypatch.setattr("tja_ai_chartgen.web._save_upload", fake_save_upload)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Large"},
+        files={"audio": ("large.mp3", b"12345", "audio/mpeg")},
+    )
+
+    assert response.status_code == 413
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_web_preview_oversized_second_upload_removes_whole_job(tmp_path, monkeypatch):
+    save_count = 0
+
+    def fake_save_upload(job_dir, upload):
+        nonlocal save_count
+        save_count += 1
+        path = job_dir / (upload.filename or "upload")
+        path.write_bytes(b"partial")
+        if save_count == 2:
+            raise UploadTooLargeError("Uploaded file exceeds the 100 MiB limit")
+        return path
+
+    monkeypatch.setattr("tja_ai_chartgen.web._save_upload", fake_save_upload)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/preview-tja",
+        files={
+            "tja": ("debug.tja", b"TITLE:Test", "text/plain"),
+            "audio": ("song.ogg", b"12345", "audio/ogg"),
+        },
+    )
+
+    assert response.status_code == 413
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_web_export_chart_saves_ogg_and_tja_with_matching_names(tmp_path, monkeypatch):
     _patch_web_audio_pipeline(monkeypatch)
     client = TestClient(create_app(output_dir=tmp_path / "jobs"))
@@ -97,6 +171,33 @@ def test_web_export_chart_saves_ogg_and_tja_with_matching_names(tmp_path, monkey
     assert (export_dir / "song.ogg").read_bytes() == b"fake ogg"
     assert (export_dir / "song.tja").exists()
     assert "WAVE:song.ogg" in (export_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
+
+
+def test_web_remote_mode_rejects_server_side_export(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    jobs_dir = tmp_path / "jobs"
+    client = TestClient(create_app(output_dir=jobs_dir, remote_mode=True))
+    analyze_response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert analyze_response.status_code == 200
+    job_id = next(jobs_dir.iterdir()).name
+    _wait_for_job_done(client, job_id)
+    export_dir = tmp_path / "must-not-exist"
+
+    response = client.post(
+        "/export-chart",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+        },
+    )
+
+    assert response.status_code == 403
+    assert not export_dir.exists()
 
 
 def test_web_progress_status_reports_failed_stage(tmp_path, monkeypatch):
@@ -193,6 +294,37 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     assert "data-game-preview" in response.text
     assert "TJA preview" not in response.text
     assert (tmp_path / job_id / "regenerated_1_2.tja").exists()
+
+
+def test_web_job_file_download_uses_public_artifact_allowlist(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    _wait_for_job_done(client, job_dir.name)
+    (job_dir / "ai_input_1_1.json").write_text("{}", encoding="utf-8")
+    (job_dir / "ai_output_1_1.json").write_text("{}", encoding="utf-8")
+    (job_dir / "ai_attempts_1_1.json").write_text("{}", encoding="utf-8")
+
+    assert client.get(f"/jobs/{job_dir.name}/song.ogg").status_code == 200
+    assert client.get(f"/jobs/{job_dir.name}/preview.tja").status_code == 200
+    for filename in (
+        "song.mp3",
+        "analysis.json",
+        "progress.json",
+        "chart_bars.json",
+        "chart_options.json",
+        "result.html",
+        "ai_input_1_1.json",
+        "ai_output_1_1.json",
+        "ai_attempts_1_1.json",
+    ):
+        assert client.get(f"/jobs/{job_dir.name}/{filename}").status_code == 404
 
 
 def test_web_analyze_uses_admin_ai_environment_when_request_credentials_are_empty(tmp_path, monkeypatch):

@@ -1,7 +1,8 @@
 import json
 import os
+import re
 from pathlib import Path
-from shutil import copy2
+from shutil import copy2, rmtree
 from threading import Thread
 from time import sleep
 from typing import Annotated
@@ -24,6 +25,8 @@ from tja_ai_chartgen.tja.writer import read_tja_text, render_tja, write_tja_text
 from tja_ai_chartgen.utils.paths import write_json
 
 DEFAULT_WEB_OUTPUT_DIR = Path("output/web")
+WEB_UPLOAD_MAX_BYTES = 100 * 1024 * 1024
+_WEB_UPLOAD_CHUNK_BYTES = 1024 * 1024
 WEB_ASSET_DIR = Path(__file__).resolve().parent / "assets"
 WEB_SOUND_FILES = {
     "taiko_don_16bit_44100.wav": "don",
@@ -43,6 +46,10 @@ WEB_STYLE_OPTIONS = (
     ("hybrid", "综合（hybrid）"),
     ("performance", "演出（performance）"),
 )
+
+
+class UploadTooLargeError(ValueError):
+    pass
 
 
 _PAGE_CSS = """
@@ -1694,10 +1701,15 @@ document.querySelectorAll('form').forEach((form) => {
 """
 
 
-def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
+def create_app(
+    output_dir: Path = DEFAULT_WEB_OUTPUT_DIR,
+    *,
+    remote_mode: bool = False,
+) -> FastAPI:
     load_dotenv()
     app = FastAPI(title="tja-ai-chartgen Web UI")
     app.state.output_dir = output_dir
+    app.state.remote_mode = remote_mode
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
@@ -1724,6 +1736,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
         ai_api_key: Annotated[str, Form()] = "",
         ai_repair_retries: Annotated[int, Form()] = 2,
     ) -> HTMLResponse:
+        job_dir: Path | None = None
         try:
             validate_density(density)
             validate_style(style)
@@ -1768,7 +1781,14 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                 daemon=True,
             ).start()
             return HTMLResponse(_progress_page(job_dir.name))
+        except UploadTooLargeError as error:
+            _remove_failed_job_dir(job_dir)
+            return HTMLResponse(
+                _page("Analysis failed", _error_notice(str(error))),
+                status_code=413,
+            )
         except Exception as error:  # noqa: BLE001 - Web boundary returns a readable error page.
+            _remove_failed_job_dir(job_dir)
             return HTMLResponse(
                 _page("Analysis failed", _error_notice(str(error))),
                 status_code=400,
@@ -1835,6 +1855,7 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
         tja: Annotated[UploadFile, File()],
         audio: Annotated[UploadFile, File()],
     ) -> HTMLResponse:
+        job_dir: Path | None = None
         try:
             job_dir = _new_job_dir(app.state.output_dir)
             tja_path = _save_upload(job_dir, tja)
@@ -1861,7 +1882,14 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                     + _regenerate_form(job_dir.name, len(analysis.bars), course),
                 )
             )
+        except UploadTooLargeError as error:
+            _remove_failed_job_dir(job_dir)
+            return HTMLResponse(
+                _page("TJA preview failed", _error_notice(str(error))),
+                status_code=413,
+            )
         except (UnicodeDecodeError, ValueError) as error:
+            _remove_failed_job_dir(job_dir)
             return HTMLResponse(
                 _page("TJA preview failed", _error_notice(str(error))),
                 status_code=400,
@@ -1873,7 +1901,10 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             job_dir = _job_dir(app.state.output_dir, job_id)
         except (FileNotFoundError, ValueError) as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        path = job_dir / Path(filename).name
+        safe_filename = Path(filename).name
+        if safe_filename != filename or not _is_public_job_file(job_dir, safe_filename):
+            raise HTTPException(status_code=404, detail=f"Job file not found: {filename}")
+        path = job_dir / safe_filename
         if not path.is_file():
             raise HTTPException(status_code=404, detail=f"Job file not found: {filename}")
         return FileResponse(path)
@@ -1982,6 +2013,14 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
         tja_filename: Annotated[str, Form()],
         output_dir: Annotated[str, Form()],
     ) -> HTMLResponse:
+        if app.state.remote_mode:
+            return HTMLResponse(
+                _page(
+                    "Export forbidden",
+                    _error_notice("Server-side export is disabled in remote mode."),
+                ),
+                status_code=403,
+            )
         try:
             job_dir = _job_dir(app.state.output_dir, job_id)
             analysis = SongAnalysis.model_validate_json(
@@ -2330,14 +2369,54 @@ def _job_dir(output_dir: Path, job_id: str) -> Path:
     return job_dir
 
 
-def _save_upload(job_dir: Path, audio: UploadFile) -> Path:
+def _remove_failed_job_dir(job_dir: Path | None) -> None:
+    if job_dir is not None:
+        rmtree(job_dir, ignore_errors=True)
+
+
+def _is_public_job_file(job_dir: Path, filename: str) -> bool:
+    if filename == "preview.tja":
+        return True
+    if re.fullmatch(r"(?:regenerated|edited)_\d+_\d+\.tja", filename):
+        return True
+    if not filename.endswith(".ogg"):
+        return False
+    analysis_path = job_dir / "analysis.json"
+    if not analysis_path.is_file():
+        return False
+    try:
+        analysis = SongAnalysis.model_validate_json(analysis_path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError):
+        return False
+    return filename == Path(analysis.ogg_file).name
+
+
+def _save_upload(
+    job_dir: Path,
+    audio: UploadFile,
+    *,
+    max_bytes: int = WEB_UPLOAD_MAX_BYTES,
+    chunk_size: int = _WEB_UPLOAD_CHUNK_BYTES,
+) -> Path:
     filename = Path(audio.filename or "upload.audio").name
     path = job_dir / filename
-    content = audio.file.read()
-    if not content:
-        raise ValueError("Uploaded audio is empty")
-    path.write_bytes(content)
-    return path
+    written = 0
+    try:
+        with path.open("wb") as output:
+            while chunk := audio.file.read(chunk_size):
+                written += len(chunk)
+                if written > max_bytes:
+                    limit_mib = max_bytes // (1024 * 1024)
+                    raise UploadTooLargeError(
+                        f"Uploaded file exceeds the {limit_mib} MiB limit"
+                    )
+                output.write(chunk)
+        if written == 0:
+            raise ValueError("Uploaded audio is empty")
+        return path
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def _save_ogg_upload(job_dir: Path, audio: UploadFile) -> Path:

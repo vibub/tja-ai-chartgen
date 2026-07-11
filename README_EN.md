@@ -152,9 +152,10 @@ Start the local Web UI MVP:
 
 ```bash
 tja-ai-chartgen web
+tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 ```
 
-The Web UI supports audio upload, OGG playback, BPM/OFFSET/time-signature override, analysis preview, and regenerating a selected bar range. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`.
+The Web UI supports audio upload, OGG playback, BPM/OFFSET/time-signature override, analysis preview, and regenerating a selected bar range. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`. Listening on a non-loopback address requires the explicit `--allow-remote` option. This option only acknowledges the exposure risk; it does not add authentication or multi-user data isolation, so public deployments still require authentication and access control in front of the app. Each uploaded file is limited to 100 MiB. Remote mode disables exports to request-selected server directories, and job downloads expose only preview OGG files and generated TJA files, not AI sidecars or internal state files.
 
 ## Output
 

@@ -152,9 +152,10 @@ tja-ai-chartgen generate-from-config output/generation_config.json
 
 ```bash
 tja-ai-chartgen web
+tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 ```
 
-Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则谱面片段。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。
+Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则谱面片段。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件。
 
 ## 输出文件
 
