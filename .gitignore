@@ -10,3 +10,6 @@ output/
 *.mp3
 .claude/
 CLAUDE.md
+
+docs/superpowers/
+docs/development-roadmap.md

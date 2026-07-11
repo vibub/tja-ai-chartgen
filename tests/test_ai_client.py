@@ -139,6 +139,8 @@ def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
 
 def test_generate_chart_bars_with_ai_passes_openai_compatible_connection_options(monkeypatch):
     payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://env.example.com/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
 
     def fake_completion(**kwargs):
         assert kwargs["model"] == "openai/custom-model"
@@ -158,8 +160,11 @@ def test_generate_chart_bars_with_ai_passes_openai_compatible_connection_options
         api_key="test-key",
     )
 
+    serialized_raw = json.dumps(raw)
     assert raw["api_base"] == "https://llm.example.com/v1"
     assert raw["api_key_provided"] is True
+    assert "test-key" not in serialized_raw
+    assert "env-key" not in serialized_raw
 
 
 def test_generate_chart_bars_with_ai_reads_openai_env_names(monkeypatch):

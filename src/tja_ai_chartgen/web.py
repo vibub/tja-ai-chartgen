@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from shutil import copy2
 from threading import Thread
@@ -1728,6 +1729,11 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             validate_style(style)
             if ai_repair_retries < 0:
                 raise ValueError("AI repair retries must be greater than or equal to 0")
+            resolved_ai_base_url, resolved_ai_api_key = (None, None)
+            if use_ai:
+                resolved_ai_base_url, resolved_ai_api_key = _resolve_web_ai_credentials(
+                    ai_base_url, ai_api_key
+                )
             job_dir = _new_job_dir(app.state.output_dir)
             input_path = _save_upload(job_dir, audio)
             _write_progress(
@@ -1755,8 +1761,8 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                     "special_notes": special_notes,
                     "use_ai": use_ai,
                     "ai_model": ai_model,
-                    "ai_base_url": ai_base_url,
-                    "ai_api_key": ai_api_key,
+                    "ai_base_url": resolved_ai_base_url,
+                    "ai_api_key": resolved_ai_api_key,
                     "ai_repair_retries": ai_repair_retries,
                 },
                 daemon=True,
@@ -1893,6 +1899,11 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
             validate_style(style)
             if ai_repair_retries < 0:
                 raise ValueError("AI repair retries must be greater than or equal to 0")
+            resolved_ai_base_url, resolved_ai_api_key = (None, None)
+            if use_ai:
+                resolved_ai_base_url, resolved_ai_api_key = _resolve_web_ai_credentials(
+                    ai_base_url, ai_api_key
+                )
             job_dir = _job_dir(app.state.output_dir, job_id)
             analysis = SongAnalysis.model_validate_json(
                 (job_dir / "analysis.json").read_text(encoding="utf-8")
@@ -1913,8 +1924,8 @@ def create_app(output_dir: Path = DEFAULT_WEB_OUTPUT_DIR) -> FastAPI:
                         style=style,
                         density=density,
                         model=_optional_form_text(ai_model),
-                        api_base=_optional_form_text(ai_base_url),
-                        api_key=_optional_form_text(ai_api_key),
+                        api_base=resolved_ai_base_url,
+                        api_key=resolved_ai_api_key,
                         ai_repair_retries=ai_repair_retries,
                         special_notes=special_notes,
                     )
@@ -2078,8 +2089,8 @@ def _run_analyze_job(
     special_notes: bool,
     use_ai: bool,
     ai_model: str,
-    ai_base_url: str,
-    ai_api_key: str,
+    ai_base_url: str | None,
+    ai_api_key: str | None,
     ai_repair_retries: int,
 ) -> None:
     try:
@@ -2141,8 +2152,8 @@ def _run_analyze_job(
                     style=style,
                     density=density,
                     model=_optional_form_text(ai_model),
-                    api_base=_optional_form_text(ai_base_url),
-                    api_key=_optional_form_text(ai_api_key),
+                    api_base=ai_base_url,
+                    api_key=ai_api_key,
                     ai_repair_retries=ai_repair_retries,
                     special_notes=special_notes,
                 )
@@ -2598,11 +2609,13 @@ def _generate_ai_chart_bars_for_web(
             attempt_log_path=ai_attempts_path,
         )
     except Exception as error:
-        _write_web_ai_failure(ai_attempts_path, error)
-        _write_web_ai_failure(ai_output_path, error)
-        raise
+        _write_web_ai_failure(ai_attempts_path, error, api_key)
+        _write_web_ai_failure(ai_output_path, error, api_key)
+        redacted_message = _redact_web_ai_value(str(error), api_key)
+        raise RuntimeError(redacted_message) from None
 
-    write_json(ai_output_path, ai_output)
+    _redact_web_ai_json_file(ai_attempts_path, api_key)
+    write_json(ai_output_path, _redact_web_ai_value(ai_output, api_key))
     sanitized = sanitize_ai_bars(
         ai_bars,
         expected_count=len(selected_bars),
@@ -2611,12 +2624,36 @@ def _generate_ai_chart_bars_for_web(
     return _reindex_chart_bars(sanitized, selected_bars)
 
 
-def _write_web_ai_failure(path: Path, error: Exception) -> None:
+def _write_web_ai_failure(path: Path, error: Exception, api_key: str | None) -> None:
     output = getattr(error, "output", None)
-    payload = {"error": str(error)}
+    payload = {"error": _redact_web_ai_value(str(error), api_key)}
     if isinstance(output, dict):
-        payload.update(output)
+        payload.update(_redact_web_ai_value(output, api_key))
     write_json(path, payload)
+
+
+def _redact_web_ai_value(value: object, api_key: str | None) -> object:
+    if isinstance(value, str):
+        return value.replace(api_key, "[REDACTED]") if api_key else value
+    if isinstance(value, dict):
+        return {
+            key.replace(api_key, "[REDACTED]") if isinstance(key, str) and api_key else key: _redact_web_ai_value(
+                item, api_key
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_web_ai_value(item, api_key) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_web_ai_value(item, api_key) for item in value)
+    return value
+
+
+def _redact_web_ai_json_file(path: Path, api_key: str | None) -> None:
+    if not path.is_file():
+        return
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    write_json(path, _redact_web_ai_value(payload, api_key))
 
 
 def _reindex_chart_bars(chart_bars: list[ChartBar], selected_bars: list[BarFeature]) -> list[ChartBar]:
@@ -2637,6 +2674,23 @@ def _reindex_chart_bars(chart_bars: list[ChartBar], selected_bars: list[BarFeatu
 def _optional_form_text(value: str) -> str | None:
     stripped = value.strip()
     return stripped or None
+
+
+def _resolve_web_ai_credentials(ai_base_url: str, ai_api_key: str) -> tuple[str | None, str | None]:
+    request_base_url = _optional_form_text(ai_base_url)
+    request_api_key = _optional_form_text(ai_api_key)
+    if request_base_url or request_api_key:
+        if not request_base_url or not request_api_key:
+            raise ValueError("Custom AI base URL and API key must be provided together")
+        return request_base_url, request_api_key
+
+    environment_base_url = _optional_form_text(os.getenv("OPENAI_BASE_URL", ""))
+    environment_api_key = _optional_form_text(os.getenv("OPENAI_API_KEY", ""))
+    if environment_base_url or environment_api_key:
+        if not environment_base_url or not environment_api_key:
+            raise ValueError("Server OPENAI_BASE_URL and OPENAI_API_KEY must be configured together")
+        return environment_base_url, environment_api_key
+    return None, None
 
 
 def _analysis_form() -> str:

@@ -1,5 +1,7 @@
+import json
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
@@ -193,8 +195,62 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     assert (tmp_path / job_id / "regenerated_1_2.tja").exists()
 
 
+def test_web_analyze_uses_admin_ai_environment_when_request_credentials_are_empty(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    _patch_web_threads_to_run_synchronously(monkeypatch)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://env.example.com/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "env-secret")
+
+    def fake_generate_chart_bars_with_ai(
+        analysis,
+        course,
+        level,
+        style,
+        density,
+        model,
+        *,
+        api_base=None,
+        api_key=None,
+        max_repair_attempts=2,
+        special_notes=False,
+        attempt_log_path=None,
+    ):
+        assert api_base == "https://env.example.com/v1"
+        assert api_key == "env-secret"
+        assert [bar.index for bar in analysis.bars] == [0]
+        return [ChartBar(index=0, notes="1000000000000000")], {
+            "final": {"bars": []},
+            "api_key_provided": True,
+        }
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={
+            "title": "Song Title",
+            "max_bars": "1",
+            "use_ai": "true",
+        },
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    assert status["status"] == "done"
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    assert "AI 增强已完成" in result.text
+
+
 def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
     _patch_web_audio_pipeline(monkeypatch, duration=4.0)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://server.example.com/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "server-key")
 
     def fake_generate_chart_bars_with_ai(
         analysis,
@@ -221,11 +277,26 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
         assert special_notes is True
         assert attempt_log_path is not None
         assert attempt_log_path.name == "ai_attempts_1_2.json"
+        attempt_log_path.write_text(
+            json.dumps(
+                {
+                    "request_api_key": "secret-key",
+                    "attempts": [{"error": {"api_key": "secret-key"}}],
+                    "secret-key": "provider-echo-key",
+                }
+            ),
+            encoding="utf-8",
+        )
         assert [bar.index for bar in analysis.bars] == [0, 1]
         return [
             ChartBar(index=0, notes="111100000000", time_signature="3/4"),
             ChartBar(index=1, notes="222200000000", time_signature="3/4"),
-        ], {"final": {"bars": []}, "api_key_provided": True}
+        ], {
+            "final": {"bars": []},
+            "api_key_provided": True,
+            "request_api_key": "secret-key",
+            "attempts": [{"response": {"api_key": "secret-key"}}],
+        }
 
     monkeypatch.setattr(
         "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
@@ -256,7 +327,8 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "正在制谱" in response.text
     job_dir = next(tmp_path.iterdir())
-    _wait_for_job_done(client, job_dir.name)
+    status = _wait_for_job_done(client, job_dir.name)
+    assert status["status"] == "done"
     result = client.get(f"/jobs/{job_dir.name}/result")
     assert "AI 增强已完成" in result.text
     assert (job_dir / "ai_input_1_2.json").exists()
@@ -267,6 +339,140 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
     assert "111100000000," in generated_text
     assert "222200000000," in generated_text
 
+    for artifact_path in job_dir.rglob("*"):
+        if artifact_path.is_file() and artifact_path.suffix in {".json", ".html", ".tja", ".txt"}:
+            encoding = TJA_FILE_ENCODING if artifact_path.suffix == ".tja" else "utf-8"
+            artifact_text = artifact_path.read_text(encoding=encoding)
+            assert "secret-key" not in artifact_text
+            assert "server-key" not in artifact_text
+
+
+def test_web_analyze_rejects_custom_ai_url_without_request_key(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    _patch_web_threads_to_run_synchronously(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "server-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://server.example.com/v1")
+
+    def fake_generate_chart_bars_with_ai(*args, **kwargs):
+        return [ChartBar(index=0, notes="1000000000000000")], {"final": {"bars": []}}
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={
+            "title": "Song Title",
+            "use_ai": "true",
+            "ai_base_url": "https://request.example.com/v1",
+            "ai_api_key": "",
+        },
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    created_jobs = list(tmp_path.iterdir())
+    if response.status_code == 200 and created_jobs:
+        _wait_for_job_done(client, created_jobs[0].name)
+
+    assert response.status_code == 400
+    assert "Custom AI base URL and API key must be provided together" in response.text
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("environment_name", "environment_value"),
+    [
+        ("OPENAI_API_KEY", "server-secret"),
+        ("OPENAI_BASE_URL", "https://server.example.com/v1"),
+    ],
+)
+def test_web_analyze_rejects_incomplete_server_ai_credentials(
+    tmp_path,
+    monkeypatch,
+    environment_name,
+    environment_value,
+):
+    _patch_web_audio_pipeline(monkeypatch)
+    _patch_web_threads_to_run_synchronously(monkeypatch)
+    monkeypatch.setattr("tja_ai_chartgen.web.load_dotenv", lambda: None)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setenv(environment_name, environment_value)
+
+    def fake_generate_chart_bars_with_ai(*args, **kwargs):
+        return [ChartBar(index=0, notes="1000000000000000")], {"final": {"bars": []}}
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "use_ai": "true"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 400
+    assert "Server OPENAI_BASE_URL and OPENAI_API_KEY must be configured together" in response.text
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_web_ai_failure_sidecars_redact_api_key(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    _patch_web_threads_to_run_synchronously(monkeypatch)
+    secret = "request-secret-value"
+
+    class ProviderError(RuntimeError):
+        def __init__(self, api_key):
+            super().__init__(f"provider rejected {api_key}")
+            self.output = {
+                "api_key": api_key,
+                "provider": {"authorization": f"Bearer {api_key}"},
+            }
+
+    def fake_generate_chart_bars_with_ai(*args, **kwargs):
+        raise ProviderError(kwargs["api_key"])
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={
+            "title": "Song Title",
+            "max_bars": "1",
+            "use_ai": "true",
+            "ai_base_url": "https://request.example.com/v1",
+            "ai_api_key": secret,
+        },
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    assert status["status"] == "done"
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    assert result.status_code == 200
+    assert "AI 增强失败，已自动回退到规则生成" in result.text
+    assert (job_dir / "ai_attempts_1_1.json").exists()
+    assert (job_dir / "ai_output_1_1.json").exists()
+
+    artifact_texts = [result.text]
+    for artifact_path in job_dir.rglob("*"):
+        if artifact_path.is_file() and artifact_path.suffix in {".json", ".html", ".tja", ".txt"}:
+            encoding = TJA_FILE_ENCODING if artifact_path.suffix == ".tja" else "utf-8"
+            artifact_texts.append(artifact_path.read_text(encoding=encoding))
+
+    assert all(secret not in artifact_text for artifact_text in artifact_texts)
+    assert any("[REDACTED]" in artifact_text for artifact_text in artifact_texts)
 
 
 def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
@@ -344,6 +550,49 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
     generated_text = (job_dir / "regenerated_1_2.tja").read_text(encoding=TJA_FILE_ENCODING)
     assert "1111000000000000," in generated_text
     assert "2222000000000000," in generated_text
+
+
+def test_web_regenerate_rejects_custom_ai_url_without_request_key(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    _patch_web_threads_to_run_synchronously(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "server-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://server.example.com/v1")
+    client = TestClient(create_app(output_dir=tmp_path))
+    analyze_response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert analyze_response.status_code == 200
+    job_id = next(tmp_path.iterdir()).name
+    _wait_for_job_done(client, job_id)
+
+    def fail_if_ai_is_called(*args, **kwargs):
+        pytest.fail("AI generation must not run for an invalid request")
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fail_if_ai_is_called,
+    )
+
+    response = client.post(
+        "/regenerate",
+        data={
+            "job_id": job_id,
+            "start_bar": "1",
+            "end_bar": "1",
+            "course": "Oni",
+            "level": "10",
+            "style": "hybrid",
+            "density": "high",
+            "use_ai": "true",
+            "ai_base_url": "https://request.example.com/v1",
+            "ai_api_key": "",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Custom AI base URL and API key must be provided together" in response.text
 
 
 def test_web_regenerate_shows_ai_option(tmp_path, monkeypatch):
@@ -504,6 +753,18 @@ def _wait_for_job_done(client, job_id, *, final_status="done"):
             raise AssertionError(last_status)
         time.sleep(0.02)
     raise AssertionError(last_status)
+
+
+def _patch_web_threads_to_run_synchronously(monkeypatch):
+    class SynchronousThread:
+        def __init__(self, *, target, kwargs=None, **thread_options):
+            self.target = target
+            self.kwargs = kwargs or {}
+
+        def start(self):
+            self.target(**self.kwargs)
+
+    monkeypatch.setattr("tja_ai_chartgen.web.Thread", SynchronousThread)
 
 
 def _patch_web_audio_pipeline(monkeypatch, duration=2.0):
