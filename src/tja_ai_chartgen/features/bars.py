@@ -166,11 +166,7 @@ def _map_meter_beats_to_grids(
 
 
 def _meter_beat_numbers(meter: MeterSpec) -> dict[int, int]:
-    grids_per_beat = meter.grids_per_bar / meter.beats_per_bar
-    return {
-        round((beat_number - 1) * grids_per_beat): beat_number
-        for beat_number in range(1, int(meter.beats_per_bar) + 1)
-    }
+    return {grid: beat_number for beat_number, grid in enumerate(meter.beat_grids, start=1)}
 
 
 def _strongest_onset_grids(strengths: dict[int, float]) -> list[int]:

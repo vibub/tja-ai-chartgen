@@ -81,6 +81,37 @@ def normalize_bpm(bpm: float) -> float:
     return round(bpm, 3)
 
 
+def _beatnet_quarter_note_bpm(pulse_bpm: float, time_signature: str) -> float:
+    if time_signature == "6/8":
+        pulse_bpm /= 2.0
+    return normalize_bpm(pulse_bpm)
+
+
+def _keep_compound_meter_quarter_note_tempo(
+    estimate: TempoOffsetEstimate,
+    fallback_bpm: float,
+    time_signature: str,
+) -> TempoOffsetEstimate:
+    if (
+        time_signature != "6/8"
+        or not estimate.accepted
+        or abs(estimate.bpm - (fallback_bpm * 2.0)) > BPM_SCAN_STEP
+    ):
+        return estimate
+
+    return TempoOffsetEstimate(
+        bpm=round(fallback_bpm, 3),
+        offset=estimate.offset,
+        normalized_support=estimate.normalized_support,
+        onset_count=estimate.onset_count,
+        time_coverage=estimate.time_coverage,
+        runner_up_bpm=estimate.runner_up_bpm,
+        runner_up_support=estimate.runner_up_support,
+        accepted=True,
+        reason="accepted_compound_meter_alias",
+    )
+
+
 def _fallback_resolves_double_tempo_alias(
     best_bpm: float,
     runner_up_bpm: float,
@@ -456,7 +487,7 @@ def _regular_beat_times(offset: float, bpm: float, duration: float) -> list[floa
 
 
 def _regular_beat_numbers(beat_count: int, time_signature: str) -> list[int]:
-    beats_per_bar = {"3/4": 3, "6/8": 6}.get(time_signature, 4)
+    beats_per_bar = 3 if time_signature in {"3/4", "6/8"} else 4
     return [(index % beats_per_bar) + 1 for index in range(beat_count)]
 
 
@@ -625,7 +656,8 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         if later > earlier
     ]
     if positive_intervals:
-        bpm = normalize_bpm(60.0 / float(np.mean(positive_intervals)))
+        pulse_bpm = 60.0 / float(np.mean(positive_intervals))
+        bpm = _beatnet_quarter_note_bpm(pulse_bpm, time_signature)
 
     estimate = _estimate_tempo_and_offset_from_onsets(
         raw.onset_times,
@@ -635,6 +667,7 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         fallback_bpm=bpm,
         duration=raw.duration,
     )
+    estimate = _keep_compound_meter_quarter_note_tempo(estimate, bpm, time_signature)
     if estimate.accepted:
         bpm, offset = estimate.bpm, estimate.offset
 

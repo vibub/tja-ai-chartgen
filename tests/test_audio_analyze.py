@@ -17,7 +17,9 @@ from tja_ai_chartgen.audio.analyze import (
     merge_beatnet_output,
     normalize_bpm,
 )
-from tja_ai_chartgen.tja.model import TempoAnalysisDecision
+from tja_ai_chartgen.features.bars import build_bar_features
+from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, TempoAnalysisDecision, TjaChart
+from tja_ai_chartgen.tja.writer import render_tja
 
 
 def test_normalize_bpm_keeps_taiko_friendly_range():
@@ -468,6 +470,135 @@ def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
     assert updated.tempo_analysis.accepted is False
     assert updated.tempo_analysis.reason == "insufficient_onsets"
     assert updated.tempo_analysis.selected_source == "beatnet"
+
+
+def test_merge_beatnet_output_converts_six_eight_pulses_to_quarter_note_bpm():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0.25, 0.75],
+        onset_times=[],
+        onset_strengths=[],
+        duration=3.25,
+        offset=0.25,
+    )
+
+    updated = merge_beatnet_output(
+        raw,
+        [
+            [0.25, 1],
+            [0.5, 2],
+            [0.75, 3],
+            [1.0, 4],
+            [1.25, 5],
+            [1.5, 6],
+            [1.75, 1],
+        ],
+    )
+
+    assert updated.time_signature == "6/8"
+    assert updated.bpm == 120
+    assert updated.beat_times[:4] == [0.25, 0.75, 1.25, 1.75]
+    assert updated.beat_numbers[:4] == [1, 2, 3, 1]
+    assert updated.downbeat_times[:2] == [0.25, 1.75]
+
+
+def test_six_eight_beatnet_analysis_builds_one_full_length_tja_bar():
+    raw = AudioAnalysisRaw(
+        bpm=180,
+        beat_times=[],
+        onset_times=[0.25, 1.0],
+        onset_strengths=[],
+        duration=1.75,
+        offset=0.25,
+    )
+    updated = merge_beatnet_output(
+        raw,
+        [
+            [0.25, 1],
+            [0.5, 2],
+            [0.75, 3],
+            [1.0, 4],
+            [1.25, 5],
+            [1.5, 6],
+        ],
+    )
+
+    bars = build_bar_features(updated)
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title="Six Eight Song",
+            wave="song.ogg",
+            bpm=updated.bpm,
+            offset=updated.offset,
+        ),
+        bars=[
+            ChartBar(
+                index=bar.index,
+                notes="100000100000",
+                time_signature=bar.time_signature,
+            )
+            for bar in bars
+        ],
+    )
+    tja = render_tja(chart)
+
+    assert updated.bpm == 120
+    assert len(bars) == 1
+    assert bars[0].start_time == 0.25
+    assert bars[0].end_time == 1.75
+    assert bars[0].beat_grids == [0, 6]
+    assert "BPM:120" in tja
+    assert "#MEASURE 3/4\n100000100000," in tja
+
+
+def test_merge_beatnet_output_keeps_six_eight_onset_grid_at_quarter_note_tempo():
+    eighth_interval = 1.0 / 3.0
+    raw = AudioAnalysisRaw(
+        bpm=180,
+        beat_times=[],
+        onset_times=[0.2 + (index * eighth_interval) for index in range(24)],
+        onset_strengths=[],
+        duration=8.0,
+        offset=0.2,
+        sample_rate=1_000,
+    )
+    beatnet_output = [
+        [0.2 + (index * eighth_interval), (index % 6) + 1]
+        for index in range(19)
+    ]
+
+    updated = merge_beatnet_output(raw, beatnet_output)
+
+    assert updated.time_signature == "6/8"
+    assert updated.bpm == 90
+    assert updated.beat_times[:3] == pytest.approx([0.2, 0.866667, 1.533333])
+    assert updated.downbeat_times[:2] == pytest.approx([0.2, 2.2])
+
+
+def test_merge_beatnet_output_keeps_three_four_pulses_as_quarter_note_bpm():
+    raw = AudioAnalysisRaw(
+        bpm=100,
+        beat_times=[0.2, 0.8],
+        onset_times=[],
+        onset_strengths=[],
+        duration=4.0,
+        offset=0.2,
+    )
+
+    updated = merge_beatnet_output(
+        raw,
+        [
+            [0.2, 1],
+            [0.8, 2],
+            [1.4, 3],
+            [2.0, 1],
+        ],
+    )
+
+    assert updated.time_signature == "3/4"
+    assert updated.bpm == 100
+    assert updated.beat_times[:4] == [0.2, 0.8, 1.4, 2.0]
+    assert updated.downbeat_times[:2] == [0.2, 2.0]
 
 
 def test_merge_beatnet_output_refines_timing_with_onset_grid():

@@ -61,6 +61,24 @@ def test_render_tja_outputs_measure_for_three_four_bars():
     assert "100010001000,\n#MEASURE 1/1\n#END" in text
 
 
+def test_render_tja_outputs_equivalent_measure_for_six_eight_bars():
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title="Six Eight Song",
+            wave="song.ogg",
+            bpm=120.0,
+            offset=0.0,
+        ),
+        bars=[ChartBar(index=0, notes="100000100000", time_signature="6/8")],
+    )
+
+    text = render_tja(chart)
+
+    assert "BPM:120" in text
+    assert "#MEASURE 3/4\n100000100000," in text
+    assert "100000100000,\n#MEASURE 1/1\n#END" in text
+
+
 def test_render_tja_outputs_balloon_header():
     chart = TjaChart(
         metadata=ChartMetadata(

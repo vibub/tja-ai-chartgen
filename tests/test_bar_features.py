@@ -141,6 +141,38 @@ def test_build_bar_features_respects_max_bars():
     assert len(bars) == 1
 
 
+def test_build_bar_features_distinguishes_three_four_and_six_eight_beats():
+    three_four = build_bar_features(
+        AudioAnalysisRaw(
+            bpm=120,
+            beat_times=[],
+            onset_times=[0.0, 0.5, 1.0],
+            onset_strengths=[],
+            duration=1.5,
+            offset=0.0,
+            time_signature="3/4",
+        )
+    )[0]
+    six_eight = build_bar_features(
+        AudioAnalysisRaw(
+            bpm=120,
+            beat_times=[],
+            onset_times=[0.0, 0.75],
+            onset_strengths=[],
+            duration=1.5,
+            offset=0.0,
+            time_signature="6/8",
+        )
+    )[0]
+
+    assert three_four.beat_grids == [0, 4, 8]
+    assert [feature.beat for feature in three_four.grid_features if feature.beat] == [1, 2, 3]
+    assert six_eight.beat_grids == [0, 6]
+    assert six_eight.accent_16 == [0, 6]
+    assert [feature.beat for feature in six_eight.grid_features if feature.beat] == [1, 2]
+    assert six_eight.downbeat_grid == 0
+
+
 def test_build_bar_features_supports_three_four_meter():
     raw = AudioAnalysisRaw(
         bpm=120,

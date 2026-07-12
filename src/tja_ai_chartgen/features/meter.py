@@ -7,6 +7,7 @@ class MeterSpec:
     beats_per_bar: float
     grids_per_bar: int
     measure_ratio: str
+    beat_grids: tuple[int, ...]
     accent_grids: set[int]
 
 
@@ -16,6 +17,7 @@ METER_SPECS = {
         beats_per_bar=4.0,
         grids_per_bar=16,
         measure_ratio="1/1",
+        beat_grids=(0, 4, 8, 12),
         accent_grids={0, 4, 8, 12},
     ),
     "3/4": MeterSpec(
@@ -23,6 +25,7 @@ METER_SPECS = {
         beats_per_bar=3.0,
         grids_per_bar=12,
         measure_ratio="3/4",
+        beat_grids=(0, 4, 8),
         accent_grids={0, 4, 8},
     ),
     "6/8": MeterSpec(
@@ -30,7 +33,8 @@ METER_SPECS = {
         beats_per_bar=3.0,
         grids_per_bar=12,
         measure_ratio="3/4",
-        accent_grids={0, 4, 8},
+        beat_grids=(0, 6),
+        accent_grids={0, 6},
     ),
 }
 
