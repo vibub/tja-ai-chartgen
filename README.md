@@ -17,6 +17,27 @@
 pip install -e ".[dev]"
 ```
 
+## 开发验证
+
+运行代码检查和完整测试：
+
+```bash
+ruff check .
+pytest
+```
+
+真实音频流水线测试会使用 ffmpeg 转换项目自带的程序化 4/4 点击轨，并继续执行 librosa 分析、小节特征构建和 TJA 导出：
+
+```bash
+pytest tests/test_audio_pipeline_integration.py -v
+```
+
+测试音频位于 `tests/fixtures/audio/`，完全由项目代码合成，不包含第三方录音或版权音乐。可以使用以下命令确定性重建：
+
+```bash
+python tests/fixtures/audio/rebuild_click_fixtures.py
+```
+
 ## 使用方式
 
 查看已安装的 CLI 版本：

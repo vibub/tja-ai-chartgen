@@ -30,6 +30,22 @@ For focused TJA writer checks:
 pytest tests/test_tja_writer.py -v
 ```
 
+For the real ffmpeg, librosa, bar-feature, and TJA export pipeline:
+
+```bash
+pytest tests/test_audio_pipeline_integration.py -v
+```
+
+## Golden Audio Fixtures
+
+The WAV files under `tests/fixtures/audio/` are deterministic click tracks generated entirely by project code. They contain no third-party recordings or copyrighted music. Rebuild them with:
+
+```bash
+python tests/fixtures/audio/rebuild_click_fixtures.py
+```
+
+When adding or changing an audio fixture, keep it small, use a clearly licensed or programmatically generated source, and update the rebuild script and expected integration-test parameters together. Do not replace these fixtures with copyrighted songs or samples.
+
 ## Contribution Scope
 
 This project is an MVP for AI-assisted `.tja` chart draft generation. Contributions are easiest to review when they are focused on one behavior or one documentation improvement at a time.
