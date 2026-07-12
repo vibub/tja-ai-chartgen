@@ -1,3 +1,7 @@
+import sys
+import types
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -6,6 +10,7 @@ from tja_ai_chartgen.audio.analyze import (
     _estimate_tempo_and_offset_from_onsets,
     _regular_beat_times,
     apply_analysis_overrides,
+    enhance_with_beatnet,
     estimate_time_signature,
     merge_beatnet_output,
     normalize_bpm,
@@ -183,6 +188,109 @@ def test_merge_beatnet_output_keeps_raw_when_output_is_empty():
     )
 
     assert merge_beatnet_output(raw, []) is raw
+
+
+def test_merge_beatnet_output_ignores_nan_beat_number_rows():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0.1, 0.6],
+        onset_times=[],
+        onset_strengths=[],
+        duration=4.0,
+        offset=0.1,
+    )
+
+    updated = merge_beatnet_output(
+        raw,
+        [
+            [0.25, 1],
+            [0.5, np.nan],
+            [0.75, 2],
+            [1.25, 3],
+            [1.75, 1],
+        ],
+    )
+
+    assert updated.analyzer == "beatnet+librosa+onset-grid"
+    assert updated.bpm == 120
+    assert updated.downbeat_times[:2] == [0.25, 1.75]
+
+
+def test_merge_beatnet_output_ignores_infinite_time_rows():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0.1, 0.6],
+        onset_times=[],
+        onset_strengths=[],
+        duration=4.0,
+        offset=0.1,
+    )
+
+    updated = merge_beatnet_output(
+        raw,
+        [
+            [0.25, 1],
+            [np.inf, 2],
+            [0.75, 2],
+            [1.25, 3],
+            [1.75, 1],
+        ],
+    )
+
+    assert updated.analyzer == "beatnet+librosa+onset-grid"
+    assert updated.bpm == 120
+    assert updated.downbeat_times[:2] == [0.25, 1.75]
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        [[0.25, 1], [0.75]],
+        np.array([[0.25, 1], ["invalid", 2]], dtype=object),
+    ],
+)
+def test_merge_beatnet_output_keeps_raw_for_invalid_array_structure(output):
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0.1, 0.6],
+        onset_times=[],
+        onset_strengths=[],
+        duration=2.0,
+        offset=0.1,
+    )
+
+    assert merge_beatnet_output(raw, output) is raw
+
+
+def test_enhance_with_beatnet_keeps_raw_when_merge_fails(monkeypatch):
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0.1, 0.6],
+        onset_times=[],
+        onset_strengths=[],
+        duration=2.0,
+        offset=0.1,
+    )
+
+    class FakeBeatNet:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def process(self, input_path):
+            return [[0.25, 1], [0.75, 2]]
+
+    beatnet_package = types.ModuleType("BeatNet")
+    beatnet_module = types.ModuleType("BeatNet.BeatNet")
+    beatnet_module.BeatNet = FakeBeatNet
+    monkeypatch.setitem(sys.modules, "BeatNet", beatnet_package)
+    monkeypatch.setitem(sys.modules, "BeatNet.BeatNet", beatnet_module)
+
+    def fail_merge(raw_analysis, output):
+        raise ValueError("invalid BeatNet output")
+
+    monkeypatch.setattr("tja_ai_chartgen.audio.analyze.merge_beatnet_output", fail_merge)
+
+    assert enhance_with_beatnet(Path("song.ogg"), raw) is raw
 
 
 def test_estimate_time_signature_defaults_to_four_four_for_unknown_meter():

@@ -364,29 +364,38 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
 def enhance_with_beatnet(input_path: Path, raw: AudioAnalysisRaw) -> AudioAnalysisRaw:
     try:
         from BeatNet.BeatNet import BeatNet
-    except ImportError:
-        return raw
 
-    try:
         estimator = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
         output = estimator.process(str(input_path))
+        return merge_beatnet_output(raw, output)
     except Exception:  # noqa: BLE001 - BeatNet is an optional enhancement.
         return raw
 
-    return merge_beatnet_output(raw, output)
+
+def _normalize_beatnet_rows(output: Any) -> np.ndarray | None:
+    try:
+        rows = np.asarray(output, dtype=float)
+    except (TypeError, ValueError):
+        return None
+
+    if rows.ndim != 2 or rows.shape[0] == 0 or rows.shape[1] < 2:
+        return None
+    return rows[:, :2]
 
 
 def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw:
-    rows = np.asarray(output)
-    if rows.ndim != 2 or rows.shape[0] == 0 or rows.shape[1] < 2:
+    rows = _normalize_beatnet_rows(output)
+    if rows is None:
         return raw
 
     beat_times: list[float] = []
     beat_numbers: list[int] = []
-    for row in rows:
-        time = float(row[0])
-        beat_number = int(round(float(row[1])))
-        if not np.isfinite(time) or beat_number < 1:
+    for time_value, beat_number_value in rows:
+        if not np.isfinite(time_value) or not np.isfinite(beat_number_value):
+            continue
+        time = float(time_value)
+        beat_number = int(round(float(beat_number_value)))
+        if beat_number < 1:
             continue
         beat_times.append(time)
         beat_numbers.append(beat_number)
