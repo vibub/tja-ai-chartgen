@@ -34,7 +34,6 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
         bar_index, grid_index = _time_to_bar_grid(
             onset_time,
             analysis_start=analysis_start,
-            bar_length=bar_length,
             grid_length=grid_length,
             grids_per_bar=meter.grids_per_bar,
             bar_count=bar_count,
@@ -56,7 +55,6 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
         bar_index, grid_index = _time_to_bar_grid(
             frame_time,
             analysis_start=analysis_start,
-            bar_length=bar_length,
             grid_length=grid_length,
             grids_per_bar=meter.grids_per_bar,
             bar_count=bar_count,
@@ -127,7 +125,6 @@ def _time_to_bar_grid(
     time: float,
     *,
     analysis_start: float,
-    bar_length: float,
     grid_length: float,
     grids_per_bar: int,
     bar_count: int,
@@ -136,13 +133,11 @@ def _time_to_bar_grid(
     if relative_time < 0:
         return None, None
 
-    bar_index = int(relative_time // bar_length)
+    absolute_grid = round(relative_time / grid_length)
+    bar_index, grid_index = divmod(absolute_grid, grids_per_bar)
     if bar_index < 0 or bar_index >= bar_count:
         return None, None
 
-    time_in_bar = relative_time - (bar_index * bar_length)
-    grid_index = round(time_in_bar / grid_length)
-    grid_index = max(0, min(grids_per_bar - 1, grid_index))
     return bar_index, grid_index
 
 
