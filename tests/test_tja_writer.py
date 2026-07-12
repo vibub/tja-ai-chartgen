@@ -1,5 +1,6 @@
 import pytest
 
+from tja_ai_chartgen.tja.chart_validator import ChartValidationError
 from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, TjaChart
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING, TjaEncodingError, read_tja_text, render_tja, write_tja_text
 
@@ -129,3 +130,39 @@ def test_write_tja_text_reports_shift_jis_incompatible_character(tmp_path):
     assert "'乌'" in message
     assert "U+4E4C" in message
     assert not path.exists()
+
+
+def test_render_tja_rejects_missing_balloon_count_instead_of_defaulting():
+    chart = TjaChart(
+        metadata=ChartMetadata(title="Song Title", wave="song.ogg", bpm=120.0, offset=0.0),
+        bars=[ChartBar(index=0, notes="7000000080000000")],
+    )
+
+    with pytest.raises(ChartValidationError) as error:
+        render_tja(chart)
+
+    assert any(issue.code == "missing-balloon-count" for issue in error.value.issues)
+
+
+def test_render_tja_rejects_extra_balloon_count_instead_of_ignoring_it():
+    chart = TjaChart(
+        metadata=ChartMetadata(title="Song Title", wave="song.ogg", bpm=120.0, offset=0.0),
+        bars=[ChartBar(index=0, notes="1000100010001000", balloon_counts=[8])],
+    )
+
+    with pytest.raises(ChartValidationError) as error:
+        render_tja(chart)
+
+    assert any(issue.code == "extra-balloon-count" for issue in error.value.issues)
+
+
+def test_render_tja_rejects_invalid_chart_before_rendering_text():
+    chart = TjaChart(
+        metadata=ChartMetadata(title="Song Title", wave="song.ogg", bpm=120.0, offset=0.0),
+        bars=[ChartBar(index=0, notes="9000100010001000")],
+    )
+
+    with pytest.raises(ChartValidationError) as error:
+        render_tja(chart)
+
+    assert "unsupported note character '9'" in str(error.value)

@@ -2,9 +2,9 @@ from pathlib import Path
 from unicodedata import normalize
 
 from tja_ai_chartgen.features.meter import get_meter_spec
+from tja_ai_chartgen.tja.chart_validator import validate_chart
 from tja_ai_chartgen.tja.model import ChartBar, TjaChart
 
-DEFAULT_BALLOON_COUNT = 8
 TJA_FILE_ENCODING = "cp932"
 
 
@@ -13,6 +13,7 @@ class TjaEncodingError(ValueError):
 
 
 def render_tja(chart: TjaChart) -> str:
+    validate_chart(chart)
     metadata = chart.metadata
     lines = [
         f"TITLE:{metadata.title}",
@@ -101,11 +102,4 @@ def _format_tja_offset(internal_offset: float) -> float:
 
 
 def _collect_balloon_counts(bars: list[ChartBar]) -> list[int]:
-    counts: list[int] = []
-    for bar in bars:
-        for balloon_index, _ in enumerate(position for position, note in enumerate(bar.notes) if note == "7"):
-            if balloon_index < len(bar.balloon_counts):
-                counts.append(bar.balloon_counts[balloon_index])
-            else:
-                counts.append(DEFAULT_BALLOON_COUNT)
-    return counts
+    return [count for bar in bars for count in bar.balloon_counts]
