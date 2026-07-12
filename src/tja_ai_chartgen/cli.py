@@ -17,6 +17,7 @@ from tja_ai_chartgen.features.sections import assign_sections
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
 from tja_ai_chartgen.rules.styles import validate_style
 from tja_ai_chartgen.tja.model import ChartMetadata, SongAnalysis, TjaChart
+from tja_ai_chartgen.tja.quality import build_quality_report
 from tja_ai_chartgen.tja.validator import ValidationIssue, validate_tja_text
 from tja_ai_chartgen.tja.writer import TjaEncodingError, render_tja, write_tja_text
 from tja_ai_chartgen.utils.paths import write_json
@@ -277,6 +278,7 @@ def run_generate(
     generation_config_path = output_dir / "generation_config.json"
     ai_input_path = output_dir / "ai_input.json"
     ai_output_path = output_dir / "ai_output.json"
+    quality_report_path = output_dir / "quality_report.json"
     report_path = output_dir / "report.txt"
 
     generation_config = _build_generation_config(
@@ -343,6 +345,9 @@ def run_generate(
         course_tja_path = _course_tja_path(tja_path, course_name, all_courses)
         course_ai_input_path = _course_sidecar_path(ai_input_path, course_name, all_courses)
         course_ai_output_path = _course_sidecar_path(ai_output_path, course_name, all_courses)
+        course_quality_report_path = _course_sidecar_path(
+            quality_report_path, course_name, all_courses
+        )
         course_ai_attempts_path = course_ai_output_path.with_name(
             course_ai_output_path.name.replace("ai_output", "ai_attempts", 1)
         )
@@ -405,6 +410,7 @@ def run_generate(
                 special_notes=special_notes,
             )
 
+        write_json(course_quality_report_path, build_quality_report(chart_bars, bars))
         chart = TjaChart(
             metadata=ChartMetadata(
                 title=title,

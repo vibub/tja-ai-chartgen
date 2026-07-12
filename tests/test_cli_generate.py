@@ -39,6 +39,9 @@ def test_generate_without_ai_writes_outputs(tmp_path, monkeypatch):
     assert (output_dir / "analysis.json").exists()
     assert (output_dir / "generation_config.json").exists()
     assert (output_dir / "report.txt").exists()
+    quality_report = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
+    assert quality_report["bar_count"] == 1
+    assert "density_compliance_rate" in quality_report
     assert "Generation config:" in (output_dir / "report.txt").read_text(encoding="utf-8")
 
 
@@ -394,6 +397,8 @@ def test_generate_all_courses_writes_four_tja_files(tmp_path, monkeypatch):
         tja_text = (output_dir / f"song_{course}.tja").read_text(encoding=TJA_FILE_ENCODING)
         assert f"COURSE:{course.title() if course != 'oni' else 'Oni'}" in tja_text
         assert f"LEVEL:{level}" in tja_text
+        quality_path = output_dir / f"quality_report_{course}.json"
+        assert json.loads(quality_path.read_text(encoding="utf-8"))["bar_count"] == 1
 
 
 def test_generate_rejects_invalid_density(tmp_path):
@@ -634,6 +639,9 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
     assert saved_config["ai_transport_retries"] == 0
     assert "ai_api_key" not in saved_config
     assert "secret-key" not in (output_dir / "generation_config.json").read_text(encoding="utf-8")
+    quality_text = (output_dir / "quality_report.json").read_text(encoding="utf-8")
+    assert json.loads(quality_text)["bar_count"] == 1
+    assert "secret-key" not in quality_text
 
 
 def test_generate_with_ai_records_default_model(tmp_path, monkeypatch):
@@ -861,7 +869,10 @@ def test_generate_with_ai_provider_failure_writes_structured_sidecars_and_falls_
     assert attempts["fallback_reason"] == "transport_retries_exhausted"
     assert output["fallback_reason"] == "transport_retries_exhausted"
     assert "provider timed out" in report
+    quality_text = (output_dir / "quality_report.json").read_text(encoding="utf-8")
+    assert json.loads(quality_text)["bar_count"] == 1
     assert secret not in json.dumps(attempts)
+    assert secret not in quality_text
     assert secret not in json.dumps(output)
     assert secret not in report
 

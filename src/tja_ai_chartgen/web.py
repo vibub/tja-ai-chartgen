@@ -22,6 +22,7 @@ from tja_ai_chartgen.features.sections import assign_sections
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
 from tja_ai_chartgen.rules.styles import validate_style
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ChartMetadata, SongAnalysis, TjaChart
+from tja_ai_chartgen.tja.quality import build_quality_report
 from tja_ai_chartgen.tja.writer import read_tja_text, render_tja, write_tja_text
 from tja_ai_chartgen.utils.paths import write_json
 
@@ -1984,6 +1985,10 @@ def create_app(
                     density=density,
                     special_notes=special_notes,
                 )
+            write_json(
+                job_dir / f"quality_report_{start_bar}_{end_bar}.json",
+                build_quality_report(chart_bars, selected_bars),
+            )
             chart = TjaChart(
                 metadata=ChartMetadata(
                     title=analysis.title,
@@ -2232,6 +2237,10 @@ def _run_analyze_job(
                 density=density,
                 special_notes=special_notes,
             )
+        write_json(
+            job_dir / f"quality_report_1_{len(bars)}.json",
+            build_quality_report(chart_bars, bars),
+        )
         write_json(job_dir / _PROGRESS_CHART_BARS_JSON, chart_bars)
         write_json(
             job_dir / _PROGRESS_CHART_OPTIONS_JSON,

@@ -18,6 +18,13 @@ from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
+from tja_ai_chartgen.tja.quality import (
+    empty_runs,
+    normalized_hit_count,
+    note_color_metrics,
+    pattern_counts,
+    playable_hit_count,
+)
 
 ALLOWED_AI_NOTES = set("01234578")
 FALLBACK_AI_PATTERN = "1000100010001000"
@@ -495,7 +502,7 @@ def _validate_edge_silence(bars: list[ChartBar], expected_bars: list[BarFeature]
     for index in sorted(edge_silence_indexes(expected_bars)):
         if index >= len(bars):
             continue
-        if _playable_hit_count(bars[index].notes) == 0:
+        if playable_hit_count(bars[index].notes) == 0:
             continue
         issues.append(
             f"bars[{index}].notes must be all 0 because the matching input bar is "
@@ -515,7 +522,7 @@ def _validate_chart_quality(
     issues: list[str] = []
     expected_bars = analysis.bars[: len(bars)]
     density_hints = build_density_hints(expected_bars)
-    hit_counts = [_playable_hit_count(bar.notes) for bar in bars]
+    hit_counts = [playable_hit_count(bar.notes) for bar in bars]
     issues.extend(_density_hint_issues(hit_counts, density_hints))
 
     if len(bars) < 8:
@@ -523,7 +530,7 @@ def _validate_chart_quality(
 
     quality_density = _quality_density(density, course, level)
     normalized_hit_counts = [
-        _normalized_hit_count(bar.notes, expected_length=_expected_note_length(analysis, index))
+        normalized_hit_count(bar.notes, expected_length=_expected_note_length(analysis, index))
         for index, bar in enumerate(bars)
     ]
     quality_indexes = [
@@ -578,16 +585,6 @@ def _validate_chart_quality(
     return issues
 
 
-def _playable_hit_count(notes: str) -> int:
-    return sum(character != "0" for character in notes)
-
-
-def _normalized_hit_count(notes: str, expected_length: int) -> float:
-    if expected_length <= 0:
-        return 0.0
-    return _playable_hit_count(notes) * 16 / expected_length
-
-
 def _quality_density(density: str, course: str, level: int) -> str:
     if density in {"high", "max"}:
         return density
@@ -633,25 +630,8 @@ def _note_color_balance_issue(
     *,
     quality_indexes: list[int],
 ) -> str | None:
-    normal_don = 0
-    normal_ka = 0
-    longest_don_run = 0
-    current_don_run = 0
-
-    for index in quality_indexes:
-        if index >= len(bars):
-            continue
-        for note in bars[index].notes:
-            if note == "1":
-                normal_don += 1
-                current_don_run += 1
-                longest_don_run = max(longest_don_run, current_don_run)
-            elif note == "2":
-                normal_ka += 1
-                current_don_run = 0
-            elif note != "0":
-                current_don_run = 0
-
+    quality_bars = [bars[index] for index in quality_indexes if index < len(bars)]
+    normal_don, normal_ka, longest_don_run = note_color_metrics(quality_bars)
     normal_notes = normal_don + normal_ka
     if normal_notes < 32:
         return None
@@ -674,37 +654,11 @@ def _empty_runs_in_quality_bars(
     hit_counts: list[int],
     quality_indexes: list[int],
 ) -> list[tuple[int, int]]:
-    runs: list[tuple[int, int]] = []
-    start: int | None = None
-    previous_index: int | None = None
-
-    for index in quality_indexes:
-        continues_run = previous_index is not None and index == previous_index + 1
-        if not continues_run and start is not None and previous_index is not None:
-            runs.append((start, previous_index))
-            start = None
-
-        if hit_counts[index] == 0:
-            if start is None:
-                start = index
-        elif start is not None and previous_index is not None:
-            runs.append((start, previous_index))
-            start = None
-
-        previous_index = index
-
-    if start is not None and previous_index is not None:
-        runs.append((start, previous_index))
-    return runs
+    return empty_runs(hit_counts, quality_indexes)
 
 
 def _overused_patterns(bars: list[ChartBar]) -> list[tuple[str, int]]:
-    counts: dict[str, int] = {}
-    for bar in bars:
-        if _playable_hit_count(bar.notes) == 0:
-            continue
-        counts[bar.notes] = counts.get(bar.notes, 0) + 1
-
+    counts = pattern_counts(bars)
     limit = max(4, len(bars) // 12)
     return sorted(
         ((pattern, count) for pattern, count in counts.items() if count > limit),

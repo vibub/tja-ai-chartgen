@@ -103,6 +103,8 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert analysis["tempo_analysis"]["accepted"] is False
     assert analysis["tempo_analysis"]["selected_source"] == "librosa"
     assert analysis["tempo_analysis"]["reason"] == "insufficient_onsets"
+    quality_report = json.loads((job_dir / "quality_report_1_1.json").read_text(encoding="utf-8"))
+    assert quality_report["bar_count"] == 1
     assert (job_dir / "preview.tja").exists()
 
 
@@ -303,6 +305,10 @@ def test_web_regenerate_selected_bars(tmp_path, monkeypatch):
     assert "data-game-preview" in response.text
     assert "TJA preview" not in response.text
     assert (tmp_path / job_id / "regenerated_1_2.tja").exists()
+    quality_report = json.loads(
+        (tmp_path / job_id / "quality_report_1_2.json").read_text(encoding="utf-8")
+    )
+    assert quality_report["bar_count"] == 2
 
 
 def test_web_job_file_download_uses_public_artifact_allowlist(tmp_path, monkeypatch):
@@ -332,6 +338,7 @@ def test_web_job_file_download_uses_public_artifact_allowlist(tmp_path, monkeypa
         "ai_input_1_1.json",
         "ai_output_1_1.json",
         "ai_attempts_1_1.json",
+        "quality_report_1_1.json",
     ):
         assert client.get(f"/jobs/{job_dir.name}/{filename}").status_code == 404
 
@@ -656,6 +663,7 @@ def test_web_ai_failure_sidecars_redact_api_key(tmp_path, monkeypatch):
     assert "AI 增强失败，已自动回退到规则生成" in result.text
     assert (job_dir / "ai_attempts_1_1.json").exists()
     assert (job_dir / "ai_output_1_1.json").exists()
+    assert (job_dir / "quality_report_1_1.json").exists()
     attempts = json.loads((job_dir / "ai_attempts_1_1.json").read_text(encoding="utf-8"))
     assert attempts["fallback_reason"] == "transport_retries_exhausted"
 
