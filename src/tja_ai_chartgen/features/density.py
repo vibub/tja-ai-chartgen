@@ -68,7 +68,7 @@ def _density_hint_for_bar(
         return BarDensityHint(
             kind="normal",
             min_hits=3,
-            max_hits=8,
+            max_hits=12,
             allow_empty=False,
             count_in_quality_average=True,
             reason="sustained musical activity without strong onsets",
@@ -88,7 +88,7 @@ def _density_hint_for_bar(
         return BarDensityHint(
             kind="dense",
             min_hits=5,
-            max_hits=12,
+            max_hits=16,
             allow_empty=False,
             count_in_quality_average=True,
             reason="high-energy or onset-rich bar",
@@ -98,7 +98,7 @@ def _density_hint_for_bar(
         return BarDensityHint(
             kind="fill",
             min_hits=3,
-            max_hits=10,
+            max_hits=14,
             allow_empty=False,
             count_in_quality_average=True,
             reason="phrase ending or fill candidate",
@@ -107,7 +107,7 @@ def _density_hint_for_bar(
     return BarDensityHint(
         kind="normal",
         min_hits=2,
-        max_hits=8,
+        max_hits=12,
         allow_empty=False,
         count_in_quality_average=True,
         reason="regular playable phrase bar",
@@ -133,12 +133,13 @@ def _is_musical_rest(bar: BarFeature, onset_count: int, activity_level: float) -
 
 
 def _is_sustained_musical_bar(bar: BarFeature, onset_count: int, activity_level: float) -> bool:
-    return activity_level >= 0.25 and onset_count <= 3
+    active_grid_count = sum(value >= 0.18 for value in bar.activity_16)
+    return activity_level >= 0.25 and active_grid_count >= 3 and onset_count <= 3
 
 
 def _is_sparse_musical_bar(bar: BarFeature, onset_count: int, activity_level: float) -> bool:
+    if bar.energy <= 0.08 and onset_count <= 2:
+        return True
     if activity_level >= 0.18:
         return False
-    if bar.section == "break" and bar.energy <= 0.08 and onset_count <= 3:
-        return True
-    return bar.energy <= 0.045 and onset_count <= 2
+    return bar.section == "break" and bar.energy <= 0.08 and onset_count <= 3

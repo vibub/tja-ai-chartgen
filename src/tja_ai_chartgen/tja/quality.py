@@ -8,6 +8,9 @@ from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar
 
 
+NOTE_STREAM_MAX_GAP_SECONDS = 0.3
+
+
 class QualityReport(BaseModel):
     bar_count: int = Field(ge=0)
     density_compliant_bars: int = Field(ge=0)
@@ -25,6 +28,13 @@ class QualityReport(BaseModel):
     playable_duration_seconds: float = Field(ge=0.0)
     average_notes_per_second: float = Field(ge=0.0)
     peak_bar_notes_per_second: float = Field(ge=0.0)
+    active_duration_seconds: float = Field(ge=0.0)
+    active_average_notes_per_second: float = Field(ge=0.0)
+    longest_note_stream_count: int = Field(ge=0)
+    longest_note_stream_seconds: float = Field(ge=0.0)
+    accent_candidate_count: int = Field(ge=0)
+    accent_hit_count: int = Field(ge=0)
+    accent_coverage_rate: float = Field(ge=0.0, le=1.0)
     drumroll_count: int = Field(ge=0)
     balloon_count: int = Field(ge=0)
     special_note_count: int = Field(ge=0)
@@ -64,20 +74,33 @@ def build_quality_report(
     normal_note_count = don_count + ka_count
     timed_hit_counts: list[int] = []
     timed_durations: list[float] = []
+    active_durations: list[float] = []
+    note_times: list[float] = []
+    accent_candidate_count = 0
+    accent_hit_count = 0
     for chart_bar, feature_bar in zip(
         paired_chart_bars, paired_feature_bars, strict=True
     ):
         duration = feature_bar.end_time - feature_bar.start_time
-        if not isfinite(duration) or duration <= 0:
+        if not isfinite(duration) or duration <= 0 or not chart_bar.notes:
             continue
-        timed_hit_counts.append(playable_hit_count(chart_bar.notes))
+        hit_count = playable_hit_count(chart_bar.notes)
+        timed_hit_counts.append(hit_count)
         timed_durations.append(duration)
+        if hit_count:
+            active_durations.append(duration)
+        note_times.extend(normal_note_times(chart_bar, feature_bar))
+        candidates, hits = accent_coverage_counts(chart_bar, feature_bar)
+        accent_candidate_count += candidates
+        accent_hit_count += hits
     playable_note_count = sum(timed_hit_counts)
     playable_duration_seconds = sum(timed_durations)
+    active_duration_seconds = sum(active_durations)
     bar_notes_per_second = [
         hit_count / duration
         for hit_count, duration in zip(timed_hit_counts, timed_durations, strict=True)
     ]
+    longest_stream_count, longest_stream_seconds = longest_note_stream(note_times)
     (
         drumroll_count,
         balloon_count,
@@ -113,6 +136,21 @@ def build_quality_report(
             else 0.0
         ),
         peak_bar_notes_per_second=max(bar_notes_per_second, default=0.0),
+        active_duration_seconds=active_duration_seconds,
+        active_average_notes_per_second=(
+            playable_note_count / active_duration_seconds
+            if active_duration_seconds
+            else 0.0
+        ),
+        longest_note_stream_count=longest_stream_count,
+        longest_note_stream_seconds=longest_stream_seconds,
+        accent_candidate_count=accent_candidate_count,
+        accent_hit_count=accent_hit_count,
+        accent_coverage_rate=(
+            accent_hit_count / accent_candidate_count
+            if accent_candidate_count
+            else 1.0
+        ),
         drumroll_count=drumroll_count,
         balloon_count=balloon_count,
         special_note_count=special_note_count,
@@ -136,6 +174,56 @@ def density_hit_count(notes: str) -> int:
 
 def chart_activity_count(notes: str) -> int:
     return sum(character in "123457" for character in notes)
+
+
+def normal_note_times(chart_bar: ChartBar, feature_bar: BarFeature) -> list[float]:
+    duration = feature_bar.end_time - feature_bar.start_time
+    if not isfinite(duration) or duration <= 0 or not chart_bar.notes:
+        return []
+    grid_duration = duration / len(chart_bar.notes)
+    return [
+        feature_bar.start_time + grid * grid_duration
+        for grid, note in enumerate(chart_bar.notes)
+        if note in "1234"
+    ]
+
+
+def longest_note_stream(note_times: list[float]) -> tuple[int, float]:
+    if not note_times:
+        return 0, 0.0
+
+    ordered = sorted(note_times)
+    longest_count = 1
+    longest_seconds = 0.0
+    stream_start = ordered[0]
+    stream_count = 1
+    for previous, current in zip(ordered[:-1], ordered[1:], strict=True):
+        if current - previous <= NOTE_STREAM_MAX_GAP_SECONDS:
+            stream_count += 1
+        else:
+            stream_start = current
+            stream_count = 1
+        stream_seconds = current - stream_start if stream_count > 1 else 0.0
+        if stream_count > longest_count or (
+            stream_count == longest_count and stream_seconds > longest_seconds
+        ):
+            longest_count = stream_count
+            longest_seconds = stream_seconds
+    return longest_count, longest_seconds
+
+
+def accent_coverage_counts(
+    chart_bar: ChartBar,
+    feature_bar: BarFeature,
+) -> tuple[int, int]:
+    grid_count = min(len(chart_bar.notes), feature_bar.grids_per_bar)
+    candidates = {
+        grid for grid in feature_bar.accent_16 if 0 <= grid < grid_count
+    }
+    if feature_bar.downbeat_grid is not None and 0 <= feature_bar.downbeat_grid < grid_count:
+        candidates.add(feature_bar.downbeat_grid)
+    hits = sum(chart_bar.notes[grid] in "1234" for grid in candidates)
+    return len(candidates), hits
 
 
 def special_note_metrics(

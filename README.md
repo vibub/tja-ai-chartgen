@@ -212,6 +212,12 @@ output/
 
 每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、是否生成全难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、拍号覆盖值、BeatNet 开关、特殊音符开关、AI 开关、最终解析使用的模型名、AI 内容修复次数、请求超时和 transport 重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。`ai_attempts*.json` 会分别记录内容校验尝试和实际 transport 尝试，并在最终失败时写入稳定的 fallback 原因。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
 
+## 质量评测
+
+规则生成器的四难度负荷已使用匿名真实四难度谱面聚合结果进行初步校准，并通过项目代码生成的 120 BPM sparse 与 180 BPM dense WAV 夹具执行可重复真实音频回归。`quality_report*.json` 除总体平均和单小节峰值 notes/sec 外，还记录活跃小节平均 notes/sec、最长连续流数量/时长和重音覆盖率；普通负荷只统计 `1`–`4`，特殊音符继续单独统计。
+
+自动门槛覆盖静音保护、四难度梯度、稀疏音乐不过度填充、高 BPM 上限、dense Hard/Oni 区分、确定性和结构化 preflight。配色、手感、fill 趣味性和星级体感仍需人工游玩与试听。指标定义、匿名校准范围、复现流程和人工检查清单见 [docs/quality-evaluation.md](docs/quality-evaluation.md)。
+
 ## 限制
 
 - 更适合 BPM 稳定的歌曲。
@@ -223,7 +229,7 @@ output/
 - `--time-signature 4/4|3/4|6/8` 会覆盖分析得到的拍号，并影响小节长度、AI prompt 和 `.tja` 的 `#MEASURE` 输出。
 - `--all-courses` 会分别输出 `<stem>_easy.tja`、`<stem>_normal.tja`、`<stem>_hard.tja`、`<stem>_oni.tja`，并使用 Easy 3、Normal 5、Hard 7、Oni 10 的内置等级建立 BPM 感知的负荷梯度。
 - `--density auto|low|medium|high|max` 会在当前 course/level 难度范围内调整规则生成器密度；`--all-courses` 的四张谱面共享用户选择的 density。启用 `--use-ai` 时 density 也会传入 AI prompt。
-- `--style technical|stamina|hybrid|performance` 会选择风格模板，影响规则谱面的节奏倾向与咚咔配色、特殊音符插入节奏和 AI prompt；普通落点仍优先跟随分析得到的音乐特征。
+- `--style technical|stamina|hybrid|performance` 会选择风格模板，影响规则谱面的节奏倾向、咚咔配色、特殊音符候选门槛和 AI prompt；普通落点仍优先跟随分析得到的音乐特征。
 - `--special-notes` 会在活跃的乐句结尾或 fill 候选中生成单小节滚奏和动态击打数气球；仍不支持跨小节滚奏、复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。

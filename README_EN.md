@@ -191,6 +191,12 @@ output/
 
 Each `generate` run writes `generation_config.json` next to the TJA output. It records input path, metadata, difficulty, all-course mode, style, density, `--max-bars`, BPM/OFFSET overrides, time-signature override, BeatNet flag, special-note flag, AI flag, final resolved model name, content repair count, request timeout, and transport retry count. Use `generate-from-config` to run the same generation parameters again. `ai_attempts*.json` records content-validation attempts separately from actual transport attempts and includes a stable fallback reason when generation ultimately fails. API keys and base URLs are not written to `generation_config.json`; provide connection settings again through `.env`, environment variables, or command options when rerunning AI generation.
 
+## Quality Evaluation
+
+The four rule-based course loads are initially calibrated against anonymous aggregate statistics from real four-course charts and are regression-tested through project-generated 120 BPM sparse and 180 BPM dense WAV fixtures. In addition to whole-chart average and peak-bar notes/sec, `quality_report*.json` records active-bar average notes/sec, longest note-stream count/duration, and accent coverage. Ordinary load counts only notes `1`–`4`; special-note load remains separate.
+
+Automated gates cover silence preservation, the four-course gradient, sparse-music restraint, high-BPM caps, dense Hard/Oni separation, determinism, and structural preflight. Coloring, play feel, fill quality, and perceived star rating still require human playtesting and listening. See [docs/quality-evaluation.md](docs/quality-evaluation.md) for metric definitions, anonymous calibration ranges, reproduction steps, and the manual checklist.
+
 ## Limitations
 
 - Best for songs with stable BPM.
@@ -201,7 +207,7 @@ Each `generate` run writes `generation_config.json` next to the TJA output. It r
 - `--time-signature 4/4|3/4|6/8` overrides the analyzed meter and affects bar length, AI prompts, and `.tja` `#MEASURE` output.
 - `--all-courses` writes `<stem>_easy.tja`, `<stem>_normal.tja`, `<stem>_hard.tja`, and `<stem>_oni.tja` using built-in Easy 3, Normal 5, Hard 7, and Oni 10 levels to form a BPM-aware load gradient.
 - `--density auto|low|medium|high|max` adjusts rule-based density within the selected course/level range; all four `--all-courses` charts share the user's density choice. Density is also passed into the AI prompt when `--use-ai` is enabled.
-- `--style technical|stamina|hybrid|performance` selects rhythmic tendency and don/ka coloring for the rule-based chart, plus special-note cadence and AI prompts; ordinary placements still prioritize analyzed music features.
+- `--style technical|stamina|hybrid|performance` selects rhythmic tendency, don/ka coloring, special-note candidate thresholds, and AI prompts; ordinary placements still prioritize analyzed music features.
 - `--special-notes` adds single-bar drumrolls and duration-scaled balloons at active phrase endings or fill candidates; cross-bar rolls, complex drumroll performances, and branch syntax are still unsupported.
 - `--use-beatnet` requires separately installing `BeatNet`; if BeatNet is unavailable or analysis fails, the CLI keeps the default librosa result.
 - `--use-ai` can still fall back to the rule-based generator when the model is unavailable, output repair is exhausted, or credentials are misconfigured.
@@ -215,4 +221,3 @@ The following areas are still not implemented and are suitable for later version
 - Support BPM changes, complex drumroll performances, branch charts, and scroll gimmicks for fuller TJA syntax coverage.
 - Improve music structure analysis so generation is less dependent on stable-BPM songs.
 - Expand the Web UI with task management, chart editing, and longer-term result storage.
-- Build more reproducible reference-chart evaluation samples for comparing generation strategies.

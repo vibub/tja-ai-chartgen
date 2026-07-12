@@ -14,11 +14,11 @@ def test_build_density_hints_marks_middle_rest_and_edge_silence():
 
     assert [hint.kind for hint in hints] == ["normal", "rest", "dense", "silent"]
     assert hints[0].min_hits == 2
-    assert hints[0].max_hits == 8
+    assert hints[0].max_hits == 12
     assert hints[1].allow_empty is True
     assert hints[1].count_in_quality_average is False
     assert hints[2].min_hits == 5
-    assert hints[2].max_hits == 12
+    assert hints[2].max_hits == 16
     assert hints[2].count_in_quality_average is True
     assert hints[3].max_hits == 0
 
@@ -61,7 +61,7 @@ def test_build_density_hints_caps_silent_rest_and_phrase_fill():
     assert [(hint.kind, hint.min_hits, hint.max_hits) for hint in hints] == [
         ("rest", 0, 0),
         ("sparse", 1, 4),
-        ("fill", 3, 10),
+        ("fill", 3, 14),
     ]
 
 
@@ -81,7 +81,7 @@ def test_build_density_hints_treats_sustained_activity_as_normal():
     hints = build_density_hints(bars)
 
     assert [(hint.kind, hint.min_hits, hint.max_hits, hint.reason) for hint in hints] == [
-        ("normal", 3, 8, "sustained musical activity without strong onsets")
+        ("normal", 3, 12, "sustained musical activity without strong onsets")
     ]
 
 

@@ -343,7 +343,7 @@ def test_generate_with_density_controls_fallback_patterns(tmp_path, monkeypatch)
     chart_lines = [line.removesuffix(",") for line in tja_text.splitlines() if line.endswith(",")]
     assert len(chart_lines) == 2
     assert all(len(line) == 16 for line in chart_lines)
-    assert all(sum(note != "0" for note in line) <= 5 for line in chart_lines)
+    assert all(sum(note != "0" for note in line) <= 10 for line in chart_lines)
 
 
 def test_generate_with_special_notes_outputs_balloon_header(tmp_path, monkeypatch):

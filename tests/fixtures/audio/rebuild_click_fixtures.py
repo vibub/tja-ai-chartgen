@@ -14,18 +14,66 @@ FIXTURES = {
     "click_4_4.wav": 0.25,
     "click_4_4_leadin.wav": 1.25,
 }
+QUALITY_FIXTURES = {
+    "sparse_120.wav": (120.0, 0.5, "sparse"),
+    "dense_180.wav": (180.0, 0.5, "dense"),
+}
 
 
 def build_click_track(path: Path, *, first_beat_seconds: float) -> None:
     duration = first_beat_seconds + ((BEAT_COUNT - 1) * BEAT_INTERVAL_SECONDS) + TAIL_SECONDS
+    events = [
+        (first_beat_seconds + beat_index * BEAT_INTERVAL_SECONDS, beat_index % 4 == 0)
+        for beat_index in range(BEAT_COUNT)
+    ]
+    _write_click_events(path, duration=duration, events=events)
+
+
+def build_quality_track(
+    path: Path,
+    *,
+    bpm: float,
+    first_beat_seconds: float,
+    pattern: str,
+) -> None:
+    beat_interval = 60.0 / bpm
+    bar_duration = beat_interval * 4
+    bar_count = 8
+    events: list[tuple[float, bool]] = []
+
+    for bar_index in range(bar_count):
+        bar_start = first_beat_seconds + bar_index * bar_duration
+        if pattern == "sparse":
+            beat_indexes = (0,) if bar_index in {2, 4} else (0, 1, 2, 3)
+            for beat_index in beat_indexes:
+                events.append((bar_start + beat_index * beat_interval, beat_index == 0))
+            continue
+
+        if pattern != "dense":
+            raise ValueError(f"Unknown quality fixture pattern: {pattern}")
+        if bar_index == 4:
+            events.append((bar_start, True))
+            continue
+        subdivision = 4 if bar_index in {2, 6} else 2
+        for subdivision_index in range(4 * subdivision):
+            event_time = bar_start + subdivision_index * beat_interval / subdivision
+            events.append((event_time, subdivision_index == 0))
+
+    duration = first_beat_seconds + bar_count * bar_duration + TAIL_SECONDS
+    _write_click_events(path, duration=duration, events=events)
+
+
+def _write_click_events(
+    path: Path,
+    *,
+    duration: float,
+    events: list[tuple[float, bool]],
+) -> None:
     samples = [0.0] * round(duration * SAMPLE_RATE)
     click_sample_count = round(CLICK_DURATION_SECONDS * SAMPLE_RATE)
 
-    for beat_index in range(BEAT_COUNT):
-        start = round(
-            (first_beat_seconds + (beat_index * BEAT_INTERVAL_SECONDS)) * SAMPLE_RATE
-        )
-        downbeat = beat_index % 4 == 0
+    for event_time, downbeat in events:
+        start = round(event_time * SAMPLE_RATE)
         amplitude = 0.9 if downbeat else 0.55
         frequency = 1760.0 if downbeat else 1100.0
 
@@ -51,6 +99,13 @@ def main() -> None:
     output_dir = Path(__file__).parent
     for filename, first_beat_seconds in FIXTURES.items():
         build_click_track(output_dir / filename, first_beat_seconds=first_beat_seconds)
+    for filename, (bpm, first_beat_seconds, pattern) in QUALITY_FIXTURES.items():
+        build_quality_track(
+            output_dir / filename,
+            bpm=bpm,
+            first_beat_seconds=first_beat_seconds,
+            pattern=pattern,
+        )
 
 
 if __name__ == "__main__":

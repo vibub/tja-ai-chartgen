@@ -10,6 +10,8 @@ output/
 *.mp3
 .claude/
 CLAUDE.md
+.playwright-mcp/
 
 docs/superpowers/
 docs/development-roadmap.md
+docs/quality-evaluation.md

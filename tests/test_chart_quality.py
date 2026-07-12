@@ -74,6 +74,13 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.playable_duration_seconds == 0.0
     assert report.average_notes_per_second == 0.0
     assert report.peak_bar_notes_per_second == 0.0
+    assert report.active_duration_seconds == 0.0
+    assert report.active_average_notes_per_second == 0.0
+    assert report.longest_note_stream_count == 0
+    assert report.longest_note_stream_seconds == 0.0
+    assert report.accent_candidate_count == 0
+    assert report.accent_hit_count == 0
+    assert report.accent_coverage_rate == 1.0
 
 
 def test_quality_report_records_time_normalized_load():
@@ -170,6 +177,79 @@ def test_quality_report_uses_same_metrics_for_identical_ai_and_fallback_bars():
     fallback_report = build_quality_report(fallback_bars, features)
 
     assert ai_report.model_dump() == fallback_report.model_dump()
+
+
+def test_quality_report_records_active_load_and_cross_bar_note_stream():
+    features = [
+        _feature(0, energy=0.8, start_time=0.0, end_time=1.0),
+        _feature(1, energy=0.8, start_time=1.0, end_time=2.0),
+        _feature(2, energy=0.0, start_time=2.0, end_time=3.0),
+    ]
+    bars = [
+        _chart_bar(0, "1000100010001000"),
+        _chart_bar(1, "1000100010001000"),
+        _chart_bar(2, "0000000000000000"),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.active_duration_seconds == pytest.approx(2.0)
+    assert report.active_average_notes_per_second == pytest.approx(4.0)
+    assert report.longest_note_stream_count == 8
+    assert report.longest_note_stream_seconds == pytest.approx(1.75)
+
+
+def test_quality_report_breaks_note_stream_at_long_gap_and_ignores_special_notes():
+    features = [
+        _feature(0, energy=0.8, start_time=0.0, end_time=1.0),
+        _feature(1, energy=0.8, start_time=1.0, end_time=2.0),
+    ]
+    bars = [
+        _chart_bar(0, "1111500000008000"),
+        _chart_bar(1, "0000000000001111"),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.longest_note_stream_count == 4
+    assert report.longest_note_stream_seconds == pytest.approx(3 / 16)
+
+
+def test_quality_report_records_accent_coverage_for_supported_grids():
+    features = [
+        BarFeature(
+            index=0,
+            start_time=0.0,
+            end_time=2.0,
+            energy=0.8,
+            onset_16=[0, 4, 8, 12],
+            accent_16=[4, 8, 20],
+            beat_grids=[0, 4, 8, 12],
+            downbeat_grid=0,
+        ),
+        BarFeature(
+            index=1,
+            start_time=2.0,
+            end_time=3.5,
+            energy=0.8,
+            time_signature="3/4",
+            grids_per_bar=12,
+            onset_16=[0, 4, 8],
+            accent_16=[4, 8],
+            beat_grids=[0, 4, 8],
+            downbeat_grid=0,
+        ),
+    ]
+    bars = [
+        _chart_bar(0, "1000100000000000"),
+        _chart_bar(1, "100000001000", time_signature="3/4"),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.accent_candidate_count == 6
+    assert report.accent_hit_count == 4
+    assert report.accent_coverage_rate == pytest.approx(2 / 3)
 
 
 def test_feature_driven_fallback_quality_avoids_silence_and_exact_repetition():

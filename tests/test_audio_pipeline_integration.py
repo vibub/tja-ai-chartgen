@@ -6,7 +6,9 @@ import pytest
 from tja_ai_chartgen.audio.analyze import analyze_audio
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
+from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
 from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, SongAnalysis, TjaChart
+from tja_ai_chartgen.tja.quality import build_quality_report, playable_hit_count
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING, render_tja, write_tja_text
 
 
@@ -114,3 +116,83 @@ def test_real_audio_pipeline(
     assert f"WAVE:{ogg_path.name}" in written_text
     assert "#START" in written_text
     assert "#END" in written_text
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_bpm", "expected_offset"),
+    [
+        ("sparse_120.wav", 120.0, 0.5),
+        ("dense_180.wav", 180.0, 0.5),
+    ],
+)
+def test_quality_audio_fixtures_support_repeatable_course_evaluation(
+    tmp_path: Path,
+    fixture_name: str,
+    expected_bpm: float,
+    expected_offset: float,
+):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required for the real audio pipeline integration test")
+
+    fixture_path = FIXTURE_DIR / fixture_name
+    assert fixture_path.is_file(), f"Missing quality audio fixture: {fixture_path}"
+    ogg_path = convert_to_ogg(fixture_path, tmp_path / f"{fixture_path.stem}.ogg")
+    raw = analyze_audio(ogg_path)
+    features = build_bar_features(raw)
+
+    assert raw.bpm == pytest.approx(expected_bpm, abs=6.0)
+    assert raw.offset == pytest.approx(expected_offset, abs=0.08)
+    assert features
+
+    course_results = []
+    for course, level in [("Easy", 3), ("Normal", 5), ("Hard", 7), ("Oni", 10)]:
+        first_bars = generate_fallback_chart_bars(
+            features,
+            density="auto",
+            course=course,
+            level=level,
+        )
+        second_bars = generate_fallback_chart_bars(
+            features,
+            density="auto",
+            course=course,
+            level=level,
+        )
+        first_report = build_quality_report(first_bars, features)
+        second_report = build_quality_report(second_bars, features)
+
+        assert first_bars == second_bars
+        assert first_report == second_report
+        assert first_report.silent_bar_note_count == 0
+        assert first_report.accent_coverage_rate >= 0.5
+
+        chart = TjaChart(
+            metadata=ChartMetadata(
+                title=f"Quality Fixture {course}",
+                wave=ogg_path.name,
+                bpm=raw.bpm,
+                offset=raw.offset,
+                course=course,
+                level=level,
+            ),
+            bars=first_bars,
+        )
+        assert "#END" in render_tja(chart)
+        course_results.append((first_bars, first_report))
+
+    note_counts = [result.playable_note_count for _, result in course_results]
+    assert note_counts == sorted(note_counts)
+    assert all(lower < higher for lower, higher in zip(note_counts, note_counts[1:]))
+
+    if fixture_name == "sparse_120.wav":
+        oni_bars, _ = course_results[-1]
+        for chart_bar, feature_bar in zip(oni_bars, features, strict=True):
+            if len(feature_bar.onset_16) <= 2:
+                assert playable_hit_count(chart_bar.notes) <= 4
+    else:
+        hard_report = course_results[-2][1]
+        oni_report = course_results[-1][1]
+        assert oni_report.active_average_notes_per_second > (
+            hard_report.active_average_notes_per_second
+        )
+        assert oni_report.longest_note_stream_count > hard_report.longest_note_stream_count

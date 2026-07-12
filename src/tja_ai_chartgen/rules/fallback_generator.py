@@ -20,11 +20,11 @@ BALLOON_HITS_PER_SECOND = {
 
 DENSITY_LEVELS = ("auto", "low", "medium", "high", "max")
 DENSITY_LOAD_MULTIPLIERS = {
-    "low": 0.3,
-    "medium": 0.85,
+    "low": 0.75,
+    "medium": 0.9,
     "auto": 1.0,
-    "high": 1.15,
-    "max": 1.3,
+    "high": 1.1,
+    "max": 1.2,
 }
 
 
@@ -40,10 +40,10 @@ class CourseLoadProfile:
 
 
 COURSE_LOAD_PROFILES = {
-    "easy": CourseLoadProfile("Easy", 1, 5, 1.25, 2.5, 3.0, 0.38),
-    "normal": CourseLoadProfile("Normal", 1, 7, 2.25, 4.25, 5.0, 0.5),
-    "hard": CourseLoadProfile("Hard", 1, 8, 3.75, 6.5, 7.5, 0.7),
-    "oni": CourseLoadProfile("Oni", 1, 10, 5.5, 8.5, 10.0, 0.82),
+    "easy": CourseLoadProfile("Easy", 1, 5, 1.1, 2.1, 3.0, 0.38),
+    "normal": CourseLoadProfile("Normal", 1, 7, 1.8, 3.4, 5.0, 0.5),
+    "hard": CourseLoadProfile("Hard", 1, 8, 3.2, 5.8, 7.5, 0.7),
+    "oni": CourseLoadProfile("Oni", 1, 10, 4.0, 7.0, 10.0, 0.82),
 }
 
 
@@ -156,6 +156,14 @@ def _target_hit_count(
     hint_maximum = hint.max_hits if hint.max_hits is not None else bar.grids_per_bar
     occupancy_cap = max(1, floor(bar.grids_per_bar * profile.max_occupancy))
     maximum = min(hint_maximum, bar.grids_per_bar, occupancy_cap)
+    if hint.kind == "normal":
+        evidence_count = max(
+            len(bar.onset_16),
+            len(bar.beat_grids),
+            sum(activity >= 0.18 for activity in bar.activity_16),
+        )
+        evidence_allowance = floor(bar.grids_per_bar * profile.max_occupancy / 2)
+        maximum = min(maximum, max(hint.min_hits, evidence_count + evidence_allowance))
     minimum = min(hint.min_hits, maximum)
     duration = bar.end_time - bar.start_time
 

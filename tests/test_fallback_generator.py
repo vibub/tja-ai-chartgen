@@ -194,6 +194,81 @@ def test_course_load_is_monotonic_at_common_bpms(bpm):
     assert loads[0] < loads[-1]
 
 
+@pytest.mark.parametrize("bpm", [120, 180, 240])
+def test_dense_music_keeps_observable_default_course_steps(bpm):
+    duration = 240 / bpm
+    bars = [
+        _feature(
+            0,
+            energy=0.95,
+            end_time=duration,
+            onsets=list(range(16)),
+            accents=[0, 4, 8, 12],
+            beats=[0, 4, 8, 12],
+        )
+    ]
+
+    hit_counts = []
+    for course, level in [("Easy", 3), ("Normal", 5), ("Hard", 7), ("Oni", 10)]:
+        chart_bars = generate_fallback_chart_bars(
+            bars, density="auto", course=course, level=level
+        )
+        hit_counts.append(sum(playable_hit_count(bar.notes) for bar in chart_bars))
+
+    assert all(lower < higher for lower, higher in zip(hit_counts, hit_counts[1:]))
+
+
+def test_course_load_can_expand_active_normal_hint_without_filling_sparse_music():
+    active_bars = [
+        _feature(
+            index,
+            energy=0.3,
+            onsets=[0, 4, 8, 12],
+            accents=[0, 8],
+            beats=[0, 4, 8, 12],
+        )
+        for index in range(4)
+    ]
+    hard = generate_fallback_chart_bars(
+        active_bars, density="auto", course="Hard", level=7
+    )
+    oni = generate_fallback_chart_bars(
+        active_bars, density="auto", course="Oni", level=10
+    )
+
+    assert sum(playable_hit_count(bar.notes) for bar in oni) > sum(
+        playable_hit_count(bar.notes) for bar in hard
+    )
+
+    sparse = _feature(0, energy=0.02, onsets=[0, 8], beats=[0, 4, 8, 12])
+    sparse_oni = generate_fallback_chart_bars(
+        [sparse], density="max", course="Oni", level=10
+    )[0]
+    assert playable_hit_count(sparse_oni.notes) <= 4
+
+
+def test_density_offsets_stay_inside_course_gradient():
+    bar = _feature(
+        0,
+        energy=0.95,
+        onsets=list(range(16)),
+        accents=[0, 4, 8, 12],
+    )
+
+    easy_max = playable_hit_count(
+        generate_fallback_chart_bars(
+            [bar], density="max", course="Easy", level=3
+        )[0].notes
+    )
+    oni_low = playable_hit_count(
+        generate_fallback_chart_bars(
+            [bar], density="low", course="Oni", level=10
+        )[0].notes
+    )
+
+    assert easy_max < oni_low
+
+
 def test_high_bpm_reduces_grid_occupancy_for_oni():
     hit_counts = []
     for bpm in (120, 180, 240):
