@@ -394,6 +394,8 @@ def test_generate_all_courses_writes_four_tja_files(tmp_path, monkeypatch):
             "--output-dir",
             str(output_dir),
             "--all-courses",
+            "--density",
+            "high",
             "--max-bars",
             "1",
         ],
@@ -402,12 +404,18 @@ def test_generate_all_courses_writes_four_tja_files(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     assert saved_config["all_courses"] is True
+    assert saved_config["density"] == "high"
+    average_loads = []
     for course, level in [("easy", 3), ("normal", 5), ("hard", 7), ("oni", 10)]:
         tja_text = (output_dir / f"song_{course}.tja").read_text(encoding=TJA_FILE_ENCODING)
         assert f"COURSE:{course.title() if course != 'oni' else 'Oni'}" in tja_text
         assert f"LEVEL:{level}" in tja_text
         quality_path = output_dir / f"quality_report_{course}.json"
-        assert json.loads(quality_path.read_text(encoding="utf-8"))["bar_count"] == 1
+        quality_report = json.loads(quality_path.read_text(encoding="utf-8"))
+        assert quality_report["bar_count"] == 1
+        assert "peak_bar_notes_per_second" in quality_report
+        average_loads.append(quality_report["average_notes_per_second"])
+    assert average_loads == sorted(average_loads)
 
 
 def test_generate_rejects_invalid_density(tmp_path):

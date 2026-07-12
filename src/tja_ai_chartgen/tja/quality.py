@@ -1,4 +1,5 @@
 from collections import Counter
+from math import isfinite
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,10 @@ class QualityReport(BaseModel):
     ka_count: int = Field(ge=0)
     ka_ratio: float = Field(ge=0.0, le=1.0)
     longest_monochrome_run: int = Field(ge=0)
+    playable_note_count: int = Field(ge=0)
+    playable_duration_seconds: float = Field(ge=0.0)
+    average_notes_per_second: float = Field(ge=0.0)
+    peak_bar_notes_per_second: float = Field(ge=0.0)
 
 
 def build_quality_report(
@@ -48,6 +53,22 @@ def build_quality_report(
     repeated_bar_count = sum(count - 1 for count in Counter(nonempty_patterns).values())
     don_count, ka_count, longest_monochrome_run = note_color_metrics(chart_bars)
     normal_note_count = don_count + ka_count
+    timed_hit_counts: list[int] = []
+    timed_durations: list[float] = []
+    for chart_bar, feature_bar in zip(
+        paired_chart_bars, paired_feature_bars, strict=True
+    ):
+        duration = feature_bar.end_time - feature_bar.start_time
+        if not isfinite(duration) or duration <= 0:
+            continue
+        timed_hit_counts.append(playable_hit_count(chart_bar.notes))
+        timed_durations.append(duration)
+    playable_note_count = sum(timed_hit_counts)
+    playable_duration_seconds = sum(timed_durations)
+    bar_notes_per_second = [
+        hit_count / duration
+        for hit_count, duration in zip(timed_hit_counts, timed_durations, strict=True)
+    ]
 
     return QualityReport(
         bar_count=len(chart_bars),
@@ -66,6 +87,14 @@ def build_quality_report(
         ka_count=ka_count,
         ka_ratio=ka_count / normal_note_count if normal_note_count else 0.0,
         longest_monochrome_run=longest_monochrome_run,
+        playable_note_count=playable_note_count,
+        playable_duration_seconds=playable_duration_seconds,
+        average_notes_per_second=(
+            playable_note_count / playable_duration_seconds
+            if playable_duration_seconds
+            else 0.0
+        ),
+        peak_bar_notes_per_second=max(bar_notes_per_second, default=0.0),
     )
 
 

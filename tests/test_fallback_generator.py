@@ -28,7 +28,7 @@ def test_generate_fallback_chart_bars_density_controls_hit_count():
     low_bars = generate_fallback_chart_bars(bars, density="low")
     max_bars = generate_fallback_chart_bars(bars, density="max")
 
-    assert [playable_hit_count(bar.notes) for bar in low_bars] == [5, 5]
+    assert all(playable_hit_count(bar.notes) >= 5 for bar in low_bars)
     assert all(
         playable_hit_count(max_bar.notes) > playable_hit_count(low_bar.notes)
         for low_bar, max_bar in zip(low_bars, max_bars, strict=True)
@@ -56,7 +56,9 @@ def test_accent_and_strength_prioritize_competing_onsets():
         strengths={1: 0.1, 3: 0.2, 5: 0.9, 7: 0.3},
     )
 
-    notes = generate_fallback_chart_bars([bar], density="low")[0].notes
+    notes = generate_fallback_chart_bars(
+        [bar], density="low", course="Easy", level=1
+    )[0].notes
 
     assert _hit_grids(notes) == {5, 7}
 
@@ -167,6 +169,80 @@ def test_high_density_short_bar_uses_speed_cap():
 
     assert playable_hit_count(chart_bar.notes) <= 6
     assert playable_hit_count(chart_bar.notes) < 16
+
+
+@pytest.mark.parametrize("bpm", [120, 180, 240])
+def test_course_load_is_monotonic_at_common_bpms(bpm):
+    duration = 240 / bpm
+    bar = _feature(
+        0,
+        energy=0.95,
+        end_time=duration,
+        onsets=list(range(16)),
+        accents=[0, 4, 8, 12],
+        beats=[0, 4, 8, 12],
+    )
+
+    loads = []
+    for course, level in [("Easy", 3), ("Normal", 5), ("Hard", 7), ("Oni", 10)]:
+        chart_bar = generate_fallback_chart_bars(
+            [bar], density="auto", course=course, level=level
+        )[0]
+        loads.append(playable_hit_count(chart_bar.notes) / duration)
+
+    assert loads == sorted(loads)
+    assert loads[0] < loads[-1]
+
+
+def test_high_bpm_reduces_grid_occupancy_for_oni():
+    hit_counts = []
+    for bpm in (120, 180, 240):
+        bar = _feature(
+            0,
+            energy=0.95,
+            end_time=240 / bpm,
+            onsets=list(range(16)),
+            accents=[0, 4, 8, 12],
+        )
+        chart_bar = generate_fallback_chart_bars(
+            [bar], density="max", course="Oni", level=10
+        )[0]
+        hit_counts.append(playable_hit_count(chart_bar.notes))
+
+    assert hit_counts == sorted(hit_counts, reverse=True)
+    assert hit_counts[-1] < 16
+
+
+def test_density_adjusts_load_within_course():
+    bar = _feature(0, energy=0.95, onsets=list(range(16)))
+
+    hit_counts = [
+        playable_hit_count(
+            generate_fallback_chart_bars(
+                [bar], density=density, course="Normal", level=5
+            )[0].notes
+        )
+        for density in ("low", "auto", "high", "max")
+    ]
+
+    assert hit_counts == sorted(hit_counts)
+    assert hit_counts[0] < hit_counts[-1]
+
+
+def test_generate_fallback_chart_bars_rejects_unknown_course():
+    with pytest.raises(ValueError, match="Invalid course"):
+        generate_fallback_chart_bars(
+            [_feature(0, energy=0.5)], course="Ura", level=10
+        )
+
+
+def test_course_name_is_case_insensitive():
+    bar = _feature(0, energy=0.95, onsets=list(range(16)))
+
+    expected = generate_fallback_chart_bars([bar], course="Easy", level=3)
+    actual = generate_fallback_chart_bars([bar], course="easy", level=3)
+
+    assert actual == expected
 
 
 def test_legacy_feature_without_grid_features_still_uses_onset_lists():

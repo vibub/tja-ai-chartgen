@@ -179,6 +179,8 @@ def generate_chart_bars(
             style=style,
             density=density,
             special_notes=special_notes,
+            course=course,
+            level=level,
         )
 
     return ChartGenerationResult(

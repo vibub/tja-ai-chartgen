@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from math import floor, isfinite
 
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
@@ -15,17 +16,46 @@ BALLOON_COUNT = 8
 MAX_HITS_PER_SECOND = 12.0
 
 DENSITY_LEVELS = ("auto", "low", "medium", "high", "max")
+DENSITY_LOAD_MULTIPLIERS = {
+    "low": 0.3,
+    "medium": 0.85,
+    "auto": 1.0,
+    "high": 1.15,
+    "max": 1.3,
+}
+
+
+@dataclass(frozen=True)
+class CourseLoadProfile:
+    name: str
+    min_level: int
+    max_level: int
+    min_notes_per_second: float
+    max_notes_per_second: float
+    speed_cap: float
+    max_occupancy: float
+
+
+COURSE_LOAD_PROFILES = {
+    "easy": CourseLoadProfile("Easy", 1, 5, 1.25, 2.5, 3.0, 0.38),
+    "normal": CourseLoadProfile("Normal", 1, 7, 2.25, 4.25, 5.0, 0.5),
+    "hard": CourseLoadProfile("Hard", 1, 8, 3.75, 6.5, 7.5, 0.7),
+    "oni": CourseLoadProfile("Oni", 1, 10, 5.5, 8.5, 10.0, 0.82),
+}
 
 
 def choose_pattern(
     bar: BarFeature,
     style: str = "technical",
     density: str = "auto",
+    course: str = "Oni",
+    level: int = 10,
 ) -> str:
     validate_density(density)
+    profile = _course_load_profile(course)
     template = get_style_template(style)
     hint = build_density_hints([bar])[0]
-    return _feature_driven_pattern(bar, hint, density, template)
+    return _feature_driven_pattern(bar, hint, density, template, profile, level)
 
 
 def generate_fallback_chart_bars(
@@ -33,8 +63,11 @@ def generate_fallback_chart_bars(
     style: str = "technical",
     density: str = "auto",
     special_notes: bool = False,
+    course: str = "Oni",
+    level: int = 10,
 ) -> list[ChartBar]:
     validate_density(density)
+    profile = _course_load_profile(course)
     template = get_style_template(style)
     density_hints = build_density_hints(bars)
     chart_bars: list[ChartBar] = []
@@ -72,7 +105,9 @@ def generate_fallback_chart_bars(
             chart_bars.append(
                 ChartBar(
                     index=bar.index,
-                    notes=_feature_driven_pattern(bar, hint, density, template),
+                    notes=_feature_driven_pattern(
+                        bar, hint, density, template, profile, level
+                    ),
                     time_signature=bar.time_signature,
                 )
             )
@@ -90,8 +125,10 @@ def _feature_driven_pattern(
     hint: BarDensityHint,
     density: str,
     template: StyleTemplate,
+    profile: CourseLoadProfile,
+    level: int,
 ) -> str:
-    target_hits = _target_hit_count(bar, hint, density)
+    target_hits = _target_hit_count(bar, hint, density, profile, level)
     if target_hits <= 0:
         return "0" * bar.grids_per_bar
 
@@ -108,33 +145,62 @@ def _feature_driven_pattern(
     return "".join(notes)
 
 
-def _target_hit_count(bar: BarFeature, hint: BarDensityHint, density: str) -> int:
-    maximum = hint.max_hits if hint.max_hits is not None else bar.grids_per_bar
-    maximum = min(maximum, bar.grids_per_bar)
+def _target_hit_count(
+    bar: BarFeature,
+    hint: BarDensityHint,
+    density: str,
+    profile: CourseLoadProfile,
+    level: int,
+) -> int:
+    hint_maximum = hint.max_hits if hint.max_hits is not None else bar.grids_per_bar
+    occupancy_cap = max(1, floor(bar.grids_per_bar * profile.max_occupancy))
+    maximum = min(hint_maximum, bar.grids_per_bar, occupancy_cap)
     minimum = min(hint.min_hits, maximum)
+    duration = bar.end_time - bar.start_time
 
-    if density == "low":
-        target = minimum
-    elif density == "medium":
-        target = round(minimum + (maximum - minimum) * 0.5)
-    elif density == "high":
-        target = round(minimum + (maximum - minimum) * 0.75)
-    elif density == "max":
-        target = maximum
+    richness = min(1.0, len(bar.onset_16) / max(1, bar.grids_per_bar / 2))
+    musical_factor = 0.75 + min(1.0, max(0.0, (bar.energy + richness) / 2)) * 0.35
+    if hint.kind in {"dense", "fill"}:
+        musical_factor = max(musical_factor, 1.0)
+    elif hint.kind == "sparse":
+        musical_factor = min(musical_factor, 0.75)
+
+    if isfinite(duration) and duration > 0:
+        target_nps = _target_notes_per_second(profile, level, density)
+        target = round(target_nps * musical_factor * duration)
+        speed_cap = max(1, floor(duration * min(profile.speed_cap, MAX_HITS_PER_SECOND)))
+        maximum = min(maximum, speed_cap)
+        minimum = min(minimum, maximum)
     else:
-        richness = min(1.0, len(bar.onset_16) / max(1, bar.grids_per_bar / 2))
-        position = min(1.0, max(0.0, (bar.energy + richness) / 2))
-        if hint.kind in {"dense", "fill"}:
-            position = max(position, 0.65)
-        elif hint.kind == "sparse":
-            position = min(position, 0.35)
+        position = min(1.0, max(0.0, musical_factor - 0.5))
         target = round(minimum + (maximum - minimum) * position)
 
-    duration = bar.end_time - bar.start_time
-    if isfinite(duration) and duration > 0:
-        speed_cap = max(1, floor(duration * MAX_HITS_PER_SECOND))
-        target = min(target, speed_cap)
-    return max(0, min(target, maximum))
+    return max(minimum, min(target, maximum))
+
+
+def _course_load_profile(course: str) -> CourseLoadProfile:
+    profile = COURSE_LOAD_PROFILES.get(course.casefold())
+    if profile is None:
+        allowed = ", ".join(profile.name for profile in COURSE_LOAD_PROFILES.values())
+        raise ValueError(f"Invalid course: {course}. Expected one of: {allowed}")
+    return profile
+
+
+def _target_notes_per_second(
+    profile: CourseLoadProfile,
+    level: int,
+    density: str,
+) -> float:
+    clamped_level = min(profile.max_level, max(profile.min_level, level))
+    level_span = profile.max_level - profile.min_level
+    level_position = (
+        (clamped_level - profile.min_level) / level_span if level_span else 0.0
+    )
+    base = profile.min_notes_per_second + (
+        profile.max_notes_per_second - profile.min_notes_per_second
+    ) * level_position
+    adjusted = base * DENSITY_LOAD_MULTIPLIERS[density]
+    return min(profile.speed_cap, max(0.5, adjusted))
 
 
 def _grid_features_for_bar(bar: BarFeature) -> list[GridFeature]:

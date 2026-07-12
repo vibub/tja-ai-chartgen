@@ -70,6 +70,41 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.ka_ratio == 0.0
     assert report.longest_empty_bar_run == 0
     assert report.longest_monochrome_run == 0
+    assert report.playable_note_count == 0
+    assert report.playable_duration_seconds == 0.0
+    assert report.average_notes_per_second == 0.0
+    assert report.peak_bar_notes_per_second == 0.0
+
+
+def test_quality_report_records_time_normalized_load():
+    features = [
+        _feature(0, energy=0.5, start_time=0.0, end_time=2.0),
+        _feature(1, energy=0.5, start_time=2.0, end_time=3.0),
+    ]
+    bars = [
+        _chart_bar(0, "1000100010001000"),
+        _chart_bar(1, "1111000000000000"),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.playable_note_count == 8
+    assert report.playable_duration_seconds == pytest.approx(3.0)
+    assert report.average_notes_per_second == pytest.approx(8 / 3)
+    assert report.peak_bar_notes_per_second == pytest.approx(4.0)
+
+
+@pytest.mark.parametrize("end_time", [0.0, -1.0, float("inf"), float("nan")])
+def test_quality_report_ignores_invalid_bar_durations(end_time):
+    features = [_feature(0, energy=0.5, start_time=0.0, end_time=end_time)]
+    bars = [_chart_bar(0, "1111000000000000")]
+
+    report = build_quality_report(bars, features)
+
+    assert report.playable_note_count == 0
+    assert report.playable_duration_seconds == 0.0
+    assert report.average_notes_per_second == 0.0
+    assert report.peak_bar_notes_per_second == 0.0
 
 
 def test_quality_report_uses_same_metrics_for_identical_ai_and_fallback_bars():
@@ -127,11 +162,13 @@ def _feature(
     energy: float = 0.0,
     onset_count: int = 0,
     grids: int = 16,
+    start_time: float | None = None,
+    end_time: float | None = None,
 ) -> BarFeature:
     return BarFeature(
         index=index,
-        start_time=float(index),
-        end_time=float(index + 1),
+        start_time=float(index if start_time is None else start_time),
+        end_time=float(index + 1 if end_time is None else end_time),
         energy=energy,
         time_signature="4/4" if grids == 16 else "3/4",
         grids_per_bar=grids,

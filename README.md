@@ -64,7 +64,7 @@ tja-ai-chartgen generate song.mp3 --title "Song Title" --max-bars 16
 tja-ai-chartgen generate song.mp3 --title "Song Title" --density high --style hybrid
 ```
 
-`--density` 可选值为 `auto`、`low`、`medium`、`high`、`max`。`auto` 会结合小节能量、瞬态和段落密度提示决定目标音符数。规则 fallback 会优先跟随 onset、strength 和 accent，瞬态不足时使用 beat/downbeat 补充骨架，并限制高 BPM 短小节的最大落点数。`--style` 可选值为 `technical`、`stamina`、`hybrid`、`performance`，主要影响节奏倾向、咚咔配色、特殊音符节奏和 AI prompt。
+`--density` 可选值为 `auto`、`low`、`medium`、`high`、`max`。规则 fallback 以 course 和 level 建立按小节时长归一化的难度负荷，density 只在当前难度范围内调整；`auto` 会结合小节能量、瞬态和段落密度提示决定目标音符数。落点优先跟随 onset、strength 和 accent，瞬态不足时使用 beat/downbeat 补充骨架，并按难度限制高 BPM 短小节的 notes/sec 和格点占用率。`--style` 可选值为 `technical`、`stamina`、`hybrid`、`performance`，主要影响节奏倾向、咚咔配色、特殊音符节奏和 AI prompt。
 
 允许规则生成器和 AI 使用简单滚奏、气球音符：
 
@@ -221,8 +221,8 @@ output/
 - `--max-bars` 主要用于快速检查，会将生成谱面截断到前 N 小节。
 - `--bpm` 和 `--offset` 会覆盖自动分析结果，用于人工校准。
 - `--time-signature 4/4|3/4|6/8` 会覆盖分析得到的拍号，并影响小节长度、AI prompt 和 `.tja` 的 `#MEASURE` 输出。
-- `--all-courses` 会分别输出 `<stem>_easy.tja`、`<stem>_normal.tja`、`<stem>_hard.tja`、`<stem>_oni.tja`，并使用内置等级与密度预设。
-- `--density auto|low|medium|high|max` 会控制规则生成器密度；启用 `--use-ai` 时也会传入 AI prompt。
+- `--all-courses` 会分别输出 `<stem>_easy.tja`、`<stem>_normal.tja`、`<stem>_hard.tja`、`<stem>_oni.tja`，并使用 Easy 3、Normal 5、Hard 7、Oni 10 的内置等级建立 BPM 感知的负荷梯度。
+- `--density auto|low|medium|high|max` 会在当前 course/level 难度范围内调整规则生成器密度；`--all-courses` 的四张谱面共享用户选择的 density。启用 `--use-ai` 时 density 也会传入 AI prompt。
 - `--style technical|stamina|hybrid|performance` 会选择风格模板，影响规则谱面的节奏倾向与咚咔配色、特殊音符插入节奏和 AI prompt；普通落点仍优先跟随分析得到的音乐特征。
 - `--special-notes` 会允许简单滚奏和气球音符；当前只做少量模板化插入，仍不支持复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。

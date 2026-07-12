@@ -26,10 +26,10 @@ app = typer.Typer(help="AI-assisted TJA chart draft generator")
 console = Console()
 
 COURSE_PRESETS = {
-    "Easy": {"level": 3, "density": "low"},
-    "Normal": {"level": 5, "density": "medium"},
-    "Hard": {"level": 7, "density": "high"},
-    "Oni": {"level": 10, "density": "max"},
+    "Easy": {"level": 3},
+    "Normal": {"level": 5},
+    "Hard": {"level": 7},
+    "Oni": {"level": 10},
 }
 MULTI_COURSES = tuple(COURSE_PRESETS)
 DEFAULT_AI_REQUEST_TIMEOUT = 300.0
@@ -409,7 +409,7 @@ def _build_course_specs(
         return [{"course": course, "level": level, "density": density}]
 
     return [
-        {"course": course_name, "level": int(preset["level"]), "density": str(preset["density"])}
+        {"course": course_name, "level": int(preset["level"]), "density": density}
         for course_name, preset in COURSE_PRESETS.items()
     ]
 

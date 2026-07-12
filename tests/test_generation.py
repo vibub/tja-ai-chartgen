@@ -123,9 +123,15 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
 def test_generate_chart_bars_falls_back_and_builds_quality_report(monkeypatch):
     analysis = _analysis()
     expected = [ChartBar(index=0, notes="1000100010001000")]
+    fallback_calls = []
+
+    def fake_fallback(*args, **kwargs):
+        fallback_calls.append((args, kwargs))
+        return expected
+
     monkeypatch.setattr(
         "tja_ai_chartgen.generation.generate_fallback_chart_bars",
-        lambda *_args, **_kwargs: expected,
+        fake_fallback,
     )
 
     result = generate_chart_bars(
@@ -143,6 +149,18 @@ def test_generate_chart_bars_falls_back_and_builds_quality_report(monkeypatch):
     assert result.used_fallback is True
     assert result.ai_failure is None
     assert result.quality_report.bar_count == 1
+    assert fallback_calls == [
+        (
+            (analysis.bars,),
+            {
+                "style": "technical",
+                "density": "high",
+                "special_notes": False,
+                "course": "Oni",
+                "level": 10,
+            },
+        )
+    ]
 
 
 def test_generate_chart_bars_writes_ai_sidecars_and_sanitizes(tmp_path, monkeypatch):
