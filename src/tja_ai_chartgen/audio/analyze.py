@@ -163,6 +163,12 @@ def _weighted_circular_mean_phase(
     return float((np.angle(vector) % full_turn) / full_turn * interval)
 
 
+def _precompute_waveform_support(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    abs_samples = np.abs(samples)
+    prefix = np.concatenate([[0.0], np.cumsum(abs_samples, dtype=float)])
+    return abs_samples, prefix
+
+
 def _adjust_offset_for_offbeats(
     samples: np.ndarray,
     sample_rate: int,
@@ -173,12 +179,29 @@ def _adjust_offset_for_offbeats(
         return _canonical_phase(offset, 60.0 / bpm) if bpm > 0 else offset
 
     seconds_per_beat = 60.0 / bpm
+    half_window = max(1, sample_rate // 20)
+    if samples.size < half_window * 2:
+        return _canonical_phase(offset, seconds_per_beat)
+
+    abs_samples, prefix = _precompute_waveform_support(samples)
     offbeat = _canonical_phase(offset + (seconds_per_beat * 0.5), seconds_per_beat)
 
-    refined_offset = _refine_offset_with_waveform(samples, sample_rate, offset, seconds_per_beat)
-    refined_offbeat = _refine_offset_with_waveform(samples, sample_rate, offbeat, seconds_per_beat)
-    support_a = _slope_support(samples, sample_rate, refined_offset, seconds_per_beat)
-    support_b = _slope_support(samples, sample_rate, refined_offbeat, seconds_per_beat)
+    refined_offset = _refine_offset_with_waveform(
+        abs_samples,
+        prefix,
+        sample_rate,
+        offset,
+        seconds_per_beat,
+    )
+    refined_offbeat = _refine_offset_with_waveform(
+        abs_samples,
+        prefix,
+        sample_rate,
+        offbeat,
+        seconds_per_beat,
+    )
+    support_a = _slope_support(abs_samples, prefix, sample_rate, refined_offset, seconds_per_beat)
+    support_b = _slope_support(abs_samples, prefix, sample_rate, refined_offbeat, seconds_per_beat)
     return _canonical_phase(refined_offset if support_a >= support_b else refined_offbeat, seconds_per_beat)
 
 
@@ -192,36 +215,41 @@ def _canonical_phase(offset: float, interval: float) -> float:
 
 
 def _refine_offset_with_waveform(
-    samples: np.ndarray,
+    abs_samples: np.ndarray,
+    prefix: np.ndarray,
     sample_rate: int,
     offset: float,
     interval: float,
 ) -> float:
-    if samples.size == 0 or sample_rate <= 0 or interval <= 0:
+    if abs_samples.size == 0 or sample_rate <= 0 or interval <= 0:
         return offset
 
     best_offset = offset
-    best_support = _slope_support(samples, sample_rate, offset, interval)
+    best_support = _slope_support(abs_samples, prefix, sample_rate, offset, interval)
     for delta in np.arange(
         -WAVEFORM_REFINE_WINDOW_SECONDS,
         WAVEFORM_REFINE_WINDOW_SECONDS + WAVEFORM_REFINE_STEP_SECONDS,
         WAVEFORM_REFINE_STEP_SECONDS,
     ):
         candidate = (offset + float(delta)) % interval
-        support = _slope_support(samples, sample_rate, candidate, interval)
+        support = _slope_support(abs_samples, prefix, sample_rate, candidate, interval)
         if support > best_support:
             best_offset = candidate
             best_support = support
     return best_offset
 
 
-def _slope_support(samples: np.ndarray, sample_rate: int, offset: float, interval: float) -> float:
-    abs_samples = np.abs(samples)
+def _slope_support(
+    abs_samples: np.ndarray,
+    prefix: np.ndarray,
+    sample_rate: int,
+    offset: float,
+    interval: float,
+) -> float:
     half_window = max(1, sample_rate // 20)
     if abs_samples.size < half_window * 2:
         return 0.0
 
-    prefix = np.concatenate([[0.0], np.cumsum(abs_samples, dtype=float)])
     total = 0.0
     position = offset * sample_rate
     step = interval * sample_rate

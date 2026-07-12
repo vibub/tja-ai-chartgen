@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tja_ai_chartgen.audio import analyze as audio_analyze
 from tja_ai_chartgen.audio.analyze import (
     AudioAnalysisRaw,
     _estimate_tempo_and_offset_from_onsets,
@@ -78,6 +79,119 @@ def test_estimate_tempo_and_offset_from_onsets_uses_waveform_to_reject_offbeat()
 
     assert bpm == 120
     assert offset == pytest.approx(0.0, abs=0.006)
+
+
+def test_estimate_tempo_and_offset_from_onsets_preserves_preoptimization_baseline():
+    onset_times = [0.25 + i * 0.5 for i in range(16)] + [0.5 + i * 0.5 for i in range(16)]
+    weights = [1.0 for _ in onset_times]
+    samples = np.zeros(10_000, dtype=float)
+    for index in range(0, len(samples), 500):
+        samples[index : index + 20] = np.linspace(0.0, 1.0, 20)
+
+    assert _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        weights,
+        samples,
+        sample_rate=1_000,
+        fallback_bpm=120,
+    ) == (120.0, 0.0)
+
+
+def test_adjust_offset_for_offbeats_skips_precompute_for_empty_waveform(monkeypatch):
+    monkeypatch.setattr(
+        audio_analyze,
+        "_precompute_waveform_support",
+        lambda samples: pytest.fail("empty waveform should not be precomputed"),
+        raising=False,
+    )
+
+    result = audio_analyze._adjust_offset_for_offbeats(np.asarray([], dtype=float), 1_000, 0.63, 120)
+
+    assert result == pytest.approx(0.13)
+
+
+def test_adjust_offset_for_offbeats_skips_precompute_for_short_waveform(monkeypatch):
+    monkeypatch.setattr(
+        audio_analyze,
+        "_precompute_waveform_support",
+        lambda samples: pytest.fail("short waveform should not be precomputed"),
+        raising=False,
+    )
+
+    result = audio_analyze._adjust_offset_for_offbeats(np.zeros(99, dtype=float), 1_000, 0.63, 120)
+
+    assert result == pytest.approx(0.13)
+
+
+@pytest.mark.parametrize(
+    ("sample_rate", "bpm", "expected"),
+    [(0, 120, 0.13), (-1, 120, 0.13), (1_000, 0, 0.63)],
+)
+def test_adjust_offset_for_offbeats_preserves_invalid_parameter_semantics(
+    monkeypatch,
+    sample_rate,
+    bpm,
+    expected,
+):
+    monkeypatch.setattr(
+        audio_analyze,
+        "_precompute_waveform_support",
+        lambda samples: pytest.fail("invalid parameters should not precompute waveform"),
+        raising=False,
+    )
+
+    result = audio_analyze._adjust_offset_for_offbeats(np.zeros(1_000, dtype=float), sample_rate, 0.63, bpm)
+
+    assert result == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(("phase", "expected"), [(0.0, 0.0), (0.25, 0.25)])
+def test_adjust_offset_for_offbeats_selects_waveform_supported_phase(phase, expected):
+    samples = np.zeros(5_000, dtype=float)
+    start = round(phase * 1_000)
+    for index in range(start, len(samples), 500):
+        samples[index : index + 20] = np.linspace(0.0, 1.0, 20)
+
+    result = audio_analyze._adjust_offset_for_offbeats(samples, 1_000, 0.0, 120)
+
+    assert result == pytest.approx(expected, abs=0.006)
+
+
+def test_adjust_offset_for_offbeats_prefers_primary_phase_when_support_ties():
+    result = audio_analyze._adjust_offset_for_offbeats(np.zeros(5_000, dtype=float), 1_000, 0.1, 120)
+
+    assert result == pytest.approx(0.1)
+
+
+def test_precompute_waveform_support_builds_absolute_prefix_sum():
+    samples = np.asarray([-2.0, 1.0, -3.0])
+    original = samples.copy()
+
+    abs_samples, prefix = audio_analyze._precompute_waveform_support(samples)
+
+    np.testing.assert_array_equal(abs_samples, [2.0, 1.0, 3.0])
+    np.testing.assert_array_equal(prefix, [0.0, 2.0, 3.0, 6.0])
+    np.testing.assert_array_equal(samples, original)
+    assert prefix.dtype == np.dtype(float)
+
+
+def test_adjust_offset_for_offbeats_precomputes_waveform_once(monkeypatch):
+    call_count = 0
+
+    def fake_precompute(samples):
+        nonlocal call_count
+        call_count += 1
+        abs_samples = np.abs(samples)
+        return abs_samples, np.concatenate([[0.0], np.cumsum(abs_samples, dtype=float)])
+
+    monkeypatch.setattr(audio_analyze, "_precompute_waveform_support", fake_precompute, raising=False)
+    samples = np.zeros(5_000, dtype=float)
+    for index in range(0, len(samples), 500):
+        samples[index : index + 20] = np.linspace(0.0, 1.0, 20)
+
+    audio_analyze._adjust_offset_for_offbeats(samples, 1_000, 0.0, 120)
+
+    assert call_count == 1
 
 
 def test_regular_beat_times_starts_at_refined_offset():
