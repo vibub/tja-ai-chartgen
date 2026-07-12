@@ -198,7 +198,10 @@ def test_generate_with_time_signature_outputs_measure_and_records_config(tmp_pat
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     analysis = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
     assert "#MEASURE 3/4" in tja_text
-    assert "100010001000," in tja_text
+    chart_lines = [line.removesuffix(",") for line in tja_text.splitlines() if line.endswith(",")]
+    assert len(chart_lines) == 1
+    assert len(chart_lines[0]) == 12
+    assert set(chart_lines[0]) <= set("01234")
     assert saved_config["time_signature"] == "3/4"
     assert analysis["time_signature"] == "3/4"
     assert analysis["bars"][0]["grids_per_bar"] == 12
@@ -242,7 +245,10 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     assert "BPM:240.123" in tja_text
     assert "OFFSET:-0.25" in tja_text
     assert "#MEASURE 3/4" in tja_text
-    assert "100010001000," in tja_text
+    chart_lines = [line.removesuffix(",") for line in tja_text.splitlines() if line.endswith(",")]
+    assert len(chart_lines) == 2
+    assert all(len(line) == 12 for line in chart_lines)
+    assert all(set(line) <= set("01234") for line in chart_lines)
     assert saved_config["density"] == "low"
     assert saved_config["max_bars"] == 2
     assert saved_config["time_signature"] == "3/4"
@@ -334,8 +340,10 @@ def test_generate_with_density_controls_fallback_patterns(tmp_path, monkeypatch)
 
     assert result.exit_code == 0, result.output
     tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
-    assert "1000100010001000," in tja_text
-    assert "1000200010002000," in tja_text
+    chart_lines = [line.removesuffix(",") for line in tja_text.splitlines() if line.endswith(",")]
+    assert len(chart_lines) == 2
+    assert all(len(line) == 16 for line in chart_lines)
+    assert all(sum(note != "0" for note in line) <= 5 for line in chart_lines)
 
 
 def test_generate_with_special_notes_outputs_balloon_header(tmp_path, monkeypatch):

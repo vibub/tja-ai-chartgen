@@ -43,7 +43,7 @@ Control rule-based draft density and style template:
 tja-ai-chartgen generate song.mp3 --title "Song Title" --density high --style hybrid
 ```
 
-Allowed `--density` values are `auto`, `low`, `medium`, `high`, and `max`. `auto` follows analyzed bar energy. Allowed `--style` values are `technical`, `stamina`, `hybrid`, and `performance`; they affect rule-based templates and AI prompts.
+Allowed `--density` values are `auto`, `low`, `medium`, `high`, and `max`. `auto` combines bar energy, transients, and section density hints to choose the target hit count. The rule-based fallback prioritizes onset, strength, and accent features, fills sparse input from beat/downbeat grids, and caps placement in short high-BPM bars. Allowed `--style` values are `technical`, `stamina`, `hybrid`, and `performance`; they mainly affect rhythmic tendency, don/ka coloring, special-note cadence, and AI prompts.
 
 Allow the rule generator and AI to use simple drumroll and balloon notes:
 
@@ -201,7 +201,7 @@ Each `generate` run writes `generation_config.json` next to the TJA output. It r
 - `--time-signature 4/4|3/4|6/8` overrides the analyzed meter and affects bar length, AI prompts, and `.tja` `#MEASURE` output.
 - `--all-courses` writes `<stem>_easy.tja`, `<stem>_normal.tja`, `<stem>_hard.tja`, and `<stem>_oni.tja` with built-in level and density presets.
 - `--density auto|low|medium|high|max` controls rule-based draft density and is passed into the AI prompt when `--use-ai` is enabled.
-- `--style technical|stamina|hybrid|performance` selects the style template for rule patterns, special-note placement, and AI prompts.
+- `--style technical|stamina|hybrid|performance` selects rhythmic tendency and don/ka coloring for the rule-based chart, plus special-note cadence and AI prompts; ordinary placements still prioritize analyzed music features.
 - `--special-notes` allows simple drumroll and balloon notes; complex drumroll performances are still unsupported.
 - `--use-beatnet` requires separately installing `BeatNet`; if BeatNet is unavailable or analysis fails, the CLI keeps the default librosa result.
 - `--use-ai` can still fall back to the rule-based generator when the model is unavailable, output repair is exhausted, or credentials are misconfigured.

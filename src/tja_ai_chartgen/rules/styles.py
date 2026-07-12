@@ -72,5 +72,34 @@ def get_style_template(style: str) -> StyleTemplate:
         raise ValueError(f"Invalid style: {style}. Expected one of: {allowed}") from error
 
 
+def style_grid_bias(template: StyleTemplate, grid: int, grids_per_bar: int, bar_index: int) -> float:
+    if template.name == "technical":
+        return 0.7 if grid % 4 in {1, 3} else 0.0
+    if template.name == "stamina":
+        return 0.6 if grid % 2 == 0 else 0.3
+    if template.name == "hybrid":
+        if bar_index % 2 == 0:
+            return 0.5 if grid % 4 in {1, 3} else 0.1
+        return 0.5 if grid % 2 == 0 else 0.2
+    if template.name == "performance":
+        quarter = max(1, grids_per_bar // 4)
+        return 0.8 if grid % quarter == 0 else -0.2
+    return 0.0
+
+
+def style_color_sequence(template: StyleTemplate, density: str, bar_index: int) -> tuple[str, ...]:
+    patterns = {
+        "low": template.low_patterns,
+        "medium": template.medium_patterns,
+        "high": template.high_patterns,
+        "max": template.max_patterns,
+    }
+    selected_density = density if density != "auto" else "medium"
+    candidates = patterns[selected_density]
+    pattern = candidates[(bar_index + template.pattern_shift) % len(candidates)]
+    colors = tuple(note for note in pattern if note != "0")
+    return colors or ("1", "2")
+
+
 def validate_style(style: str) -> None:
     get_style_template(style)

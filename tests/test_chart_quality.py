@@ -1,5 +1,6 @@
 import pytest
 
+from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar
 from tja_ai_chartgen.tja.quality import build_quality_report
 
@@ -83,6 +84,41 @@ def test_quality_report_uses_same_metrics_for_identical_ai_and_fallback_bars():
     fallback_report = build_quality_report(fallback_bars, features)
 
     assert ai_report.model_dump() == fallback_report.model_dump()
+
+
+def test_feature_driven_fallback_quality_avoids_silence_and_exact_repetition():
+    features = [
+        _feature(0, energy=0.0),
+        BarFeature(
+            index=1,
+            start_time=2.0,
+            end_time=4.0,
+            energy=0.5,
+            onset_16=[0, 4, 8, 12],
+            accent_16=[0, 8],
+            beat_grids=[0, 4, 8, 12],
+            downbeat_grid=0,
+        ),
+        BarFeature(
+            index=2,
+            start_time=4.0,
+            end_time=6.0,
+            energy=0.5,
+            onset_16=[2, 6, 10, 14],
+            accent_16=[2, 10],
+            beat_grids=[0, 4, 8, 12],
+            downbeat_grid=0,
+        ),
+        _feature(3, energy=0.0),
+    ]
+
+    chart_bars = generate_fallback_chart_bars(features, density="medium")
+    report = build_quality_report(chart_bars, features)
+
+    assert report.density_compliance_rate == 1.0
+    assert report.silent_bar_note_count == 0
+    assert report.repeated_bar_count == 0
+    assert report.longest_monochrome_run <= 4
 
 
 def _feature(
