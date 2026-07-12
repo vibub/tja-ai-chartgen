@@ -215,7 +215,7 @@ def test_web_progress_status_reports_failed_stage(tmp_path, monkeypatch):
     def fake_convert_to_ogg(input_path, output_path):
         raise RuntimeError("ffmpeg missing")
 
-    monkeypatch.setattr("tja_ai_chartgen.web.convert_to_ogg", fake_convert_to_ogg)
+    monkeypatch.setattr("tja_ai_chartgen.generation.convert_to_ogg", fake_convert_to_ogg)
     client = TestClient(create_app(output_dir=tmp_path))
 
     response = client.post(
@@ -858,13 +858,15 @@ def test_web_regenerate_runs_ai_helper_via_asyncio_to_thread(tmp_path, monkeypat
     calls = []
 
     def fake_generate_ai(**kwargs):
-        return [ChartBar(index=0, notes="1000100010001000")]
+        from tja_ai_chartgen.generation import generate_chart_bars as real_generate_chart_bars
+
+        return real_generate_chart_bars(**{**kwargs, "use_ai": False})
 
     async def fake_to_thread(function, *args, **kwargs):
         calls.append((function, args, kwargs))
         return function(*args, **kwargs)
 
-    monkeypatch.setattr("tja_ai_chartgen.web._generate_ai_chart_bars_for_web", fake_generate_ai)
+    monkeypatch.setattr("tja_ai_chartgen.web.generate_chart_bars", fake_generate_ai)
     monkeypatch.setattr("tja_ai_chartgen.web.asyncio.to_thread", fake_to_thread)
 
     response = client.post(
@@ -1093,5 +1095,5 @@ def _patch_web_audio_pipeline(monkeypatch, duration=2.0):
             ),
         )
 
-    monkeypatch.setattr("tja_ai_chartgen.web.convert_to_ogg", fake_convert_to_ogg)
-    monkeypatch.setattr("tja_ai_chartgen.web.analyze_audio", fake_analyze_audio)
+    monkeypatch.setattr("tja_ai_chartgen.generation.convert_to_ogg", fake_convert_to_ogg)
+    monkeypatch.setattr("tja_ai_chartgen.generation.analyze_audio", fake_analyze_audio)

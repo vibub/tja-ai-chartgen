@@ -14,15 +14,11 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import ValidationError
 
-from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
-from tja_ai_chartgen.audio.convert import convert_to_ogg
-from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
-from tja_ai_chartgen.features.sections import assign_sections
-from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars, validate_density
+from tja_ai_chartgen.generation import build_song_analysis, generate_chart_bars
+from tja_ai_chartgen.rules.fallback_generator import validate_density
 from tja_ai_chartgen.rules.styles import validate_style
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ChartMetadata, SongAnalysis, TjaChart
-from tja_ai_chartgen.tja.quality import build_quality_report
 from tja_ai_chartgen.tja.writer import read_tja_text, render_tja, write_tja_text
 from tja_ai_chartgen.utils.paths import write_json
 
@@ -1952,42 +1948,35 @@ def create_app(
                 (job_dir / "analysis.json").read_text(encoding="utf-8")
             )
             selected_bars = _select_bars(analysis, start_bar, end_bar)
-            chart_bars = None
-            ai_failure: str | None = None
-            if use_ai:
-                try:
-                    chart_bars = await asyncio.to_thread(
-                        _generate_ai_chart_bars_for_web,
-                        job_dir=job_dir,
-                        analysis=analysis,
-                        selected_bars=selected_bars,
-                        start_bar=start_bar,
-                        end_bar=end_bar,
-                        course=course,
-                        level=level,
-                        style=style,
-                        density=density,
-                        model=_optional_form_text(ai_model),
-                        api_base=resolved_ai_base_url,
-                        api_key=resolved_ai_api_key,
-                        ai_repair_retries=ai_repair_retries,
-                        ai_request_timeout=ai_request_timeout,
-                        ai_transport_retries=ai_transport_retries,
-                        special_notes=special_notes,
-                    )
-                except Exception as error:  # noqa: BLE001 - Web UI should still render a usable draft.
-                    ai_failure = str(error)
-
-            if chart_bars is None:
-                chart_bars = generate_fallback_chart_bars(
-                    selected_bars,
-                    style=style,
-                    density=density,
-                    special_notes=special_notes,
-                )
+            generation_kwargs = {
+                "analysis": analysis,
+                "selected_bars": selected_bars,
+                "course": course,
+                "level": level,
+                "style": style,
+                "density": density,
+                "special_notes": special_notes,
+                "use_ai": use_ai,
+                "model": _optional_form_text(ai_model),
+                "api_base": resolved_ai_base_url,
+                "api_key": resolved_ai_api_key,
+                "ai_repair_retries": ai_repair_retries,
+                "ai_request_timeout": ai_request_timeout,
+                "ai_transport_retries": ai_transport_retries,
+                "ai_input_path": job_dir / f"ai_input_{start_bar}_{end_bar}.json",
+                "ai_output_path": job_dir / f"ai_output_{start_bar}_{end_bar}.json",
+                "ai_attempts_path": job_dir / f"ai_attempts_{start_bar}_{end_bar}.json",
+            }
+            generation_result = (
+                await asyncio.to_thread(generate_chart_bars, **generation_kwargs)
+                if use_ai
+                else generate_chart_bars(**generation_kwargs)
+            )
+            chart_bars = generation_result.chart_bars
+            ai_failure = generation_result.ai_failure
             write_json(
                 job_dir / f"quality_report_{start_bar}_{end_bar}.json",
-                build_quality_report(chart_bars, selected_bars),
+                generation_result.quality_report,
             )
             chart = TjaChart(
                 metadata=ChartMetadata(
@@ -2160,39 +2149,37 @@ def _run_analyze_job(
     ai_transport_retries: int,
 ) -> None:
     try:
-        _write_progress(
-            job_dir,
-            status=_PROGRESS_RUNNING,
-            step="convert",
-            message="正在调用 ffmpeg 转换音频，完成后会进入节拍分析。",
-        )
         ogg_path = job_dir / f"{input_path.stem}.ogg"
-        convert_to_ogg(input_path, ogg_path)
 
-        _write_progress(
-            job_dir,
-            status=_PROGRESS_RUNNING,
-            step="analyze",
-            message="正在提取 BPM、OFFSET、拍号和小节能量。",
-        )
-        raw = analyze_audio(ogg_path, use_beatnet=use_beatnet)
-        raw = apply_analysis_overrides(raw, bpm=bpm, offset=offset)
-        if time_signature:
-            validate_time_signature(time_signature)
-            raw = raw.model_copy(update={"time_signature": time_signature})
-        bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
-        analysis = SongAnalysis(
+        def report_analysis_stage(stage: str) -> None:
+            if stage == "convert":
+                _write_progress(
+                    job_dir,
+                    status=_PROGRESS_RUNNING,
+                    step="convert",
+                    message="正在调用 ffmpeg 转换音频，完成后会进入节拍分析。",
+                )
+            elif stage == "analyze":
+                _write_progress(
+                    job_dir,
+                    status=_PROGRESS_RUNNING,
+                    step="analyze",
+                    message="正在提取 BPM、OFFSET、拍号和小节能量。",
+                )
+
+        analysis = build_song_analysis(
+            input_audio=input_path,
+            ogg_path=ogg_path,
             title=title,
             artist=artist or None,
-            audio_file=str(input_path),
-            ogg_file=str(ogg_path),
-            bpm=raw.bpm,
-            offset=raw.offset,
-            time_signature=raw.time_signature,
-            analyzer=raw.analyzer,
-            tempo_analysis=raw.tempo_analysis,
-            bars=bars,
+            max_bars=max_bars,
+            bpm_override=bpm,
+            offset_override=offset,
+            time_signature_override=time_signature or None,
+            use_beatnet=use_beatnet,
+            stage_callback=report_analysis_stage,
         )
+        bars = analysis.bars
         write_json(job_dir / "analysis.json", analysis)
 
         _write_progress(
@@ -2205,41 +2192,30 @@ def _run_analyze_job(
                 else "正在用规则生成器生成全曲谱面。"
             ),
         )
-        chart_bars = None
-        ai_failure: str | None = None
-        if use_ai:
-            try:
-                chart_bars = _generate_ai_chart_bars_for_web(
-                    job_dir=job_dir,
-                    analysis=analysis,
-                    selected_bars=bars,
-                    start_bar=1,
-                    end_bar=len(bars),
-                    course=course,
-                    level=level,
-                    style=style,
-                    density=density,
-                    model=_optional_form_text(ai_model),
-                    api_base=ai_base_url,
-                    api_key=ai_api_key,
-                    ai_repair_retries=ai_repair_retries,
-                    ai_request_timeout=ai_request_timeout,
-                    ai_transport_retries=ai_transport_retries,
-                    special_notes=special_notes,
-                )
-            except Exception as error:  # noqa: BLE001 - Web UI should still render a usable draft.
-                ai_failure = str(error)
-
-        if chart_bars is None:
-            chart_bars = generate_fallback_chart_bars(
-                bars,
-                style=style,
-                density=density,
-                special_notes=special_notes,
-            )
+        generation_result = generate_chart_bars(
+            analysis=analysis,
+            selected_bars=bars,
+            course=course,
+            level=level,
+            style=style,
+            density=density,
+            special_notes=special_notes,
+            use_ai=use_ai,
+            model=_optional_form_text(ai_model),
+            api_base=ai_base_url,
+            api_key=ai_api_key,
+            ai_repair_retries=ai_repair_retries,
+            ai_request_timeout=ai_request_timeout,
+            ai_transport_retries=ai_transport_retries,
+            ai_input_path=job_dir / f"ai_input_1_{len(bars)}.json",
+            ai_output_path=job_dir / f"ai_output_1_{len(bars)}.json",
+            ai_attempts_path=job_dir / f"ai_attempts_1_{len(bars)}.json",
+        )
+        chart_bars = generation_result.chart_bars
+        ai_failure = generation_result.ai_failure
         write_json(
             job_dir / f"quality_report_1_{len(bars)}.json",
-            build_quality_report(chart_bars, bars),
+            generation_result.quality_report,
         )
         write_json(job_dir / _PROGRESS_CHART_BARS_JSON, chart_bars)
         write_json(
@@ -2692,122 +2668,6 @@ def _bar_features_from_chart(chart_bars: list[ChartBar], *, bpm: float, offset: 
         )
         current_time += bar_length
     return features
-
-
-def _generate_ai_chart_bars_for_web(
-    *,
-    job_dir: Path,
-    analysis: SongAnalysis,
-    selected_bars: list[BarFeature],
-    start_bar: int,
-    end_bar: int,
-    course: str,
-    level: int,
-    style: str,
-    density: str,
-    model: str | None,
-    api_base: str | None,
-    api_key: str | None,
-    ai_repair_retries: int,
-    ai_request_timeout: float,
-    ai_transport_retries: int,
-    special_notes: bool,
-) -> list[ChartBar]:
-    from tja_ai_chartgen.ai.client import generate_chart_bars_with_ai, sanitize_ai_bars
-    from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
-
-    selected_analysis = analysis.model_copy(update={"bars": selected_bars})
-    ai_input_path = job_dir / f"ai_input_{start_bar}_{end_bar}.json"
-    ai_output_path = job_dir / f"ai_output_{start_bar}_{end_bar}.json"
-    ai_attempts_path = job_dir / f"ai_attempts_{start_bar}_{end_bar}.json"
-    write_json(
-        ai_input_path,
-        build_chart_generation_payload(
-            selected_analysis,
-            course,
-            level,
-            style,
-            density,
-            special_notes=special_notes,
-        ),
-    )
-    try:
-        ai_bars, ai_output = generate_chart_bars_with_ai(
-            selected_analysis,
-            course,
-            level,
-            style,
-            density,
-            model,
-            api_base=api_base,
-            api_key=api_key,
-            max_repair_attempts=ai_repair_retries,
-            special_notes=special_notes,
-            attempt_log_path=ai_attempts_path,
-            request_timeout=ai_request_timeout,
-            max_transport_retries=ai_transport_retries,
-        )
-    except Exception as error:
-        _write_web_ai_failure(ai_attempts_path, error, api_key)
-        _write_web_ai_failure(ai_output_path, error, api_key)
-        redacted_message = _redact_web_ai_value(str(error), api_key)
-        raise RuntimeError(redacted_message) from None
-
-    _redact_web_ai_json_file(ai_attempts_path, api_key)
-    write_json(ai_output_path, _redact_web_ai_value(ai_output, api_key))
-    sanitized = sanitize_ai_bars(
-        ai_bars,
-        expected_count=len(selected_bars),
-        expected_bars=selected_bars,
-    )
-    return _reindex_chart_bars(sanitized, selected_bars)
-
-
-def _write_web_ai_failure(path: Path, error: Exception, api_key: str | None) -> None:
-    output = getattr(error, "output", None)
-    payload = {"error": _redact_web_ai_value(str(error), api_key)}
-    if isinstance(output, dict):
-        payload.update(_redact_web_ai_value(output, api_key))
-    write_json(path, payload)
-
-
-def _redact_web_ai_value(value: object, api_key: str | None) -> object:
-    if isinstance(value, str):
-        return value.replace(api_key, "[REDACTED]") if api_key else value
-    if isinstance(value, dict):
-        return {
-            key.replace(api_key, "[REDACTED]") if isinstance(key, str) and api_key else key: _redact_web_ai_value(
-                item, api_key
-            )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_web_ai_value(item, api_key) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_redact_web_ai_value(item, api_key) for item in value)
-    return value
-
-
-def _redact_web_ai_json_file(path: Path, api_key: str | None) -> None:
-    if not path.is_file():
-        return
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    write_json(path, _redact_web_ai_value(payload, api_key))
-
-
-def _reindex_chart_bars(chart_bars: list[ChartBar], selected_bars: list[BarFeature]) -> list[ChartBar]:
-    reindexed: list[ChartBar] = []
-    for index, chart_bar in enumerate(chart_bars):
-        feature = selected_bars[index]
-        reindexed.append(
-            ChartBar(
-                index=feature.index,
-                notes=chart_bar.notes,
-                time_signature=feature.time_signature,
-                balloon_counts=chart_bar.balloon_counts,
-            )
-        )
-    return reindexed
 
 
 def _optional_form_text(value: str) -> str | None:

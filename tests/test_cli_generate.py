@@ -82,6 +82,7 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     assert config == {
+        "schema_version": 1,
         "input_audio": str(input_audio),
         "title": "Song Title",
         "artist": "Artist Name",
@@ -143,8 +144,8 @@ def test_generate_with_beatnet_passes_flag_and_records_config(tmp_path, monkeypa
             ),
         )
 
-    monkeypatch.setattr("tja_ai_chartgen.cli.convert_to_ogg", fake_convert_to_ogg)
-    monkeypatch.setattr("tja_ai_chartgen.cli.analyze_audio", fake_analyze_audio)
+    monkeypatch.setattr("tja_ai_chartgen.generation.convert_to_ogg", fake_convert_to_ogg)
+    monkeypatch.setattr("tja_ai_chartgen.generation.analyze_audio", fake_analyze_audio)
 
     result = runner.invoke(
         app,
@@ -928,5 +929,5 @@ def _patch_audio_pipeline(monkeypatch, duration=2.0):
             offset=0.0,
         )
 
-    monkeypatch.setattr("tja_ai_chartgen.cli.convert_to_ogg", fake_convert_to_ogg)
-    monkeypatch.setattr("tja_ai_chartgen.cli.analyze_audio", fake_analyze_audio)
+    monkeypatch.setattr("tja_ai_chartgen.generation.convert_to_ogg", fake_convert_to_ogg)
+    monkeypatch.setattr("tja_ai_chartgen.generation.analyze_audio", fake_analyze_audio)
