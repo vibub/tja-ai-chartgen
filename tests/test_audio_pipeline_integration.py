@@ -3,9 +3,10 @@ import shutil
 
 import pytest
 
-from tja_ai_chartgen.audio.analyze import analyze_audio
+from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_overrides
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
+from tja_ai_chartgen.features.density import build_density_hints
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
 from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.quality import build_quality_report, playable_hit_count
@@ -45,6 +46,8 @@ def test_real_audio_pipeline(
     assert raw.offset == pytest.approx(expected_offset, abs=0.08)
     assert raw.duration == pytest.approx(expected_duration, abs=0.08)
     assert raw.sample_rate == 22050
+    assert raw.rms_envelope
+    assert len(raw.rms_envelope) == len(raw.activity_envelope)
     assert len(raw.onset_times) >= 12
     assert raw.beat_times
     assert raw.analyzer == "librosa+onset-grid"
@@ -78,13 +81,21 @@ def test_real_audio_pipeline(
     assert serialized_analysis["analyzer"] == "librosa+onset-grid"
     assert serialized_analysis["tempo_analysis"]["accepted"] is True
     assert serialized_analysis["tempo_analysis"]["fallback_source"] == "librosa"
+    assert serialized_analysis["bars"][0]["rms_dbfs"] is not None
+    assert serialized_analysis["bars"][0]["sustained_activity_ratio"] is not None
 
     legacy_analysis = serialized_analysis.copy()
     legacy_analysis.pop("analyzer")
     legacy_analysis.pop("tempo_analysis")
+    for bar in legacy_analysis["bars"]:
+        bar.pop("rms_dbfs")
+        bar.pop("peak_rms_dbfs")
+        bar.pop("relative_rms_db")
+        bar.pop("sustained_activity_ratio")
     restored_legacy = SongAnalysis.model_validate(legacy_analysis)
     assert restored_legacy.analyzer == "unknown"
     assert restored_legacy.tempo_analysis is None
+    assert restored_legacy.bars[0].rms_dbfs is None
 
     chart = TjaChart(
         metadata=ChartMetadata(
@@ -196,3 +207,49 @@ def test_quality_audio_fixtures_support_repeatable_course_evaluation(
             hard_report.active_average_notes_per_second
         )
         assert oni_report.longest_note_stream_count > hard_report.longest_note_stream_count
+
+
+def test_transient_noise_intro_is_forced_to_edge_silence(tmp_path: Path):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required for the real audio pipeline integration test")
+
+    fixture_path = FIXTURE_DIR / "transient_noise_intro_120.wav"
+    assert fixture_path.is_file(), f"Missing transient noise fixture: {fixture_path}"
+    ogg_path = convert_to_ogg(fixture_path, tmp_path / "transient_noise_intro_120.ogg")
+    analyzed = analyze_audio(ogg_path)
+    raw = apply_analysis_overrides(analyzed, bpm=120.0, offset=0.0)
+    raw = raw.model_copy(
+        update={
+            "onset_times": [0.5, 1.5]
+            + [onset_time for onset_time in raw.onset_times if onset_time >= 2.0]
+        }
+    )
+
+    features = build_bar_features(raw)
+    hints = build_density_hints(features)
+    chart_bars = generate_fallback_chart_bars(features, density="max", course="Oni", level=10)
+    report = build_quality_report(chart_bars, features)
+
+    assert raw.rms_envelope
+    assert features[0].rms_dbfs is not None and features[0].rms_dbfs <= -50.0
+    assert features[0].peak_rms_dbfs is not None and features[0].peak_rms_dbfs <= -40.0
+    assert features[0].relative_rms_db is not None and features[0].relative_rms_db <= -40.0
+    assert features[0].sustained_activity_ratio is not None
+    assert features[0].sustained_activity_ratio <= 0.15
+    assert features[0].onset_16
+    assert hints[0].kind == "silent"
+    assert chart_bars[0].notes == "0" * features[0].grids_per_bar
+    assert hints[1].kind != "silent"
+    assert playable_hit_count(chart_bars[1].notes) > 0
+    assert report.silent_bar_note_count == 0
+
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title="Transient Noise Intro",
+            wave=ogg_path.name,
+            bpm=raw.bpm,
+            offset=raw.offset,
+        ),
+        bars=chart_bars,
+    )
+    assert "#END" in render_tja(chart)

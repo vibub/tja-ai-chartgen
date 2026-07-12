@@ -410,7 +410,7 @@ def test_analyze_audio_keeps_librosa_baseline_when_onset_grid_is_rejected(tmp_pa
         "onset_strength",
         lambda *args, **kwargs: np.ones(8, dtype=float),
     )
-    monkeypatch.setattr(audio_analyze, "_activity_envelope", lambda *args, **kwargs: [])
+    monkeypatch.setattr(audio_analyze, "_rms_envelopes", lambda *args, **kwargs: ([], []))
     monkeypatch.setattr(
         audio_analyze.librosa.beat,
         "beat_track",

@@ -7,7 +7,15 @@ from tja_ai_chartgen.tja.quality import build_quality_report
 
 def test_quality_report_records_density_compliance_and_silent_notes():
     features = [
-        _feature(0, energy=0.0),
+        _feature(
+            0,
+            energy=0.068,
+            onset_count=3,
+            rms_dbfs=-59.7,
+            peak_rms_dbfs=-46.7,
+            relative_rms_db=-53.5,
+            sustained_activity_ratio=0.098,
+        ),
         _feature(1, energy=0.5, onset_count=8),
         _feature(2, energy=0.0),
     ]
@@ -295,12 +303,20 @@ def _feature(
     grids: int = 16,
     start_time: float | None = None,
     end_time: float | None = None,
+    rms_dbfs: float | None = None,
+    peak_rms_dbfs: float | None = None,
+    relative_rms_db: float | None = None,
+    sustained_activity_ratio: float | None = None,
 ) -> BarFeature:
     return BarFeature(
         index=index,
         start_time=float(index if start_time is None else start_time),
         end_time=float(index + 1 if end_time is None else end_time),
         energy=energy,
+        rms_dbfs=rms_dbfs,
+        peak_rms_dbfs=peak_rms_dbfs,
+        relative_rms_db=relative_rms_db,
+        sustained_activity_ratio=sustained_activity_ratio,
         time_signature="4/4" if grids == 16 else "3/4",
         grids_per_bar=grids,
         onset_16=list(range(min(onset_count, grids))),

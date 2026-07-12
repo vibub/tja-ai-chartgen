@@ -255,3 +255,73 @@ def test_build_bar_features_maps_activity_envelope_to_grid_features():
     assert bars[0].grid_features[8].activity == 1.0
     assert bars[0].grid_features[8].strength == 1.0
     assert bars[0].energy > 0
+
+
+def test_build_bar_features_calculates_loudness_and_sustained_activity():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[],
+        onset_times=[],
+        onset_strengths=[],
+        rms_envelope=[0.0, 0.0, 0.005, 0.0, 0.0, 0.0, 0.0, 0.0] + [0.5] * 8,
+        duration=4.0,
+        offset=0.0,
+        sample_rate=4,
+        hop_length=1,
+    )
+
+    bars = build_bar_features(raw)
+
+    assert bars[0].rms_dbfs == pytest.approx(-55.052, abs=0.001)
+    assert bars[0].peak_rms_dbfs == pytest.approx(-46.021, abs=0.001)
+    assert bars[0].relative_rms_db == pytest.approx(-49.031, abs=0.001)
+    assert bars[0].sustained_activity_ratio == pytest.approx(0.125)
+    assert bars[1].rms_dbfs == pytest.approx(-6.021, abs=0.001)
+    assert bars[1].peak_rms_dbfs == pytest.approx(-6.021, abs=0.001)
+    assert bars[1].relative_rms_db == pytest.approx(0.0)
+    assert bars[1].sustained_activity_ratio == pytest.approx(1.0)
+
+
+def test_build_bar_features_uses_finite_loudness_floor_for_digital_silence():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[],
+        onset_times=[],
+        onset_strengths=[],
+        rms_envelope=[0.0] * 8,
+        duration=2.0,
+        offset=0.0,
+        sample_rate=4,
+        hop_length=1,
+    )
+
+    bar = build_bar_features(raw)[0]
+
+    assert bar.rms_dbfs == -120.0
+    assert bar.peak_rms_dbfs == -120.0
+    assert bar.relative_rms_db == 0.0
+    assert bar.sustained_activity_ratio == 0.0
+
+
+@pytest.mark.parametrize("time_signature", ["3/4", "6/8"])
+def test_build_bar_features_uses_meter_bar_length_for_loudness(time_signature):
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[],
+        onset_times=[],
+        onset_strengths=[],
+        rms_envelope=[0.25] * 6 + [0.5] * 6,
+        duration=3.0,
+        offset=0.0,
+        sample_rate=4,
+        hop_length=1,
+        time_signature=time_signature,
+    )
+
+    bars = build_bar_features(raw)
+
+    assert len(bars) == 2
+    assert bars[0].rms_dbfs == pytest.approx(-12.041, abs=0.001)
+    assert bars[0].relative_rms_db == pytest.approx(-6.021, abs=0.001)
+    assert bars[1].rms_dbfs == pytest.approx(-6.021, abs=0.001)
+    assert bars[1].relative_rms_db == pytest.approx(0.0)

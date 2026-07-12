@@ -61,6 +61,7 @@ class AudioAnalysisRaw(BaseModel):
     duration: float
     offset: float
     activity_envelope: list[float] = Field(default_factory=list)
+    rms_envelope: list[float] = Field(default_factory=list)
     sample_rate: int | None = None
     hop_length: int = 512
     downbeat_times: list[float] = Field(default_factory=list)
@@ -123,15 +124,19 @@ def _fallback_resolves_double_tempo_alias(
     return abs(best_bpm - fallback_bpm) + BPM_SCAN_STEP < abs(runner_up_bpm - fallback_bpm)
 
 
-def _activity_envelope(samples: np.ndarray, *, hop_length: int) -> list[float]:
+def _rms_envelopes(samples: np.ndarray, *, hop_length: int) -> tuple[list[float], list[float]]:
     rms = librosa.feature.rms(y=samples, hop_length=hop_length)[0]
     if rms.size == 0:
-        return []
+        return [], []
 
-    max_rms = float(np.max(rms))
+    rms_envelope = [
+        max(0.0, float(value)) if np.isfinite(value) else 0.0
+        for value in rms
+    ]
+    max_rms = max(rms_envelope, default=0.0)
     if max_rms <= 0:
-        return [0.0 for _ in rms]
-    return [round(float(value / max_rms), 3) for value in rms]
+        return [0.0 for _ in rms_envelope], rms_envelope
+    return [round(value / max_rms, 3) for value in rms_envelope], rms_envelope
 
 
 def _onset_weights(
@@ -551,7 +556,7 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
 
     hop_length = 512
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
-    activity_env = _activity_envelope(y, hop_length=hop_length)
+    activity_env, rms_env = _rms_envelopes(y, hop_length=hop_length)
     tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, onset_envelope=onset_env)
     tempo_value = float(np.asarray(tempo).reshape(-1)[0])
 
@@ -589,6 +594,7 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         onset_times=onset_times_list,
         onset_strengths=[float(value) for value in onset_env.tolist()],
         activity_envelope=activity_env,
+        rms_envelope=rms_env,
         duration=duration,
         offset=offset,
         sample_rate=int(sr),

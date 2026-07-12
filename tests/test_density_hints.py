@@ -95,3 +95,38 @@ def test_build_density_hints_extends_quiet_edge_silence_with_activity_floor():
     hints = build_density_hints(bars)
 
     assert [hint.kind for hint in hints] == ["silent", "silent", "normal"]
+
+
+def test_build_density_hints_treats_edge_transient_noise_as_silent():
+    bars = [
+        BarFeature(
+            index=0,
+            start_time=0,
+            end_time=2,
+            energy=0.068,
+            onset_16=[0, 11, 12],
+            rms_dbfs=-59.7,
+            peak_rms_dbfs=-46.7,
+            relative_rms_db=-53.5,
+            sustained_activity_ratio=0.098,
+            section="intro",
+        ),
+        BarFeature(
+            index=1,
+            start_time=2,
+            end_time=4,
+            energy=0.131,
+            onset_16=[0, 1, 2, 4, 7, 8, 10],
+            rms_dbfs=-34.9,
+            peak_rms_dbfs=-29.0,
+            relative_rms_db=-28.7,
+            sustained_activity_ratio=0.773,
+            section="intro",
+        ),
+    ]
+
+    hints = build_density_hints(bars)
+
+    assert [hint.kind for hint in hints] == ["silent", "normal"]
+    assert hints[0].max_hits == 0
+    assert hints[1].min_hits > 0

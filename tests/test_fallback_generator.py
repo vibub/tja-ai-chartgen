@@ -101,7 +101,16 @@ def test_generate_fallback_chart_bars_applies_style_coloring():
 
 def test_generate_fallback_chart_bars_keeps_edge_silence_empty():
     bars = [
-        _feature(0, energy=0, section="intro"),
+        _feature(
+            0,
+            energy=0.068,
+            onsets=[0, 11, 12],
+            rms_dbfs=-59.7,
+            peak_rms_dbfs=-46.7,
+            relative_rms_db=-53.5,
+            sustained_activity_ratio=0.098,
+            section="intro",
+        ),
         _feature(1, energy=0.9, onsets=[0, 4, 8, 12]),
         _feature(2, energy=0, phrase_position="song_end", section="outro"),
     ]
@@ -464,6 +473,10 @@ def _feature(
     phrase_position: str = "unknown",
     fill_candidate: bool = False,
     section: str = "unknown",
+    rms_dbfs: float | None = None,
+    peak_rms_dbfs: float | None = None,
+    relative_rms_db: float | None = None,
+    sustained_activity_ratio: float | None = None,
 ) -> BarFeature:
     onsets = onsets or []
     accents = accents or []
@@ -485,6 +498,10 @@ def _feature(
         start_time=float(index * 2),
         end_time=float(end_time if end_time is not None else (index + 1) * 2),
         energy=energy,
+        rms_dbfs=rms_dbfs,
+        peak_rms_dbfs=peak_rms_dbfs,
+        relative_rms_db=relative_rms_db,
+        sustained_activity_ratio=sustained_activity_ratio,
         time_signature=time_signature,
         grids_per_bar=grids,
         onset_16=onsets,

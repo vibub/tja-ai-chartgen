@@ -18,6 +18,7 @@ QUALITY_FIXTURES = {
     "sparse_120.wav": (120.0, 0.5, "sparse"),
     "dense_180.wav": (180.0, 0.5, "dense"),
 }
+TRANSIENT_NOISE_FIXTURE = "transient_noise_intro_120.wav"
 
 
 def build_click_track(path: Path, *, first_beat_seconds: float) -> None:
@@ -63,11 +64,27 @@ def build_quality_track(
     _write_click_events(path, duration=duration, events=events)
 
 
+def build_transient_noise_intro_track(path: Path) -> None:
+    first_music_seconds = 2.25
+    events = [
+        (first_music_seconds + beat_index * BEAT_INTERVAL_SECONDS, beat_index % 4 == 0)
+        for beat_index in range(8)
+    ]
+    duration = first_music_seconds + (8 * BEAT_INTERVAL_SECONDS) + TAIL_SECONDS
+    _write_click_events(
+        path,
+        duration=duration,
+        events=events,
+        impulses=[(0.5, 0.1), (1.5, 0.1)],
+    )
+
+
 def _write_click_events(
     path: Path,
     *,
     duration: float,
     events: list[tuple[float, bool]],
+    impulses: list[tuple[float, float]] | None = None,
 ) -> None:
     samples = [0.0] * round(duration * SAMPLE_RATE)
     click_sample_count = round(CLICK_DURATION_SECONDS * SAMPLE_RATE)
@@ -84,6 +101,11 @@ def _write_click_events(
             sample_index = start + click_index
             if sample_index < len(samples):
                 samples[sample_index] += value
+
+    for event_time, amplitude in impulses or []:
+        sample_index = round(event_time * SAMPLE_RATE)
+        if 0 <= sample_index < len(samples):
+            samples[sample_index] += amplitude
 
     pcm = b"".join(
         struct.pack("<h", round(max(-1.0, min(1.0, sample)) * 32767)) for sample in samples
@@ -106,6 +128,7 @@ def main() -> None:
             first_beat_seconds=first_beat_seconds,
             pattern=pattern,
         )
+    build_transient_noise_intro_track(output_dir / TRANSIENT_NOISE_FIXTURE)
 
 
 if __name__ == "__main__":

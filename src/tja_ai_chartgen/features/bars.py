@@ -1,4 +1,4 @@
-from math import ceil
+from math import ceil, isfinite, log10, sqrt
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.features.meter import MeterSpec, get_meter_spec
@@ -8,6 +8,9 @@ from tja_ai_chartgen.tja.model import BarFeature, GridFeature
 BEATS_PER_BAR = 4
 GRIDS_PER_BAR = 16
 PHRASE_LENGTH_BARS = 4
+LOUDNESS_FLOOR_DBFS = -120.0
+LOUDNESS_EPSILON = 10 ** (LOUDNESS_FLOOR_DBFS / 20.0)
+SUSTAINED_ACTIVITY_DB_RANGE = 20.0
 
 
 def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> list[BarFeature]:
@@ -28,6 +31,7 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
     onset_grids_by_bar: list[set[int]] = [set() for _ in range(bar_count)]
     strengths_by_bar: list[dict[int, float]] = [{} for _ in range(bar_count)]
     activity_by_bar: list[dict[int, float]] = [{} for _ in range(bar_count)]
+    rms_frames_by_bar: list[list[float]] = [[] for _ in range(bar_count)]
     max_onset_strength = max(raw.onset_strengths, default=0.0)
 
     for onset_time in raw.onset_times:
@@ -66,6 +70,21 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
             float(activity),
         )
 
+    if raw.sample_rate is not None and raw.sample_rate > 0 and raw.hop_length > 0:
+        for frame_index, rms in enumerate(raw.rms_envelope):
+            if not isfinite(rms) or rms < 0:
+                continue
+            frame_time = frame_index * raw.hop_length / raw.sample_rate
+            bar_index = _time_to_bar_index(
+                frame_time,
+                analysis_start=analysis_start,
+                bar_length=bar_length,
+                bar_count=bar_count,
+            )
+            if bar_index is not None:
+                rms_frames_by_bar[bar_index].append(float(rms))
+
+    global_peak_rms = _global_peak_rms(raw.rms_envelope)
     beat_numbers_by_bar, downbeat_grids_by_bar = _map_meter_beats_to_grids(
         meter=meter,
         bar_count=bar_count,
@@ -84,6 +103,9 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
         beat_numbers = beat_numbers_by_bar[index]
         downbeat_grids = downbeat_grids_by_bar[index]
         phrase_position = _phrase_position(index, bar_count)
+        rms_dbfs, peak_rms_dbfs, relative_rms_db, sustained_activity_ratio = (
+            _bar_loudness_metrics(rms_frames_by_bar[index], global_peak_rms)
+        )
         energy = max(
             min(1.0, sum(strengths_by_bar[index].values()) / meter.grids_per_bar),
             min(1.0, sum(activity_16) / meter.grids_per_bar),
@@ -97,6 +119,10 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
                 start_time=round(start_time, 6),
                 end_time=round(end_time, 6),
                 energy=round(energy, 3),
+                rms_dbfs=rms_dbfs,
+                peak_rms_dbfs=peak_rms_dbfs,
+                relative_rms_db=relative_rms_db,
+                sustained_activity_ratio=sustained_activity_ratio,
                 time_signature=meter.time_signature,
                 grids_per_bar=meter.grids_per_bar,
                 onset_16=onset_16,
@@ -119,6 +145,61 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
         )
 
     return bars
+
+
+def _time_to_bar_index(
+    time: float,
+    *,
+    analysis_start: float,
+    bar_length: float,
+    bar_count: int,
+) -> int | None:
+    relative_time = time - analysis_start
+    if relative_time < 0 or bar_length <= 0:
+        return None
+
+    bar_index = int(relative_time / bar_length)
+    if bar_index < 0 or bar_index >= bar_count:
+        return None
+    return bar_index
+
+
+def _global_peak_rms(rms_envelope: list[float]) -> float | None:
+    values = [float(value) for value in rms_envelope if isfinite(value) and value >= 0]
+    if not values:
+        return None
+    return max(values)
+
+
+def _bar_loudness_metrics(
+    rms_frames: list[float],
+    global_peak_rms: float | None,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    values = [float(value) for value in rms_frames if isfinite(value) and value >= 0]
+    if not values or global_peak_rms is None or not isfinite(global_peak_rms):
+        return None, None, None, None
+
+    bar_rms = sqrt(sum(value * value for value in values) / len(values))
+    peak_rms = max(values)
+    rms_dbfs = _to_dbfs(bar_rms)
+    peak_rms_dbfs = _to_dbfs(peak_rms)
+    relative_rms_db = rms_dbfs - _to_dbfs(global_peak_rms)
+    if peak_rms <= LOUDNESS_EPSILON:
+        sustained_activity_ratio = 0.0
+    else:
+        sustained_threshold = peak_rms * 10 ** (-SUSTAINED_ACTIVITY_DB_RANGE / 20.0)
+        sustained_activity_ratio = sum(value >= sustained_threshold for value in values) / len(values)
+
+    return (
+        round(rms_dbfs, 3),
+        round(peak_rms_dbfs, 3),
+        round(relative_rms_db, 3),
+        round(sustained_activity_ratio, 3),
+    )
+
+
+def _to_dbfs(value: float) -> float:
+    return 20.0 * log10(max(value, LOUDNESS_EPSILON))
 
 
 def _time_to_bar_grid(

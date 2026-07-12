@@ -16,6 +16,10 @@ class BarFeature(BaseModel):
     start_time: float
     end_time: float
     energy: float = Field(ge=0.0, le=1.0)
+    rms_dbfs: float | None = None
+    peak_rms_dbfs: float | None = None
+    relative_rms_db: float | None = None
+    sustained_activity_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
     time_signature: str = "4/4"
     grids_per_bar: int = 16
     onset_16: list[int] = Field(default_factory=list)
