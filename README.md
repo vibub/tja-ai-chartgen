@@ -157,7 +157,7 @@ tja-ai-chartgen web
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 ```
 
-Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则或 AI 增强谱面片段。折叠的 AI 参数区可设置单次请求超时和 0–1 次 transport 重试；全曲生成会保存这两项非敏感设置供结果页沿用，局部 regenerate 的同步 AI 调用在线程池中执行，不阻塞 FastAPI 事件循环。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件。
+Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则或 AI 增强谱面片段。生成完成后会进入游玩预览，支持播放 OGG、自动演奏谱面、拖动进度条以及播放咚/咔命中音效。折叠的 AI 参数区可设置单次请求超时和 0–1 次 transport 重试；全曲生成会保存这两项非敏感设置供结果页沿用，局部 regenerate 的同步 AI 调用在线程池中执行，不阻塞 FastAPI 事件循环。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件。
 
 ## 输出文件
 
@@ -173,7 +173,17 @@ output/
 ├─ report.txt
 └─ web/
    └─ <job-id>/
+      ├─ <uploaded-audio>
+      ├─ <stem>.ogg
       ├─ analysis.json
+      ├─ chart_bars.json
+      ├─ chart_options.json
+      ├─ progress.json
+      ├─ preview.tja
+      ├─ result.html
+      ├─ ai_input_<start>_<end>.json
+      ├─ ai_attempts_<start>_<end>.json
+      ├─ ai_output_<start>_<end>.json
       └─ regenerated_<start>_<end>.tja
 ```
 
@@ -196,7 +206,7 @@ output/
 - `--special-notes` 会允许简单滚奏和气球音符；当前只做少量模板化插入，仍不支持复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
-- Web UI 是本地 MVP，只提供上传、分析预览、手动覆盖和指定小节范围规则再生成，不提供账号、持久任务管理或在线播放器。
+- Web UI 是本地 MVP，支持上传、分析、游玩预览、局部重新生成和结果导出，但不提供账号、持久任务管理或完整的全曲谱面编辑器。
 - MVP 不支持 BPM 变化、分歧谱面、复杂滚奏演出、滚动演出等复杂语法。
 
 ## 后续方向

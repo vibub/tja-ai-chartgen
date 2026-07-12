@@ -157,7 +157,7 @@ tja-ai-chartgen web
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 ```
 
-The Web UI supports audio upload, OGG playback, BPM/OFFSET/time-signature override, analysis preview, and rule-based or AI-enhanced regeneration of a selected bar range. Its collapsed AI options expose the per-attempt request timeout and 0–1 transport retries. Full-chart generation saves these non-sensitive settings for the result page, and local regenerate calls run the synchronous AI helper in a thread pool so they do not block the FastAPI event loop. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`. Listening on a non-loopback address requires the explicit `--allow-remote` option. This option only acknowledges the exposure risk; it does not add authentication or multi-user data isolation, so public deployments still require authentication and access control in front of the app. Each uploaded file is limited to 100 MiB. Remote mode disables exports to request-selected server directories, and job downloads expose only preview OGG files and generated TJA files, not AI sidecars or internal state files.
+The Web UI supports audio upload, BPM/OFFSET/time-signature override, analysis preview, and rule-based or AI-enhanced regeneration of a selected bar range. Completed jobs open a playable chart preview with OGG playback, automatic note performance, timeline seeking, and don/ka hit sounds. Its collapsed AI options expose the per-attempt request timeout and 0–1 transport retries. Full-chart generation saves these non-sensitive settings for the result page, and local regenerate calls run the synchronous AI helper in a thread pool so they do not block the FastAPI event loop. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`. Listening on a non-loopback address requires the explicit `--allow-remote` option. This option only acknowledges the exposure risk; it does not add authentication or multi-user data isolation, so public deployments still require authentication and access control in front of the app. Each uploaded file is limited to 100 MiB. Remote mode disables exports to request-selected server directories, and job downloads expose only preview OGG files and generated TJA files, not AI sidecars or internal state files.
 
 ## Output
 
@@ -173,7 +173,17 @@ output/
 ├─ report.txt
 └─ web/
    └─ <job-id>/
+      ├─ <uploaded-audio>
+      ├─ <stem>.ogg
       ├─ analysis.json
+      ├─ chart_bars.json
+      ├─ chart_options.json
+      ├─ progress.json
+      ├─ preview.tja
+      ├─ result.html
+      ├─ ai_input_<start>_<end>.json
+      ├─ ai_attempts_<start>_<end>.json
+      ├─ ai_output_<start>_<end>.json
       └─ regenerated_<start>_<end>.tja
 ```
 
