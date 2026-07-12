@@ -10,12 +10,14 @@ from tja_ai_chartgen.audio.analyze import (
     AudioAnalysisRaw,
     _estimate_tempo_and_offset_from_onsets,
     _regular_beat_times,
+    analyze_audio,
     apply_analysis_overrides,
     enhance_with_beatnet,
     estimate_time_signature,
     merge_beatnet_output,
     normalize_bpm,
 )
+from tja_ai_chartgen.tja.model import TempoAnalysisDecision
 
 
 def test_normalize_bpm_keeps_taiko_friendly_range():
@@ -31,35 +33,61 @@ def test_normalize_bpm_rejects_non_positive_values():
 def test_estimate_tempo_and_offset_from_onsets_selects_periodic_grid():
     onset_times = [0.2 + i * 0.5 for i in range(24)]
     weights = [1.0 for _ in onset_times]
-    samples = np.zeros(8_000, dtype=float)
+    samples = np.zeros(12_000, dtype=float)
 
-    bpm, offset = _estimate_tempo_and_offset_from_onsets(
+    estimate = _estimate_tempo_and_offset_from_onsets(
         onset_times,
         weights,
         samples,
         sample_rate=1_000,
         fallback_bpm=90,
+        duration=12.0,
     )
 
-    assert bpm == 120
-    assert offset == pytest.approx(0.2, abs=0.006)
+    assert estimate.accepted is True
+    assert estimate.reason == "accepted"
+    assert estimate.bpm == 120
+    assert estimate.offset == pytest.approx(0.2, abs=0.006)
+    assert estimate.normalized_support >= 0.95
+    assert estimate.onset_count == 24
+    assert estimate.time_coverage == pytest.approx(11.5 / 12.0)
+
+
+def test_estimate_tempo_and_offset_from_onsets_uses_fallback_to_resolve_double_tempo_alias():
+    onset_times = [0.2 + i * 0.6 for i in range(20)]
+
+    estimate = _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        [1.0 for _ in onset_times],
+        np.zeros(12_000, dtype=float),
+        sample_rate=1_000,
+        fallback_bpm=100,
+        duration=12.0,
+    )
+
+    assert estimate.accepted is True
+    assert estimate.bpm == 100
+    assert estimate.offset == pytest.approx(0.2, abs=0.006)
+    assert estimate.runner_up_bpm == 200
 
 
 def test_estimate_tempo_and_offset_from_onsets_preserves_sub_bin_phase():
     onset_times = [0.203 + i * 0.5 for i in range(24)]
     weights = [1.0 for _ in onset_times]
-    samples = np.zeros(8_000, dtype=float)
+    samples = np.zeros(12_000, dtype=float)
 
-    bpm, offset = _estimate_tempo_and_offset_from_onsets(
+    estimate = _estimate_tempo_and_offset_from_onsets(
         onset_times,
         weights,
         samples,
         sample_rate=1_000,
         fallback_bpm=120,
+        duration=12.0,
     )
 
-    assert bpm == 120
-    assert offset == pytest.approx(0.203, abs=0.001)
+    assert estimate.accepted is True
+    assert estimate.bpm == 120
+    assert estimate.offset == pytest.approx(0.203, abs=0.001)
 
 
 def test_estimate_tempo_and_offset_from_onsets_uses_waveform_to_reject_offbeat():
@@ -69,16 +97,18 @@ def test_estimate_tempo_and_offset_from_onsets_uses_waveform_to_reject_offbeat()
     for index in range(0, len(samples), 500):
         samples[index : index + 20] = np.linspace(0.0, 1.0, 20)
 
-    bpm, offset = _estimate_tempo_and_offset_from_onsets(
+    estimate = _estimate_tempo_and_offset_from_onsets(
         onset_times,
         weights,
         samples,
         sample_rate=1_000,
         fallback_bpm=120,
+        duration=10.0,
     )
 
-    assert bpm == 120
-    assert offset == pytest.approx(0.0, abs=0.006)
+    assert estimate.accepted is True
+    assert estimate.bpm == 120
+    assert estimate.offset == pytest.approx(0.0, abs=0.006)
 
 
 def test_estimate_tempo_and_offset_from_onsets_preserves_preoptimization_baseline():
@@ -88,13 +118,129 @@ def test_estimate_tempo_and_offset_from_onsets_preserves_preoptimization_baselin
     for index in range(0, len(samples), 500):
         samples[index : index + 20] = np.linspace(0.0, 1.0, 20)
 
-    assert _estimate_tempo_and_offset_from_onsets(
+    estimate = _estimate_tempo_and_offset_from_onsets(
         onset_times,
         weights,
         samples,
         sample_rate=1_000,
         fallback_bpm=120,
-    ) == (120.0, 0.0)
+        duration=10.0,
+    )
+
+    assert estimate.accepted is True
+    assert (estimate.bpm, estimate.offset) == (120.0, 0.0)
+
+
+def test_estimate_tempo_and_offset_from_onsets_rejects_random_input():
+    onset_times = np.random.default_rng(42).uniform(0.0, 12.0, 24).tolist()
+
+    estimate = _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        [1.0 for _ in onset_times],
+        np.zeros(12_000, dtype=float),
+        sample_rate=1_000,
+        fallback_bpm=120,
+        duration=12.0,
+    )
+
+    assert estimate.accepted is False
+    assert estimate.reason in {"ambiguous_candidates", "low_normalized_support"}
+
+
+def test_estimate_tempo_and_offset_from_onsets_rejects_four_short_onsets():
+    onset_times = [0.2, 0.7, 1.2, 1.7]
+
+    estimate = _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        [1.0 for _ in onset_times],
+        np.zeros(8_000, dtype=float),
+        sample_rate=1_000,
+        fallback_bpm=120,
+        duration=8.0,
+    )
+
+    assert estimate.accepted is False
+    assert estimate.reason == "insufficient_onsets"
+    assert estimate.onset_count == 4
+    assert estimate.time_coverage == pytest.approx(1.5 / 8.0)
+
+
+def test_estimate_tempo_and_offset_from_onsets_rejects_ambiguous_candidates():
+    onset_times = sorted(
+        [0.2 + i * 0.5 for i in range(16)]
+        + [0.2 + i * (60.0 / 128.0) for i in range(16)]
+    )
+
+    estimate = _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        [1.0 for _ in onset_times],
+        np.zeros(8_000, dtype=float),
+        sample_rate=1_000,
+        fallback_bpm=120,
+        duration=8.0,
+    )
+
+    assert estimate.accepted is False
+    assert estimate.reason == "ambiguous_candidates"
+    assert estimate.runner_up_bpm is not None
+    assert estimate.runner_up_support / estimate.normalized_support >= 0.9
+
+
+def test_estimate_tempo_and_offset_from_onsets_rejects_invalid_input():
+    estimate = _estimate_tempo_and_offset_from_onsets(
+        [0.2, 0.7],
+        [1.0],
+        np.zeros(2_000, dtype=float),
+        sample_rate=1_000,
+        fallback_bpm=120,
+        duration=0.0,
+    )
+
+    assert estimate.accepted is False
+    assert estimate.reason == "invalid_input"
+
+
+def test_estimate_tempo_and_offset_from_onsets_rejects_non_vector_input():
+    estimate = _estimate_tempo_and_offset_from_onsets(
+        [[0.2], [0.7]],
+        [[1.0], [1.0]],
+        np.zeros(2_000, dtype=float),
+        sample_rate=1_000,
+        fallback_bpm=120,
+        duration=2.0,
+    )
+
+    assert estimate.accepted is False
+    assert estimate.reason == "invalid_input"
+
+
+def test_estimate_tempo_and_offset_normalizes_support_by_total_weight():
+    short_onsets = [0.2 + i * 0.5 for i in range(12)]
+    long_onsets = [0.2 + i * 0.5 for i in range(24)]
+
+    short_estimate = _estimate_tempo_and_offset_from_onsets(
+        short_onsets,
+        [1.0 for _ in short_onsets],
+        np.zeros(6_000, dtype=float),
+        sample_rate=1_000,
+        fallback_bpm=120,
+        duration=6.0,
+    )
+    long_estimate = _estimate_tempo_and_offset_from_onsets(
+        long_onsets,
+        [1.0 for _ in long_onsets],
+        np.zeros(12_000, dtype=float),
+        sample_rate=1_000,
+        fallback_bpm=120,
+        duration=12.0,
+    )
+
+    assert short_estimate.accepted is True
+    assert long_estimate.accepted is True
+    assert short_estimate.normalized_support == pytest.approx(
+        long_estimate.normalized_support,
+        abs=0.02,
+    )
 
 
 def test_adjust_offset_for_offbeats_skips_precompute_for_empty_waveform(monkeypatch):
@@ -203,6 +349,17 @@ def test_regular_beat_times_keeps_negative_offset_grid_start():
 
 
 def test_apply_analysis_overrides_updates_bpm_and_offset():
+    tempo_analysis = TempoAnalysisDecision(
+        fallback_source="librosa",
+        selected_source="onset-grid",
+        estimated_bpm=120,
+        estimated_offset=0.2,
+        normalized_support=0.95,
+        onset_count=16,
+        time_coverage=0.8,
+        accepted=True,
+        reason="accepted",
+    )
     raw = AudioAnalysisRaw(
         bpm=120,
         beat_times=[0, 0.5, 1.0],
@@ -210,14 +367,19 @@ def test_apply_analysis_overrides_updates_bpm_and_offset():
         onset_strengths=[],
         duration=2.0,
         offset=0.0,
+        analyzer="librosa+onset-grid",
+        tempo_analysis=tempo_analysis,
     )
 
     updated = apply_analysis_overrides(raw, bpm=180.1234, offset=-0.025)
 
     assert updated.bpm == 180.123
     assert updated.offset == -0.025
+    assert updated.analyzer == "librosa+onset-grid+manual-override"
+    assert updated.tempo_analysis == tempo_analysis
     assert raw.bpm == 120
     assert raw.offset == 0.0
+    assert raw.analyzer == "librosa+onset-grid"
 
 
 def test_apply_analysis_overrides_rejects_non_positive_bpm():
@@ -232,6 +394,47 @@ def test_apply_analysis_overrides_rejects_non_positive_bpm():
 
     with pytest.raises(ValueError, match="BPM must be positive"):
         apply_analysis_overrides(raw, bpm=0)
+
+
+def test_analyze_audio_keeps_librosa_baseline_when_onset_grid_is_rejected(tmp_path, monkeypatch):
+    input_path = tmp_path / "sparse.wav"
+    input_path.write_bytes(b"audio")
+    samples = np.zeros(8_000, dtype=float)
+
+    monkeypatch.setattr(audio_analyze.librosa, "load", lambda *args, **kwargs: (samples, 1_000))
+    monkeypatch.setattr(audio_analyze.librosa, "get_duration", lambda *args, **kwargs: 8.0)
+    monkeypatch.setattr(
+        audio_analyze.librosa.onset,
+        "onset_strength",
+        lambda *args, **kwargs: np.ones(8, dtype=float),
+    )
+    monkeypatch.setattr(audio_analyze, "_activity_envelope", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        audio_analyze.librosa.beat,
+        "beat_track",
+        lambda *args, **kwargs: (np.asarray([100.0]), np.asarray([0.1, 0.7])),
+    )
+    monkeypatch.setattr(
+        audio_analyze.librosa.onset,
+        "onset_detect",
+        lambda *args, **kwargs: np.asarray([0.2, 0.9]),
+    )
+    monkeypatch.setattr(
+        audio_analyze.librosa,
+        "frames_to_time",
+        lambda frames, **kwargs: np.asarray(frames, dtype=float),
+    )
+
+    raw = analyze_audio(input_path)
+
+    assert raw.bpm == 100
+    assert raw.offset == 0.1
+    assert raw.beat_times == [0.1, 0.7]
+    assert raw.analyzer == "librosa"
+    assert raw.tempo_analysis is not None
+    assert raw.tempo_analysis.accepted is False
+    assert raw.tempo_analysis.reason == "insufficient_onsets"
+    assert raw.tempo_analysis.selected_source == "librosa"
 
 
 def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
@@ -254,13 +457,17 @@ def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
         ],
     )
 
-    assert updated.analyzer == "beatnet+librosa+onset-grid"
+    assert updated.analyzer == "beatnet"
     assert updated.beat_times[:4] == [0.25, 0.75, 1.25, 1.75]
     assert updated.beat_numbers[:4] == [1, 2, 3, 1]
     assert updated.downbeat_times[:2] == [0.25, 1.75]
     assert updated.offset == 0.25
     assert updated.bpm == 120
     assert updated.time_signature == "3/4"
+    assert updated.tempo_analysis is not None
+    assert updated.tempo_analysis.accepted is False
+    assert updated.tempo_analysis.reason == "insufficient_onsets"
+    assert updated.tempo_analysis.selected_source == "beatnet"
 
 
 def test_merge_beatnet_output_refines_timing_with_onset_grid():
@@ -269,7 +476,7 @@ def test_merge_beatnet_output_refines_timing_with_onset_grid():
         beat_times=[0.1, 0.6],
         onset_times=[0.2 + i * 0.5 for i in range(16)],
         onset_strengths=[],
-        duration=4.0,
+        duration=8.0,
         offset=0.1,
         sample_rate=1_000,
     )
@@ -289,6 +496,9 @@ def test_merge_beatnet_output_refines_timing_with_onset_grid():
     assert updated.beat_times[:4] == [0.2, 0.7, 1.2, 1.7]
     assert updated.offset == 0.2
     assert updated.time_signature == "3/4"
+    assert updated.tempo_analysis is not None
+    assert updated.tempo_analysis.accepted is True
+    assert updated.tempo_analysis.selected_source == "onset-grid"
 
 
 def test_merge_beatnet_output_keeps_raw_when_output_is_empty():
@@ -325,7 +535,7 @@ def test_merge_beatnet_output_ignores_nan_beat_number_rows():
         ],
     )
 
-    assert updated.analyzer == "beatnet+librosa+onset-grid"
+    assert updated.analyzer == "beatnet"
     assert updated.bpm == 120
     assert updated.downbeat_times[:2] == [0.25, 1.75]
 
@@ -351,7 +561,7 @@ def test_merge_beatnet_output_ignores_infinite_time_rows():
         ],
     )
 
-    assert updated.analyzer == "beatnet+librosa+onset-grid"
+    assert updated.analyzer == "beatnet"
     assert updated.bpm == 120
     assert updated.downbeat_times[:2] == [0.25, 1.75]
 

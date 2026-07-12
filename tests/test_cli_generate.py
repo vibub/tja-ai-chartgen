@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.cli import app
-from tja_ai_chartgen.tja.model import ChartBar
+from tja_ai_chartgen.tja.model import ChartBar, TempoAnalysisDecision
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
 
 runner = CliRunner()
@@ -126,7 +126,18 @@ def test_generate_with_beatnet_passes_flag_and_records_config(tmp_path, monkeypa
             offset=0.0,
             downbeat_times=[0.0],
             beat_numbers=[1, 2, 3, 4],
-            analyzer="beatnet+librosa",
+            analyzer="beatnet",
+            tempo_analysis=TempoAnalysisDecision(
+                fallback_source="beatnet",
+                selected_source="beatnet",
+                estimated_bpm=120,
+                estimated_offset=0.0,
+                normalized_support=0.0,
+                onset_count=4,
+                time_coverage=0.75,
+                accepted=False,
+                reason="insufficient_onsets",
+            ),
         )
 
     monkeypatch.setattr("tja_ai_chartgen.cli.convert_to_ogg", fake_convert_to_ogg)
@@ -150,6 +161,10 @@ def test_generate_with_beatnet_passes_flag_and_records_config(tmp_path, monkeypa
     analysis = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
     assert saved_config["use_beatnet"] is True
     assert analysis["time_signature"] == "4/4"
+    assert analysis["analyzer"] == "beatnet"
+    assert analysis["tempo_analysis"]["accepted"] is False
+    assert analysis["tempo_analysis"]["fallback_source"] == "beatnet"
+    assert analysis["tempo_analysis"]["reason"] == "insufficient_onsets"
 
 
 def test_generate_with_time_signature_outputs_measure_and_records_config(tmp_path, monkeypatch):

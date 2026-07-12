@@ -29,6 +29,20 @@ class BarFeature(BaseModel):
     section: str = "unknown"
 
 
+class TempoAnalysisDecision(BaseModel):
+    fallback_source: str
+    selected_source: str
+    estimated_bpm: float
+    estimated_offset: float
+    normalized_support: float = Field(ge=0.0, le=1.0)
+    onset_count: int = Field(ge=0)
+    time_coverage: float = Field(ge=0.0, le=1.0)
+    runner_up_bpm: float | None = None
+    runner_up_support: float | None = Field(default=None, ge=0.0, le=1.0)
+    accepted: bool
+    reason: str
+
+
 class SongAnalysis(BaseModel):
     title: str
     artist: str | None = None
@@ -37,6 +51,8 @@ class SongAnalysis(BaseModel):
     bpm: float
     offset: float
     time_signature: str = "4/4"
+    analyzer: str = "unknown"
+    tempo_analysis: TempoAnalysisDecision | None = None
     bars: list[BarFeature]
 
 

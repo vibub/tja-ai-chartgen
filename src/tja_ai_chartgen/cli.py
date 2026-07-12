@@ -325,6 +325,8 @@ def run_generate(
         bpm=raw.bpm,
         offset=raw.offset,
         time_signature=raw.time_signature,
+        analyzer=raw.analyzer,
+        tempo_analysis=raw.tempo_analysis,
         bars=bars,
     )
     write_json(analysis_path, analysis)

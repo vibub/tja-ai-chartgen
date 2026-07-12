@@ -6,7 +6,7 @@ import pytest
 from tja_ai_chartgen.audio.analyze import analyze_audio
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
-from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, TjaChart
+from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING, render_tja, write_tja_text
 
 
@@ -45,7 +45,14 @@ def test_real_audio_pipeline(
     assert raw.sample_rate == 22050
     assert len(raw.onset_times) >= 12
     assert raw.beat_times
-    assert raw.analyzer in {"librosa", "librosa+onset-grid"}
+    assert raw.analyzer == "librosa+onset-grid"
+    assert raw.tempo_analysis is not None
+    assert raw.tempo_analysis.accepted is True
+    assert raw.tempo_analysis.reason == "accepted"
+    assert raw.tempo_analysis.selected_source == "onset-grid"
+    assert raw.tempo_analysis.normalized_support >= 0.85
+    assert raw.tempo_analysis.onset_count >= 12
+    assert raw.tempo_analysis.time_coverage >= 0.75
 
     features = build_bar_features(raw)
 
@@ -53,6 +60,29 @@ def test_real_audio_pipeline(
     assert all(bar.time_signature == "4/4" for bar in features)
     assert all(bar.grids_per_bar == 16 for bar in features)
     assert any(bar.onset_16 for bar in features)
+
+    analysis = SongAnalysis(
+        title="Golden Click Track",
+        audio_file=str(fixture_path),
+        ogg_file=str(ogg_path),
+        bpm=raw.bpm,
+        offset=raw.offset,
+        analyzer=raw.analyzer,
+        tempo_analysis=raw.tempo_analysis,
+        bars=features,
+    )
+    serialized_analysis = analysis.model_dump(mode="json")
+
+    assert serialized_analysis["analyzer"] == "librosa+onset-grid"
+    assert serialized_analysis["tempo_analysis"]["accepted"] is True
+    assert serialized_analysis["tempo_analysis"]["fallback_source"] == "librosa"
+
+    legacy_analysis = serialized_analysis.copy()
+    legacy_analysis.pop("analyzer")
+    legacy_analysis.pop("tempo_analysis")
+    restored_legacy = SongAnalysis.model_validate(legacy_analysis)
+    assert restored_legacy.analyzer == "unknown"
+    assert restored_legacy.tempo_analysis is None
 
     chart = TjaChart(
         metadata=ChartMetadata(

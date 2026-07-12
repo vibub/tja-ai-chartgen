@@ -1,9 +1,12 @@
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import librosa
 import numpy as np
 from pydantic import BaseModel, Field
+
+from tja_ai_chartgen.tja.model import TempoAnalysisDecision
 
 
 MIN_DETECTED_BPM = 89.0
@@ -13,6 +16,41 @@ PHASE_BIN_SECONDS = 0.005
 PHASE_WINDOW_SECONDS = 0.045
 WAVEFORM_REFINE_WINDOW_SECONDS = 0.035
 WAVEFORM_REFINE_STEP_SECONDS = 0.002
+MIN_ONSET_GRID_ONSETS = 8
+MIN_ONSET_GRID_SPAN_SECONDS = 4.0
+MIN_ONSET_GRID_TIME_COVERAGE = 0.5
+MIN_ONSET_GRID_SUPPORT = 0.75
+MAX_ONSET_GRID_RUNNER_UP_RATIO = 0.9
+MIN_DISTINCT_BPM_DISTANCE = 3.0
+MIN_DISTINCT_BPM_RATIO = 0.03
+
+
+@dataclass(frozen=True)
+class TempoOffsetEstimate:
+    bpm: float
+    offset: float
+    normalized_support: float
+    onset_count: int
+    time_coverage: float
+    runner_up_bpm: float | None
+    runner_up_support: float | None
+    accepted: bool
+    reason: str
+
+    def to_decision(self, fallback_source: str) -> TempoAnalysisDecision:
+        return TempoAnalysisDecision(
+            fallback_source=fallback_source,
+            selected_source="onset-grid" if self.accepted else fallback_source,
+            estimated_bpm=self.bpm,
+            estimated_offset=self.offset,
+            normalized_support=self.normalized_support,
+            onset_count=self.onset_count,
+            time_coverage=self.time_coverage,
+            runner_up_bpm=self.runner_up_bpm,
+            runner_up_support=self.runner_up_support,
+            accepted=self.accepted,
+            reason=self.reason,
+        )
 
 
 class AudioAnalysisRaw(BaseModel):
@@ -29,6 +67,7 @@ class AudioAnalysisRaw(BaseModel):
     beat_numbers: list[int] = Field(default_factory=list)
     time_signature: str = "4/4"
     analyzer: str = "librosa"
+    tempo_analysis: TempoAnalysisDecision | None = None
 
 
 def normalize_bpm(bpm: float) -> float:
@@ -40,6 +79,17 @@ def normalize_bpm(bpm: float) -> float:
     while bpm > MAX_DETECTED_BPM:
         bpm /= 2
     return round(bpm, 3)
+
+
+def _fallback_resolves_double_tempo_alias(
+    best_bpm: float,
+    runner_up_bpm: float,
+    fallback_bpm: float,
+) -> bool:
+    slower_bpm, faster_bpm = sorted((best_bpm, runner_up_bpm))
+    if abs(faster_bpm - (slower_bpm * 2.0)) > BPM_SCAN_STEP:
+        return False
+    return abs(best_bpm - fallback_bpm) + BPM_SCAN_STEP < abs(runner_up_bpm - fallback_bpm)
 
 
 def _activity_envelope(samples: np.ndarray, *, hop_length: int) -> list[float]:
@@ -82,40 +132,169 @@ def _estimate_tempo_and_offset_from_onsets(
     *,
     sample_rate: int,
     fallback_bpm: float,
-) -> tuple[float, float] | None:
-    if len(onset_times) < 4 or len(onset_times) != len(weights):
-        return None
+    duration: float,
+) -> TempoOffsetEstimate:
+    fallback_normalized = (
+        normalize_bpm(fallback_bpm)
+        if np.isfinite(fallback_bpm) and fallback_bpm > 0
+        else 0.0
+    )
 
-    onset_array = np.asarray(onset_times, dtype=float)
-    weight_array = np.asarray(weights, dtype=float)
+    def rejected(
+        reason: str,
+        *,
+        onset_count: int = 0,
+        time_coverage: float = 0.0,
+        bpm: float = fallback_normalized,
+        offset: float = 0.0,
+        normalized_support: float = 0.0,
+        runner_up_bpm: float | None = None,
+        runner_up_support: float | None = None,
+    ) -> TempoOffsetEstimate:
+        return TempoOffsetEstimate(
+            bpm=round(float(bpm), 3),
+            offset=round(float(offset), 6),
+            normalized_support=round(float(normalized_support), 6),
+            onset_count=onset_count,
+            time_coverage=round(float(time_coverage), 6),
+            runner_up_bpm=runner_up_bpm,
+            runner_up_support=(
+                round(float(runner_up_support), 6) if runner_up_support is not None else None
+            ),
+            accepted=False,
+            reason=reason,
+        )
+
+    if len(onset_times) != len(weights) or not np.isfinite(duration) or duration <= 0:
+        return rejected("invalid_input")
+
+    try:
+        onset_array = np.asarray(onset_times, dtype=float)
+        weight_array = np.asarray(weights, dtype=float)
+    except (TypeError, ValueError):
+        return rejected("invalid_input")
+    if onset_array.ndim != 1 or weight_array.ndim != 1 or onset_array.shape != weight_array.shape:
+        return rejected("invalid_input")
+
     valid = np.isfinite(onset_array) & np.isfinite(weight_array) & (onset_array >= 0) & (weight_array > 0)
     onset_array = onset_array[valid]
     weight_array = weight_array[valid]
-    if onset_array.size < 4:
-        return None
+    onset_count = int(onset_array.size)
+    time_span = float(np.ptp(onset_array)) if onset_count >= 2 else 0.0
+    time_coverage = min(1.0, max(0.0, time_span / duration))
 
+    if onset_count < MIN_ONSET_GRID_ONSETS:
+        return rejected(
+            "insufficient_onsets",
+            onset_count=onset_count,
+            time_coverage=time_coverage,
+        )
+    if time_span < MIN_ONSET_GRID_SPAN_SECONDS:
+        return rejected(
+            "insufficient_time_span",
+            onset_count=onset_count,
+            time_coverage=time_coverage,
+        )
+    if time_coverage < MIN_ONSET_GRID_TIME_COVERAGE:
+        return rejected(
+            "insufficient_time_coverage",
+            onset_count=onset_count,
+            time_coverage=time_coverage,
+        )
+
+    total_weight = float(np.sum(weight_array))
+    if not np.isfinite(total_weight) or total_weight <= 0:
+        return rejected(
+            "invalid_input",
+            onset_count=onset_count,
+            time_coverage=time_coverage,
+        )
+
+    candidate_results: list[tuple[float, float, float]] = []
     candidates = np.arange(MIN_DETECTED_BPM, MAX_DETECTED_BPM + BPM_SCAN_STEP, BPM_SCAN_STEP)
-    best_bpm = normalize_bpm(fallback_bpm)
+    best_bpm = fallback_normalized
     best_offset = 0.0
-    best_score = -1.0
-    fallback_normalized = normalize_bpm(fallback_bpm)
+    best_support = -1.0
 
     for bpm in candidates:
         interval = 60.0 / float(bpm)
         score, offset = _phase_confidence(onset_array, weight_array, interval)
-        if score > best_score or (
-            np.isclose(score, best_score, rtol=0.01)
+        normalized_support = min(1.0, max(0.0, float(score / total_weight)))
+        candidate_results.append((normalized_support, float(bpm), float(offset)))
+        if normalized_support > best_support or (
+            np.isclose(normalized_support, best_support, rtol=0.01)
             and abs(bpm - fallback_normalized) < abs(best_bpm - fallback_normalized)
         ):
-            best_score = score
+            best_support = normalized_support
             best_bpm = float(bpm)
-            best_offset = offset
+            best_offset = float(offset)
 
-    if best_score <= 0:
-        return None
+    if best_support <= 0:
+        return rejected(
+            "low_normalized_support",
+            onset_count=onset_count,
+            time_coverage=time_coverage,
+        )
+
+    distinct_distance = max(MIN_DISTINCT_BPM_DISTANCE, best_bpm * MIN_DISTINCT_BPM_RATIO)
+    runner_up = max(
+        (
+            result
+            for result in candidate_results
+            if abs(result[1] - best_bpm) >= distinct_distance
+        ),
+        default=None,
+        key=lambda result: result[0],
+    )
+    runner_up_support = runner_up[0] if runner_up is not None else None
+    runner_up_bpm = runner_up[1] if runner_up is not None else None
+
+    if (
+        runner_up_support is not None
+        and runner_up_bpm is not None
+        and runner_up_support / best_support >= MAX_ONSET_GRID_RUNNER_UP_RATIO
+        and not _fallback_resolves_double_tempo_alias(
+            best_bpm,
+            runner_up_bpm,
+            fallback_normalized,
+        )
+    ):
+        return rejected(
+            "ambiguous_candidates",
+            onset_count=onset_count,
+            time_coverage=time_coverage,
+            bpm=best_bpm,
+            offset=best_offset,
+            normalized_support=best_support,
+            runner_up_bpm=runner_up_bpm,
+            runner_up_support=runner_up_support,
+        )
+    if best_support < MIN_ONSET_GRID_SUPPORT:
+        return rejected(
+            "low_normalized_support",
+            onset_count=onset_count,
+            time_coverage=time_coverage,
+            bpm=best_bpm,
+            offset=best_offset,
+            normalized_support=best_support,
+            runner_up_bpm=runner_up_bpm,
+            runner_up_support=runner_up_support,
+        )
 
     adjusted_offset = _adjust_offset_for_offbeats(samples, sample_rate, best_offset, best_bpm)
-    return round(float(best_bpm), 3), round(float(adjusted_offset), 6)
+    return TempoOffsetEstimate(
+        bpm=round(float(best_bpm), 3),
+        offset=round(float(adjusted_offset), 6),
+        normalized_support=round(float(best_support), 6),
+        onset_count=onset_count,
+        time_coverage=round(float(time_coverage), 6),
+        runner_up_bpm=runner_up_bpm,
+        runner_up_support=(
+            round(float(runner_up_support), 6) if runner_up_support is not None else None
+        ),
+        accepted=True,
+        reason="accepted",
+    )
 
 
 def _phase_confidence(onset_times: np.ndarray, weights: np.ndarray, interval: float) -> tuple[float, float]:
@@ -327,6 +506,8 @@ def apply_analysis_overrides(
     if not updates:
         return raw
 
+    if not raw.analyzer.endswith("+manual-override"):
+        updates["analyzer"] = f"{raw.analyzer}+manual-override"
     return raw.model_copy(update=updates)
 
 
@@ -358,15 +539,16 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
     bpm = normalize_bpm(tempo_value)
     offset = float(beat_times[0]) if beat_times else 0.0
     analyzer = "librosa"
-    refined = _estimate_tempo_and_offset_from_onsets(
+    estimate = _estimate_tempo_and_offset_from_onsets(
         onset_times_list,
         _onset_weights(onset_times_list, onset_env, sample_rate=int(sr), hop_length=hop_length),
         y,
         sample_rate=int(sr),
         fallback_bpm=tempo_value,
+        duration=duration,
     )
-    if refined is not None:
-        bpm, offset = refined
+    if estimate.accepted:
+        bpm, offset = estimate.bpm, estimate.offset
         beat_times = _regular_beat_times(offset, bpm, duration)
         analyzer = "librosa+onset-grid"
 
@@ -381,6 +563,7 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         sample_rate=int(sr),
         hop_length=hop_length,
         analyzer=analyzer,
+        tempo_analysis=estimate.to_decision("librosa"),
     )
 
     if not use_beatnet:
@@ -444,15 +627,16 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
     if positive_intervals:
         bpm = normalize_bpm(60.0 / float(np.mean(positive_intervals)))
 
-    refined = _estimate_tempo_and_offset_from_onsets(
+    estimate = _estimate_tempo_and_offset_from_onsets(
         raw.onset_times,
         _weights_from_raw_onsets(raw),
         np.asarray([], dtype=float),
         sample_rate=raw.sample_rate or 0,
         fallback_bpm=bpm,
+        duration=raw.duration,
     )
-    if refined is not None:
-        bpm, offset = refined
+    if estimate.accepted:
+        bpm, offset = estimate.bpm, estimate.offset
 
     beat_times = _regular_beat_times(offset, bpm, raw.duration)
     if not beat_times:
@@ -478,7 +662,8 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
             "offset": downbeat_times[0] if downbeat_times else offset,
             "time_signature": time_signature,
             "bpm": bpm,
-            "analyzer": "beatnet+librosa+onset-grid",
+            "analyzer": "beatnet+librosa+onset-grid" if estimate.accepted else "beatnet",
+            "tempo_analysis": estimate.to_decision("beatnet"),
         }
     )
 

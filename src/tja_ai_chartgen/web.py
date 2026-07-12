@@ -2184,6 +2184,8 @@ def _run_analyze_job(
             bpm=raw.bpm,
             offset=raw.offset,
             time_signature=raw.time_signature,
+            analyzer=raw.analyzer,
+            tempo_analysis=raw.tempo_analysis,
             bars=bars,
         )
         write_json(job_dir / "analysis.json", analysis)

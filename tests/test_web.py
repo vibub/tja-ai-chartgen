@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
-from tja_ai_chartgen.tja.model import ChartBar
+from tja_ai_chartgen.tja.model import ChartBar, TempoAnalysisDecision
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
 from tja_ai_chartgen.web import (
     WEB_UPLOAD_MAX_BYTES,
@@ -98,7 +98,11 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert "BPM: 180.0" not in result.text
     assert "OFFSET: 0.25" not in result.text
     assert "小节预览" not in result.text
-    assert (job_dir / "analysis.json").exists()
+    analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
+    assert analysis["analyzer"] == "librosa+manual-override"
+    assert analysis["tempo_analysis"]["accepted"] is False
+    assert analysis["tempo_analysis"]["selected_source"] == "librosa"
+    assert analysis["tempo_analysis"]["reason"] == "insufficient_onsets"
     assert (job_dir / "preview.tja").exists()
 
 
@@ -1057,13 +1061,28 @@ def _patch_web_audio_pipeline(monkeypatch, duration=2.0):
 
     def fake_analyze_audio(input_path, use_beatnet=False):
         beat_times = [index * 0.5 for index in range(int(duration / 0.5) + 1)]
+        onset_times = beat_times[:-1]
+        time_span = onset_times[-1] - onset_times[0] if len(onset_times) >= 2 else 0.0
+        reason = "insufficient_onsets" if len(onset_times) < 8 else "insufficient_time_span"
         return AudioAnalysisRaw(
             bpm=120,
             beat_times=beat_times,
-            onset_times=beat_times[:-1],
+            onset_times=onset_times,
             onset_strengths=[],
             duration=duration,
             offset=0.0,
+            analyzer="librosa",
+            tempo_analysis=TempoAnalysisDecision(
+                fallback_source="librosa",
+                selected_source="librosa",
+                estimated_bpm=120,
+                estimated_offset=0.0,
+                normalized_support=0.0,
+                onset_count=len(onset_times),
+                time_coverage=(time_span / duration) if duration > 0 else 0.0,
+                accepted=False,
+                reason=reason,
+            ),
         )
 
     monkeypatch.setattr("tja_ai_chartgen.web.convert_to_ogg", fake_convert_to_ogg)
