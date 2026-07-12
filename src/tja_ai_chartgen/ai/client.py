@@ -512,14 +512,16 @@ def _validate_chart_quality(
     level: int,
     density: str,
 ) -> list[str]:
-    quality_density = _quality_density(density, course, level)
-    if len(bars) < 8:
-        return []
-
     issues: list[str] = []
     expected_bars = analysis.bars[: len(bars)]
     density_hints = build_density_hints(expected_bars)
     hit_counts = [_playable_hit_count(bar.notes) for bar in bars]
+    issues.extend(_density_hint_issues(hit_counts, density_hints))
+
+    if len(bars) < 8:
+        return issues
+
+    quality_density = _quality_density(density, course, level)
     normalized_hit_counts = [
         _normalized_hit_count(bar.notes, expected_length=_expected_note_length(analysis, index))
         for index, bar in enumerate(bars)
@@ -534,8 +536,6 @@ def _validate_chart_quality(
         for index, hint in enumerate(density_hints)
         if hint.kind not in {"silent", "rest"}
     ]
-
-    issues.extend(_density_hint_issues(hit_counts, density_hints))
 
     if quality_indexes and quality_density in {"high", "max"}:
         thresholds = _quality_thresholds(quality_density)

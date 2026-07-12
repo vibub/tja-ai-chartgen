@@ -55,7 +55,7 @@ def test_sanitize_ai_bars_forces_expected_edge_silence_to_empty():
 
 
 def test_build_chart_generation_payload_includes_density():
-    analysis = _analysis()
+    analysis = _analysis(energy=0.5)
 
     payload = build_chart_generation_payload(analysis, "Oni", 10, "technical", "high")
 
@@ -531,6 +531,90 @@ def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypa
     assert "toward target_hits" in captured_messages[1][-1]["content"]
 
 
+def test_generate_chart_bars_with_ai_repairs_sparse_single_bar_output(monkeypatch):
+    responses = [
+        {"bars": [{"bar": 1, "notes": "0000000000000000"}]},
+        {"bars": [{"bar": 1, "notes": "1000100010001000"}]},
+    ]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis(),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert bars == [ChartBar(index=0, notes="1000100010001000")]
+    assert "too sparse for normal density hint" in captured_messages[1][-1]["content"]
+
+
+def test_generate_chart_bars_with_ai_repairs_dense_four_bar_output(monkeypatch):
+    dense_payload = {
+        "bars": [{"bar": index + 1, "notes": "1111111111111111"} for index in range(4)]
+    }
+    fixed_payload = {
+        "bars": [{"bar": index + 1, "notes": "1000100010001000"} for index in range(4)]
+    }
+    responses = [dense_payload, fixed_payload]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis(bar_count=4),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert [bar.notes for bar in bars] == ["1000100010001000"] * 4
+    assert "too dense for normal density hint" in captured_messages[1][-1]["content"]
+
+
+def test_generate_chart_bars_with_ai_accepts_valid_seven_bar_output(monkeypatch):
+    payload = {
+        "bars": [{"bar": index + 1, "notes": "1000100000000000"} for index in range(7)]
+    }
+    call_count = 0
+
+    def fake_completion(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis(bar_count=7),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert call_count == 1
+    assert raw["attempts"][0]["status"] == "ok"
+    assert [bar.notes for bar in bars] == ["1000100000000000"] * 7
+
+
 def test_generate_chart_bars_with_ai_allows_empty_musical_rest_in_high_density(monkeypatch):
     payload = {
         "bars": [
@@ -666,7 +750,7 @@ def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeyp
                 index=0,
                 start_time=0,
                 end_time=1.5,
-                energy=0.5,
+                energy=0.2,
                 time_signature="3/4",
                 grids_per_bar=12,
             )
@@ -795,7 +879,7 @@ def _analysis_with_edge_silence() -> SongAnalysis:
     )
 
 
-def _analysis(bar_count: int = 1, energy: float = 0.5) -> SongAnalysis:
+def _analysis(bar_count: int = 1, energy: float = 0.2) -> SongAnalysis:
     return SongAnalysis(
         title="Song Title",
         artist=None,
