@@ -54,7 +54,7 @@ tja-ai-chartgen generate song.mp3 \
   --special-notes
 ```
 
-When enabled, the rule generator may place a small number of `5...8` drumrolls and `7...8` balloons in high-energy bars, and the writer emits the matching `BALLOON:` header.
+When enabled, the rule generator only places single-bar `5...8` drumrolls and `7...8` balloons in active `fill_candidate`, `phrase_end`, or `song_end` bars instead of using absolute bar-index cycles. Start/end grids follow bar features, duration comes from the actual grid span and bar length, and balloon counts are derived from duration, course, and level. The writer emits the matching `BALLOON:` header. Quality reports record drumroll/balloon counts, duration, required balloon hits, and hits/sec separately; normal notes/sec excludes `5`, `7`, and `8` markers.
 
 Override analyzed BPM and OFFSET when manual calibration is needed:
 
@@ -202,7 +202,7 @@ Each `generate` run writes `generation_config.json` next to the TJA output. It r
 - `--all-courses` writes `<stem>_easy.tja`, `<stem>_normal.tja`, `<stem>_hard.tja`, and `<stem>_oni.tja` using built-in Easy 3, Normal 5, Hard 7, and Oni 10 levels to form a BPM-aware load gradient.
 - `--density auto|low|medium|high|max` adjusts rule-based density within the selected course/level range; all four `--all-courses` charts share the user's density choice. Density is also passed into the AI prompt when `--use-ai` is enabled.
 - `--style technical|stamina|hybrid|performance` selects rhythmic tendency and don/ka coloring for the rule-based chart, plus special-note cadence and AI prompts; ordinary placements still prioritize analyzed music features.
-- `--special-notes` allows simple drumroll and balloon notes; complex drumroll performances are still unsupported.
+- `--special-notes` adds single-bar drumrolls and duration-scaled balloons at active phrase endings or fill candidates; cross-bar rolls, complex drumroll performances, and branch syntax are still unsupported.
 - `--use-beatnet` requires separately installing `BeatNet`; if BeatNet is unavailable or analysis fails, the CLI keeps the default librosa result.
 - `--use-ai` can still fall back to the rule-based generator when the model is unavailable, output repair is exhausted, or credentials are misconfigured.
 - The Web UI is a local MVP. It does not provide accounts, persistent task management, or a full chart editor.

@@ -97,6 +97,30 @@ def test_render_tja_outputs_balloon_header():
     assert "7000000080000000," in text
 
 
+def test_render_tja_outputs_dynamic_balloon_count_for_three_four_bar():
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title="Song Title",
+            wave="song.ogg",
+            bpm=180.0,
+            offset=0.0,
+        ),
+        bars=[
+            ChartBar(
+                index=0,
+                notes="000000700008",
+                time_signature="3/4",
+                balloon_counts=[11],
+            )
+        ],
+    )
+
+    text = render_tja(chart)
+
+    assert "BALLOON:11" in text
+    assert "#MEASURE 3/4\n000000700008," in text
+
+
 def test_write_tja_text_saves_shift_jis_compatible_file(tmp_path):
     path = tmp_path / "song.tja"
     text = "TITLE:迷っちゃうわ\nWAVE:mayocchauwa.ogg\n#START\n1000,\n#END\n"

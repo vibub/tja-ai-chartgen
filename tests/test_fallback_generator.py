@@ -262,14 +262,116 @@ def test_legacy_feature_without_grid_features_still_uses_onset_lists():
     assert _hit_grids(chart_bar.notes).issuperset({1, 5, 9, 13})
 
 
-def test_generate_fallback_chart_bars_can_emit_rolls_and_balloons():
-    bars = [_feature(index, energy=0.9) for index in range(8)]
+def test_special_notes_require_phrase_or_fill_candidate():
+    bars = [_feature(index, energy=0.9, onsets=[8, 12, 14]) for index in range(8)]
 
-    chart_bars = generate_fallback_chart_bars(bars, density="high", special_notes=True)
+    chart_bars = generate_fallback_chart_bars(
+        bars, density="high", special_notes=True
+    )
 
-    assert chart_bars[3].notes == "5000000080000000"
-    assert chart_bars[7].notes == "7000000080000000"
-    assert chart_bars[7].balloon_counts == [8]
+    assert all(set(bar.notes) <= set("01234") for bar in chart_bars)
+    assert all(not bar.balloon_counts for bar in chart_bars)
+
+
+def test_special_notes_can_emit_roll_and_balloon_at_active_phrase_candidates():
+    bars = [
+        _feature(
+            0,
+            energy=0.8,
+            onsets=[8, 10, 12, 14],
+            phrase_position="phrase_end",
+        ),
+        _feature(1, energy=0.8, onsets=[0, 4, 8, 12]),
+        _feature(
+            2,
+            energy=0.95,
+            onsets=[8, 10, 12, 14],
+            phrase_position="song_end",
+            fill_candidate=True,
+        ),
+    ]
+
+    chart_bars = generate_fallback_chart_bars(
+        bars, density="high", special_notes=True, course="Oni", level=10
+    )
+
+    assert "5" in chart_bars[0].notes
+    assert "8" in chart_bars[0].notes
+    assert "7" in chart_bars[2].notes
+    assert "8" in chart_bars[2].notes
+    assert len(chart_bars[2].balloon_counts) == 1
+    assert chart_bars[2].balloon_counts[0] > 0
+
+
+@pytest.mark.parametrize(
+    ("grids", "time_signature"),
+    [(12, "3/4"), (16, "4/4")],
+)
+def test_special_note_span_fits_supported_meter(grids, time_signature):
+    bar = _feature(
+        0,
+        energy=0.9,
+        grids=grids,
+        time_signature=time_signature,
+        onsets=list(range(grids // 2, grids, 2)),
+        phrase_position="phrase_end",
+        fill_candidate=True,
+    )
+
+    chart_bar = generate_fallback_chart_bars(
+        [bar], density="high", special_notes=True
+    )[0]
+
+    start = next(index for index, note in enumerate(chart_bar.notes) if note in "57")
+    end = chart_bar.notes.index("8")
+    assert 0 <= start < end < grids
+    assert len(chart_bar.notes) == grids
+
+
+def test_balloon_count_increases_with_course_and_level():
+    bar = _feature(
+        0,
+        energy=0.95,
+        end_time=2.0,
+        onsets=[8, 10, 12, 14],
+        phrase_position="song_end",
+        fill_candidate=True,
+    )
+
+    counts = []
+    for course, level in [("Easy", 3), ("Normal", 5), ("Hard", 7), ("Oni", 10)]:
+        chart_bar = generate_fallback_chart_bars(
+            [bar],
+            density="high",
+            special_notes=True,
+            course=course,
+            level=level,
+        )[0]
+        counts.append(chart_bar.balloon_counts[0])
+
+    assert counts == sorted(counts)
+    assert counts[0] < counts[-1]
+
+
+def test_balloon_count_increases_with_bar_duration():
+    def generate_count(duration: float) -> int:
+        bar = _feature(
+            0,
+            energy=0.95,
+            end_time=duration,
+            onsets=[8, 10, 12, 14],
+            phrase_position="song_end",
+            fill_candidate=True,
+        )
+        return generate_fallback_chart_bars(
+            [bar],
+            density="high",
+            special_notes=True,
+            course="Hard",
+            level=7,
+        )[0].balloon_counts[0]
+
+    assert generate_count(1.0) < generate_count(2.0)
 
 
 def _feature(
@@ -285,6 +387,7 @@ def _feature(
     beats: list[int] | None = None,
     downbeat: int | None = 0,
     phrase_position: str = "unknown",
+    fill_candidate: bool = False,
     section: str = "unknown",
 ) -> BarFeature:
     onsets = onsets or []
@@ -315,6 +418,7 @@ def _feature(
         beat_grids=beats,
         downbeat_grid=downbeat,
         phrase_position=phrase_position,
+        fill_candidate=fill_candidate,
         section=section,
     )
 

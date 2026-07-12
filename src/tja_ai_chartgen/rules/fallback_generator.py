@@ -10,10 +10,13 @@ from tja_ai_chartgen.rules.styles import (
 )
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, GridFeature
 
-ROLL_PATTERN = "5000000080000000"
-BALLOON_PATTERN = "7000000080000000"
-BALLOON_COUNT = 8
 MAX_HITS_PER_SECOND = 12.0
+BALLOON_HITS_PER_SECOND = {
+    "easy": (2.0, 4.0),
+    "normal": (3.0, 5.0),
+    "hard": (4.0, 7.0),
+    "oni": (5.0, 9.0),
+}
 
 DENSITY_LEVELS = ("auto", "low", "medium", "high", "max")
 DENSITY_LOAD_MULTIPLIERS = {
@@ -71,6 +74,7 @@ def generate_fallback_chart_bars(
     template = get_style_template(style)
     density_hints = build_density_hints(bars)
     chart_bars: list[ChartBar] = []
+    previous_was_special = False
     for index, bar in enumerate(bars):
         hint = density_hints[index]
         if hint.kind in {"silent", "rest"}:
@@ -81,36 +85,33 @@ def generate_fallback_chart_bars(
                     time_signature=bar.time_signature,
                 )
             )
+            previous_was_special = False
             continue
 
-        special_pattern = _special_pattern_for_bar(bar, density, template) if special_notes else None
-        if special_pattern == "balloon":
-            chart_bars.append(
-                ChartBar(
-                    index=bar.index,
-                    notes=_fit_pattern_to_grid(BALLOON_PATTERN, bar.grids_per_bar),
-                    time_signature=bar.time_signature,
-                    balloon_counts=[BALLOON_COUNT],
-                )
+        special_bar = None
+        if special_notes and not previous_was_special:
+            special_bar = _special_chart_bar(
+                bar,
+                density=density,
+                template=template,
+                profile=profile,
+                level=level,
             )
-        elif special_pattern == "roll":
-            chart_bars.append(
-                ChartBar(
-                    index=bar.index,
-                    notes=_fit_pattern_to_grid(ROLL_PATTERN, bar.grids_per_bar),
-                    time_signature=bar.time_signature,
-                )
+        if special_bar is not None:
+            chart_bars.append(special_bar)
+            previous_was_special = True
+            continue
+
+        chart_bars.append(
+            ChartBar(
+                index=bar.index,
+                notes=_feature_driven_pattern(
+                    bar, hint, density, template, profile, level
+                ),
+                time_signature=bar.time_signature,
             )
-        else:
-            chart_bars.append(
-                ChartBar(
-                    index=bar.index,
-                    notes=_feature_driven_pattern(
-                        bar, hint, density, template, profile, level
-                    ),
-                    time_signature=bar.time_signature,
-                )
-            )
+        )
+        previous_was_special = False
     return chart_bars
 
 
@@ -297,23 +298,99 @@ def _effective_density(density: str, hint: BarDensityHint) -> str:
     return "medium"
 
 
-def _special_pattern_for_bar(
+def _special_chart_bar(
     bar: BarFeature,
+    *,
     density: str,
     template: StyleTemplate,
-) -> str | None:
+    profile: CourseLoadProfile,
+    level: int,
+) -> ChartBar | None:
     if density not in {"auto", "high", "max"}:
         return None
-    if density == "auto" and bar.energy < 0.75:
+    if not (
+        bar.fill_candidate
+        or bar.phrase_position in {"phrase_end", "song_end"}
+    ):
         return None
-    if bar.index % template.balloon_every == template.balloon_every - 1:
-        return "balloon"
-    if bar.index % template.special_every == template.special_every - 1:
-        return "roll"
-    return None
+
+    duration = bar.end_time - bar.start_time
+    if not isfinite(duration) or duration <= 0 or bar.grids_per_bar < 3:
+        return None
+    has_activity = bool(bar.onset_16) or any(value > 0 for value in bar.activity_16)
+    onset_richness = min(1.0, len(bar.onset_16) / max(1, bar.grids_per_bar / 4))
+    activity_score = max(bar.energy, onset_richness, max(bar.activity_16, default=0.0))
+    if not has_activity or activity_score < template.special_min_energy:
+        return None
+    if density == "auto" and activity_score < 0.75:
+        return None
+
+    start_grid, end_grid = _special_note_span(bar)
+    special_duration = duration * (end_grid - start_grid) / bar.grids_per_bar
+    is_balloon = special_duration >= duration / 4 and (
+        (
+            bar.phrase_position == "song_end"
+            and activity_score >= template.balloon_min_energy
+        )
+        or (bar.fill_candidate and bar.energy >= template.balloon_min_energy)
+    )
+    notes = ["0"] * bar.grids_per_bar
+    notes[start_grid] = "7" if is_balloon else "5"
+    notes[end_grid] = "8"
+    balloon_counts = (
+        [
+            _balloon_hit_count(
+                special_duration,
+                profile=profile,
+                level=level,
+                multiplier=template.balloon_hits_multiplier,
+            )
+        ]
+        if is_balloon
+        else []
+    )
+    return ChartBar(
+        index=bar.index,
+        notes="".join(notes),
+        time_signature=bar.time_signature,
+        balloon_counts=balloon_counts,
+    )
 
 
-def _fit_pattern_to_grid(pattern: str, grids_per_bar: int) -> str:
-    if grids_per_bar <= len(pattern):
-        return pattern[:grids_per_bar]
-    return pattern.ljust(grids_per_bar, "0")
+def _special_note_span(bar: BarFeature) -> tuple[int, int]:
+    earliest_start = max(0, bar.grids_per_bar // 2)
+    latest_start = bar.grids_per_bar - 2
+    feature_grids = {
+        feature.grid
+        for feature in _grid_features_for_bar(bar)
+        if earliest_start <= feature.grid <= latest_start
+        and (feature.onset or feature.accent or feature.beat is not None)
+    }
+    start_grid = min(feature_grids) if feature_grids else earliest_start
+
+    later_beats = sorted(
+        grid
+        for grid in bar.beat_grids
+        if start_grid + 1 < grid < bar.grids_per_bar
+    )
+    end_grid = later_beats[-1] if later_beats else bar.grids_per_bar - 1
+    if end_grid <= start_grid:
+        end_grid = min(bar.grids_per_bar - 1, start_grid + 1)
+    return start_grid, end_grid
+
+
+def _balloon_hit_count(
+    duration: float,
+    *,
+    profile: CourseLoadProfile,
+    level: int,
+    multiplier: float,
+) -> int:
+    minimum, maximum = BALLOON_HITS_PER_SECOND[profile.name.casefold()]
+    clamped_level = min(profile.max_level, max(profile.min_level, level))
+    level_span = profile.max_level - profile.min_level
+    level_position = (
+        (clamped_level - profile.min_level) / level_span if level_span else 0.0
+    )
+    hits_per_second = minimum + (maximum - minimum) * level_position
+    return max(1, round(duration * hits_per_second * multiplier))

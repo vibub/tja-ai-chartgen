@@ -25,6 +25,14 @@ class QualityReport(BaseModel):
     playable_duration_seconds: float = Field(ge=0.0)
     average_notes_per_second: float = Field(ge=0.0)
     peak_bar_notes_per_second: float = Field(ge=0.0)
+    drumroll_count: int = Field(ge=0)
+    balloon_count: int = Field(ge=0)
+    special_note_count: int = Field(ge=0)
+    drumroll_duration_seconds: float = Field(ge=0.0)
+    balloon_duration_seconds: float = Field(ge=0.0)
+    special_note_duration_seconds: float = Field(ge=0.0)
+    balloon_required_hits: int = Field(ge=0)
+    balloon_hits_per_second: float = Field(ge=0.0)
 
 
 def build_quality_report(
@@ -35,7 +43,8 @@ def build_quality_report(
     paired_chart_bars = chart_bars[:paired_count]
     paired_feature_bars = feature_bars[:paired_count]
     density_hints = build_density_hints(paired_feature_bars)
-    hit_counts = [playable_hit_count(bar.notes) for bar in chart_bars]
+    hit_counts = [density_hit_count(bar.notes) for bar in chart_bars]
+    activity_counts = [chart_activity_count(bar.notes) for bar in chart_bars]
     density_compliant = sum(
         density_hint_is_satisfied(hit_count, hint)
         for hit_count, hint in zip(hit_counts, density_hints, strict=False)
@@ -44,12 +53,12 @@ def build_quality_report(
 
     silent_indexes = edge_silence_indexes(paired_feature_bars)
     silent_bar_note_count = sum(
-        playable_hit_count(paired_chart_bars[index].notes)
+        chart_activity_count(paired_chart_bars[index].notes)
         for index in silent_indexes
         if index < len(paired_chart_bars)
     )
 
-    nonempty_patterns = [bar.notes for bar in chart_bars if playable_hit_count(bar.notes) > 0]
+    nonempty_patterns = [bar.notes for bar in chart_bars if chart_activity_count(bar.notes) > 0]
     repeated_bar_count = sum(count - 1 for count in Counter(nonempty_patterns).values())
     don_count, ka_count, longest_monochrome_run = note_color_metrics(chart_bars)
     normal_note_count = don_count + ka_count
@@ -69,6 +78,15 @@ def build_quality_report(
         hit_count / duration
         for hit_count, duration in zip(timed_hit_counts, timed_durations, strict=True)
     ]
+    (
+        drumroll_count,
+        balloon_count,
+        drumroll_duration,
+        balloon_duration,
+        balloon_required_hits,
+    ) = special_note_metrics(chart_bars, feature_bars)
+    special_note_count = drumroll_count + balloon_count
+    special_note_duration = drumroll_duration + balloon_duration
 
     return QualityReport(
         bar_count=len(chart_bars),
@@ -78,7 +96,7 @@ def build_quality_report(
             density_compliant / density_evaluated if density_evaluated else 1.0
         ),
         silent_bar_note_count=silent_bar_note_count,
-        longest_empty_bar_run=longest_empty_bar_run(hit_counts),
+        longest_empty_bar_run=longest_empty_bar_run(activity_counts),
         repeated_bar_count=repeated_bar_count,
         repeated_bar_rate=(
             repeated_bar_count / len(nonempty_patterns) if nonempty_patterns else 0.0
@@ -95,17 +113,86 @@ def build_quality_report(
             else 0.0
         ),
         peak_bar_notes_per_second=max(bar_notes_per_second, default=0.0),
+        drumroll_count=drumroll_count,
+        balloon_count=balloon_count,
+        special_note_count=special_note_count,
+        drumroll_duration_seconds=drumroll_duration,
+        balloon_duration_seconds=balloon_duration,
+        special_note_duration_seconds=special_note_duration,
+        balloon_required_hits=balloon_required_hits,
+        balloon_hits_per_second=(
+            balloon_required_hits / balloon_duration if balloon_duration else 0.0
+        ),
     )
 
 
 def playable_hit_count(notes: str) -> int:
+    return sum(character in "1234" for character in notes)
+
+
+def density_hit_count(notes: str) -> int:
     return sum(character != "0" for character in notes)
+
+
+def chart_activity_count(notes: str) -> int:
+    return sum(character in "123457" for character in notes)
+
+
+def special_note_metrics(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+) -> tuple[int, int, float, float, int]:
+    drumroll_count = 0
+    balloon_count = 0
+    drumroll_duration = 0.0
+    balloon_duration = 0.0
+    balloon_required_hits = 0
+
+    for bar_index, chart_bar in enumerate(chart_bars):
+        balloon_index = 0
+        feature_bar = feature_bars[bar_index] if bar_index < len(feature_bars) else None
+        bar_duration = (
+            feature_bar.end_time - feature_bar.start_time
+            if feature_bar is not None
+            else 0.0
+        )
+        valid_duration = isfinite(bar_duration) and bar_duration > 0 and len(chart_bar.notes) > 0
+
+        for start_grid, note in enumerate(chart_bar.notes):
+            if note not in {"5", "7"}:
+                continue
+            end_grid = chart_bar.notes.find("8", start_grid + 1)
+            duration = (
+                bar_duration * (end_grid - start_grid) / len(chart_bar.notes)
+                if valid_duration and end_grid > start_grid
+                else 0.0
+            )
+            if note == "5":
+                drumroll_count += 1
+                drumroll_duration += duration
+                continue
+
+            balloon_count += 1
+            balloon_duration += duration
+            if balloon_index < len(chart_bar.balloon_counts):
+                count = chart_bar.balloon_counts[balloon_index]
+                if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                    balloon_required_hits += count
+            balloon_index += 1
+
+    return (
+        drumroll_count,
+        balloon_count,
+        drumroll_duration,
+        balloon_duration,
+        balloon_required_hits,
+    )
 
 
 def normalized_hit_count(notes: str, expected_length: int) -> float:
     if expected_length <= 0:
         return 0.0
-    return playable_hit_count(notes) * 16 / expected_length
+    return density_hit_count(notes) * 16 / expected_length
 
 
 def density_hint_is_satisfied(hit_count: int, hint: BarDensityHint) -> bool:
@@ -150,7 +237,7 @@ def longest_empty_bar_run(hit_counts: list[int]) -> int:
 
 
 def pattern_counts(chart_bars: list[ChartBar]) -> Counter[str]:
-    return Counter(bar.notes for bar in chart_bars if playable_hit_count(bar.notes) > 0)
+    return Counter(bar.notes for bar in chart_bars if chart_activity_count(bar.notes) > 0)
 
 
 def note_color_metrics(chart_bars: list[ChartBar]) -> tuple[int, int, int]:

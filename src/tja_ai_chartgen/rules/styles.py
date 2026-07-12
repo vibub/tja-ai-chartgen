@@ -10,8 +10,9 @@ class StyleTemplate:
     medium_patterns: tuple[str, ...]
     high_patterns: tuple[str, ...]
     max_patterns: tuple[str, ...]
-    special_every: int
-    balloon_every: int
+    special_min_energy: float
+    balloon_min_energy: float
+    balloon_hits_multiplier: float
 
 
 STYLE_TEMPLATES = {
@@ -23,8 +24,9 @@ STYLE_TEMPLATES = {
         medium_patterns=("1122001111220011", "1012101210121022"),
         high_patterns=("1122112211221122", "1212122212121222"),
         max_patterns=("1122112233441122", "1211221211223344"),
-        special_every=4,
-        balloon_every=8,
+        special_min_energy=0.55,
+        balloon_min_energy=0.9,
+        balloon_hits_multiplier=1.0,
     ),
     "stamina": StyleTemplate(
         name="stamina",
@@ -34,8 +36,9 @@ STYLE_TEMPLATES = {
         medium_patterns=("1110111011101110", "2220222022202220"),
         high_patterns=("1112111211121112", "2221222122212221"),
         max_patterns=("1122112211221122", "2211221122112211"),
-        special_every=4,
-        balloon_every=8,
+        special_min_energy=0.55,
+        balloon_min_energy=0.9,
+        balloon_hits_multiplier=1.0,
     ),
     "hybrid": StyleTemplate(
         name="hybrid",
@@ -45,8 +48,9 @@ STYLE_TEMPLATES = {
         medium_patterns=("1122001110121022", "1012101211220011"),
         high_patterns=("1122112212121222", "1212122211221122"),
         max_patterns=("1122112233441122", "1211221233441212"),
-        special_every=4,
-        balloon_every=8,
+        special_min_energy=0.55,
+        balloon_min_energy=0.9,
+        balloon_hits_multiplier=1.0,
     ),
     "performance": StyleTemplate(
         name="performance",
@@ -56,8 +60,9 @@ STYLE_TEMPLATES = {
         medium_patterns=("1030204010302040", "3010401030104010"),
         high_patterns=("3311441133114411", "1133441111334411"),
         max_patterns=("3311441133441122", "1133442233114422"),
-        special_every=3,
-        balloon_every=6,
+        special_min_energy=0.45,
+        balloon_min_energy=0.8,
+        balloon_hits_multiplier=0.95,
     ),
 }
 

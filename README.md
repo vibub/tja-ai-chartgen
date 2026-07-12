@@ -75,7 +75,7 @@ tja-ai-chartgen generate song.mp3 \
   --special-notes
 ```
 
-启用后规则生成器会在高能量小节中少量使用 `5...8` 滚奏和 `7...8` 气球，并在 `.tja` 中输出对应 `BALLOON:` 头。
+启用后，规则生成器只会在活跃的 `fill_candidate`、`phrase_end` 或 `song_end` 小节中使用单小节 `5...8` 滚奏和 `7...8` 气球，不再按绝对小节编号周期插入。起止格点会跟随小节特征，持续时间按实际格点跨度与小节时长计算；气球击打数再根据持续秒数、course 和 level 动态生成，并在 `.tja` 中输出对应 `BALLOON:` 头。质量报告会单独记录滚奏/气球数量、持续时间、气球目标击打数和 hits/sec，普通 notes/sec 不计算 `5`、`7`、`8` 标记。
 
 在需要人工校准时覆盖自动分析得到的 BPM 和 OFFSET：
 
@@ -224,7 +224,7 @@ output/
 - `--all-courses` 会分别输出 `<stem>_easy.tja`、`<stem>_normal.tja`、`<stem>_hard.tja`、`<stem>_oni.tja`，并使用 Easy 3、Normal 5、Hard 7、Oni 10 的内置等级建立 BPM 感知的负荷梯度。
 - `--density auto|low|medium|high|max` 会在当前 course/level 难度范围内调整规则生成器密度；`--all-courses` 的四张谱面共享用户选择的 density。启用 `--use-ai` 时 density 也会传入 AI prompt。
 - `--style technical|stamina|hybrid|performance` 会选择风格模板，影响规则谱面的节奏倾向与咚咔配色、特殊音符插入节奏和 AI prompt；普通落点仍优先跟随分析得到的音乐特征。
-- `--special-notes` 会允许简单滚奏和气球音符；当前只做少量模板化插入，仍不支持复杂滚奏演出或分支语法。
+- `--special-notes` 会在活跃的乐句结尾或 fill 候选中生成单小节滚奏和动态击打数气球；仍不支持跨小节滚奏、复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
 - Web UI 是本地 MVP，支持上传、分析、游玩预览、局部重新生成和结果导出，但不提供账号、持久任务管理或完整的全曲谱面编辑器。

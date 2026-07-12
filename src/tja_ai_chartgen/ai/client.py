@@ -19,11 +19,12 @@ from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 from tja_ai_chartgen.tja.quality import (
+    chart_activity_count,
+    density_hit_count,
     empty_runs,
     normalized_hit_count,
     note_color_metrics,
     pattern_counts,
-    playable_hit_count,
 )
 
 ALLOWED_AI_NOTES = set("01234578")
@@ -502,7 +503,7 @@ def _validate_edge_silence(bars: list[ChartBar], expected_bars: list[BarFeature]
     for index in sorted(edge_silence_indexes(expected_bars)):
         if index >= len(bars):
             continue
-        if playable_hit_count(bars[index].notes) == 0:
+        if chart_activity_count(bars[index].notes) == 0:
             continue
         issues.append(
             f"bars[{index}].notes must be all 0 because the matching input bar is "
@@ -522,7 +523,7 @@ def _validate_chart_quality(
     issues: list[str] = []
     expected_bars = analysis.bars[: len(bars)]
     density_hints = build_density_hints(expected_bars)
-    hit_counts = [playable_hit_count(bar.notes) for bar in bars]
+    hit_counts = [density_hit_count(bar.notes) for bar in bars]
     issues.extend(_density_hint_issues(hit_counts, density_hints))
 
     if len(bars) < 8:

@@ -372,9 +372,14 @@ def test_generate_with_special_notes_outputs_balloon_header(tmp_path, monkeypatc
     assert result.exit_code == 0, result.output
     tja_text = (output_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
-    assert "5000000080000000," in tja_text
-    assert "BALLOON:8" in tja_text
-    assert "7000000080000000," in tja_text
+    quality_report = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
+    chart_lines = [line.removesuffix(",") for line in tja_text.splitlines() if line.endswith(",")]
+    assert any("5" in line and "8" in line for line in chart_lines)
+    assert any("7" in line and "8" in line for line in chart_lines)
+    assert "BALLOON:" in tja_text
+    assert quality_report["drumroll_count"] >= 1
+    assert quality_report["balloon_count"] >= 1
+    assert quality_report["balloon_required_hits"] >= 1
     assert saved_config["special_notes"] is True
 
 

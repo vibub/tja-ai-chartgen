@@ -107,6 +107,57 @@ def test_quality_report_ignores_invalid_bar_durations(end_time):
     assert report.peak_bar_notes_per_second == 0.0
 
 
+def test_quality_report_records_special_note_duration_and_balloon_load():
+    features = [
+        _feature(0, energy=0.8, start_time=0.0, end_time=2.0),
+        _feature(1, energy=0.9, start_time=2.0, end_time=3.0),
+    ]
+    bars = [
+        _chart_bar(0, "0000500000008000"),
+        ChartBar(
+            index=1,
+            notes="0000000700000080",
+            balloon_counts=[6],
+        ),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.drumroll_count == 1
+    assert report.balloon_count == 1
+    assert report.special_note_count == 2
+    assert report.drumroll_duration_seconds == pytest.approx(1.0)
+    assert report.balloon_duration_seconds == pytest.approx(7 / 16)
+    assert report.special_note_duration_seconds == pytest.approx(23 / 16)
+    assert report.balloon_required_hits == 6
+    assert report.balloon_hits_per_second == pytest.approx(96 / 7)
+    assert report.playable_note_count == 0
+    assert report.average_notes_per_second == 0.0
+
+
+def test_quality_report_excludes_sustained_markers_from_normal_note_count():
+    features = [_feature(0, energy=0.8, start_time=0.0, end_time=2.0)]
+    bars = [_chart_bar(0, "1234578000000000")]
+
+    report = build_quality_report(bars, features)
+
+    assert report.playable_note_count == 4
+    assert report.average_notes_per_second == pytest.approx(2.0)
+
+
+def test_quality_report_special_metrics_default_to_zero():
+    report = build_quality_report([], [])
+
+    assert report.drumroll_count == 0
+    assert report.balloon_count == 0
+    assert report.special_note_count == 0
+    assert report.drumroll_duration_seconds == 0.0
+    assert report.balloon_duration_seconds == 0.0
+    assert report.special_note_duration_seconds == 0.0
+    assert report.balloon_required_hits == 0
+    assert report.balloon_hits_per_second == 0.0
+
+
 def test_quality_report_uses_same_metrics_for_identical_ai_and_fallback_bars():
     features = [_feature(index, energy=0.3) for index in range(2)]
     ai_bars = [
