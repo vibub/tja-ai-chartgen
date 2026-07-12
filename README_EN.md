@@ -135,12 +135,14 @@ tja-ai-chartgen generate song.mp3 \
   --use-ai \
   --model openai/custom-model \
   --ai-base-url https://llm.example.com/v1 \
-  --ai-api-key sk-...
+  --ai-api-key sk-... \
+  --ai-request-timeout 300 \
+  --ai-transport-retries 1
 ```
 
-`generation_config.json` records the final resolved `model`, but does not record `OPENAI_BASE_URL` or `OPENAI_API_KEY`. When rerunning AI generation, provide connection settings again through `.env`, environment variables, or command-line options.
+`generation_config.json` records the final resolved `model`, per-attempt request timeout, and transport retry count, but does not record `OPENAI_BASE_URL` or `OPENAI_API_KEY`. When rerunning AI generation, provide connection settings again through `.env`, environment variables, or command-line options.
 
-AI output is strictly validated before use. If JSON shape, bar count, note length, or allowed characters fail MVP constraints, the CLI sends a repair prompt and retries. The default repair retry count is 2 and can be changed with `--ai-repair-retries`. If repair still fails, generation falls back to the rule-based generator.
+Each AI provider transport attempt times out after 300 seconds by default. Use `--ai-request-timeout` to select 1–600 seconds. Timeouts, connection failures, HTTP 429 responses, and major 5xx errors are retried at most once by default; use `--ai-transport-retries 0|1` to change this. LiteLLM internal retries are disabled so the project can record the elapsed time and exception category for every transport attempt. Authentication and request-parameter errors are not retried. Transport retries are independent from content repair: output that fails JSON, bar-count, note-length, character, or quality validation is repaired up to 2 times by default, configurable with `--ai-repair-retries`. Exhausting either boundary falls back to the rule-based generator.
 
 Re-run a saved generation config:
 
@@ -155,7 +157,7 @@ tja-ai-chartgen web
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 ```
 
-The Web UI supports audio upload, OGG playback, BPM/OFFSET/time-signature override, analysis preview, and regenerating a selected bar range. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`. Listening on a non-loopback address requires the explicit `--allow-remote` option. This option only acknowledges the exposure risk; it does not add authentication or multi-user data isolation, so public deployments still require authentication and access control in front of the app. Each uploaded file is limited to 100 MiB. Remote mode disables exports to request-selected server directories, and job downloads expose only preview OGG files and generated TJA files, not AI sidecars or internal state files.
+The Web UI supports audio upload, OGG playback, BPM/OFFSET/time-signature override, analysis preview, and rule-based or AI-enhanced regeneration of a selected bar range. Its collapsed AI options expose the per-attempt request timeout and 0–1 transport retries. Full-chart generation saves these non-sensitive settings for the result page, and local regenerate calls run the synchronous AI helper in a thread pool so they do not block the FastAPI event loop. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`. Listening on a non-loopback address requires the explicit `--allow-remote` option. This option only acknowledges the exposure risk; it does not add authentication or multi-user data isolation, so public deployments still require authentication and access control in front of the app. Each uploaded file is limited to 100 MiB. Remote mode disables exports to request-selected server directories, and job downloads expose only preview OGG files and generated TJA files, not AI sidecars or internal state files.
 
 ## Output
 
@@ -166,6 +168,7 @@ output/
 ├─ analysis.json
 ├─ generation_config.json
 ├─ ai_input.json
+├─ ai_attempts.json
 ├─ ai_output.json
 ├─ report.txt
 └─ web/
@@ -176,7 +179,7 @@ output/
 
 ## Reproducibility
 
-Each `generate` run writes `generation_config.json` next to the TJA output. It records input path, metadata, difficulty, all-course mode, style, density, `--max-bars`, BPM/OFFSET overrides, time-signature override, BeatNet flag, special-note flag, AI flag, final resolved model name, and AI repair retry count. Use `generate-from-config` to run the same generation parameters again. API keys and base URLs are not written to `generation_config.json`; provide connection settings again through `.env`, environment variables, or command options when rerunning AI generation.
+Each `generate` run writes `generation_config.json` next to the TJA output. It records input path, metadata, difficulty, all-course mode, style, density, `--max-bars`, BPM/OFFSET overrides, time-signature override, BeatNet flag, special-note flag, AI flag, final resolved model name, content repair count, request timeout, and transport retry count. Use `generate-from-config` to run the same generation parameters again. `ai_attempts*.json` records content-validation attempts separately from actual transport attempts and includes a stable fallback reason when generation ultimately fails. API keys and base URLs are not written to `generation_config.json`; provide connection settings again through `.env`, environment variables, or command options when rerunning AI generation.
 
 ## Limitations
 

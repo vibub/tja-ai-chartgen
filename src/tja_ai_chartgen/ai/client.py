@@ -1,9 +1,18 @@
 import json
 import os
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
-from litellm import completion
+from litellm import (
+    APIConnectionError,
+    InternalServerError,
+    RateLimitError,
+    ServiceUnavailableError,
+    Timeout,
+    completion,
+)
+from openai import OpenAIError
 
 from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
@@ -13,12 +22,36 @@ from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 ALLOWED_AI_NOTES = set("01234578")
 FALLBACK_AI_PATTERN = "1000100010001000"
 DEFAULT_AI_REPAIR_RETRIES = 2
+DEFAULT_AI_REQUEST_TIMEOUT = 300.0
+DEFAULT_AI_TRANSPORT_RETRIES = 1
+MIN_AI_REQUEST_TIMEOUT = 1.0
+MAX_AI_REQUEST_TIMEOUT = 600.0
+_RETRYABLE_PROVIDER_ERRORS = (
+    Timeout,
+    APIConnectionError,
+    RateLimitError,
+    ServiceUnavailableError,
+    InternalServerError,
+)
 
 
 class AiOutputRepairError(RuntimeError):
     def __init__(self, message: str, output: dict[str, Any]) -> None:
         super().__init__(message)
         self.output = output
+
+
+class AiProviderError(RuntimeError):
+    def __init__(self, message: str, output: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.output = output
+
+
+class _AiProviderCallError(RuntimeError):
+    def __init__(self, error: OpenAIError, fallback_reason: str) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.fallback_reason = fallback_reason
 
 
 class _AiOutputValidationError(ValueError):
@@ -39,7 +72,14 @@ def generate_chart_bars_with_ai(
     max_repair_attempts: int = DEFAULT_AI_REPAIR_RETRIES,
     special_notes: bool = False,
     attempt_log_path: Path | None = None,
+    request_timeout: float = DEFAULT_AI_REQUEST_TIMEOUT,
+    max_transport_retries: int = DEFAULT_AI_TRANSPORT_RETRIES,
 ) -> tuple[list[ChartBar], dict[str, Any]]:
+    if not MIN_AI_REQUEST_TIMEOUT <= request_timeout <= MAX_AI_REQUEST_TIMEOUT:
+        raise ValueError("AI request timeout must be between 1 and 600 seconds")
+    if max_transport_retries not in (0, 1):
+        raise ValueError("AI transport retries must be 0 or 1")
+
     model_name = model or os.getenv("MODEL", "openai/gpt-4o-mini")
     resolved_api_base = api_base or os.getenv("OPENAI_BASE_URL")
     resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -54,16 +94,54 @@ def generate_chart_bars_with_ai(
     )
     messages = [{"role": "user", "content": prompt}]
     attempts: list[dict[str, Any]] = []
+    transport_attempts: list[dict[str, Any]] = []
 
     for attempt_index in range(repair_attempts + 1):
-        response = completion(
-            **_completion_kwargs(
+        try:
+            response = _completion_with_transport_retries(
                 model=model_name,
                 messages=messages,
                 api_base=resolved_api_base,
                 api_key=resolved_api_key,
+                content_attempt=attempt_index + 1,
+                request_timeout=request_timeout,
+                max_transport_retries=max_transport_retries,
+                transport_attempts=transport_attempts,
             )
-        )
+        except _AiProviderCallError as error:
+            output = _build_ai_output(
+                model=model_name,
+                api_base=resolved_api_base,
+                api_key_provided=bool(resolved_api_key),
+                max_repair_attempts=repair_attempts,
+                request_timeout=request_timeout,
+                max_transport_retries=max_transport_retries,
+                attempts=attempts,
+                transport_attempts=transport_attempts,
+                fallback_reason=error.fallback_reason,
+                final=None,
+                api_key=resolved_api_key,
+            )
+            _write_attempt_log(
+                attempt_log_path,
+                model=model_name,
+                api_base=resolved_api_base,
+                api_key_provided=bool(resolved_api_key),
+                max_repair_attempts=repair_attempts,
+                request_timeout=request_timeout,
+                max_transport_retries=max_transport_retries,
+                attempts=attempts,
+                transport_attempts=transport_attempts,
+                fallback_reason=error.fallback_reason,
+                final=None,
+                api_key=resolved_api_key,
+            )
+            safe_message = _redact_sensitive_value(str(error.error), resolved_api_key)
+            raise AiProviderError(
+                f"AI provider request failed ({type(error.error).__name__}): {safe_message}",
+                output,
+            ) from None
+
         content = _extract_response_content(response)
 
         try:
@@ -94,18 +172,31 @@ def generate_chart_bars_with_ai(
                 api_base=resolved_api_base,
                 api_key_provided=bool(resolved_api_key),
                 max_repair_attempts=repair_attempts,
+                request_timeout=request_timeout,
+                max_transport_retries=max_transport_retries,
                 attempts=attempts,
+                transport_attempts=transport_attempts,
+                fallback_reason=None,
                 final=data,
+                api_key=resolved_api_key,
             )
-            if attempt_log_path and any(attempt.get("status") == "invalid" for attempt in attempts):
+            should_write_attempts = any(
+                attempt.get("status") == "invalid" for attempt in attempts
+            ) or any(attempt.get("status") == "error" for attempt in transport_attempts)
+            if attempt_log_path and should_write_attempts:
                 _write_attempt_log(
                     attempt_log_path,
                     model=model_name,
                     api_base=resolved_api_base,
                     api_key_provided=bool(resolved_api_key),
                     max_repair_attempts=repair_attempts,
+                    request_timeout=request_timeout,
+                    max_transport_retries=max_transport_retries,
                     attempts=attempts,
+                    transport_attempts=transport_attempts,
+                    fallback_reason=None,
                     final=data,
+                    api_key=resolved_api_key,
                 )
             return bars, output
 
@@ -123,8 +214,13 @@ def generate_chart_bars_with_ai(
             api_base=resolved_api_base,
             api_key_provided=bool(resolved_api_key),
             max_repair_attempts=repair_attempts,
+            request_timeout=request_timeout,
+            max_transport_retries=max_transport_retries,
             attempts=attempts,
+            transport_attempts=transport_attempts,
+            fallback_reason=None,
             final=None,
+            api_key=resolved_api_key,
         )
 
         if attempt_index < repair_attempts:
@@ -148,8 +244,27 @@ def generate_chart_bars_with_ai(
         api_base=resolved_api_base,
         api_key_provided=bool(resolved_api_key),
         max_repair_attempts=repair_attempts,
+        request_timeout=request_timeout,
+        max_transport_retries=max_transport_retries,
         attempts=attempts,
+        transport_attempts=transport_attempts,
+        fallback_reason="invalid_content_retries_exhausted",
         final=None,
+        api_key=resolved_api_key,
+    )
+    _write_attempt_log(
+        attempt_log_path,
+        model=model_name,
+        api_base=resolved_api_base,
+        api_key_provided=bool(resolved_api_key),
+        max_repair_attempts=repair_attempts,
+        request_timeout=request_timeout,
+        max_transport_retries=max_transport_retries,
+        attempts=attempts,
+        transport_attempts=transport_attempts,
+        fallback_reason="invalid_content_retries_exhausted",
+        final=None,
+        api_key=resolved_api_key,
     )
     raise AiOutputRepairError(
         f"AI output remained invalid after {len(attempts)} attempt(s): "
@@ -193,17 +308,83 @@ def sanitize_ai_bars(
     return sanitized
 
 
+def _completion_with_transport_retries(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    api_base: str | None,
+    api_key: str | None,
+    content_attempt: int,
+    request_timeout: float,
+    max_transport_retries: int,
+    transport_attempts: list[dict[str, Any]],
+) -> Any:
+    for transport_attempt in range(1, max_transport_retries + 2):
+        started_at = perf_counter()
+        try:
+            response = completion(
+                **_completion_kwargs(
+                    model=model,
+                    messages=messages,
+                    api_base=api_base,
+                    api_key=api_key,
+                    request_timeout=request_timeout,
+                )
+            )
+        except _RETRYABLE_PROVIDER_ERRORS as error:
+            transport_attempts.append(
+                {
+                    "content_attempt": content_attempt,
+                    "transport_attempt": transport_attempt,
+                    "status": "error",
+                    "elapsed_seconds": max(0.0, perf_counter() - started_at),
+                    "error_type": type(error).__name__,
+                    "error": _redact_sensitive_value(str(error), api_key),
+                }
+            )
+            if transport_attempt <= max_transport_retries:
+                continue
+            raise _AiProviderCallError(error, "transport_retries_exhausted") from None
+        except OpenAIError as error:
+            transport_attempts.append(
+                {
+                    "content_attempt": content_attempt,
+                    "transport_attempt": transport_attempt,
+                    "status": "error",
+                    "elapsed_seconds": max(0.0, perf_counter() - started_at),
+                    "error_type": type(error).__name__,
+                    "error": _redact_sensitive_value(str(error), api_key),
+                }
+            )
+            raise _AiProviderCallError(error, "provider_error") from None
+        else:
+            transport_attempts.append(
+                {
+                    "content_attempt": content_attempt,
+                    "transport_attempt": transport_attempt,
+                    "status": "ok",
+                    "elapsed_seconds": max(0.0, perf_counter() - started_at),
+                }
+            )
+            return response
+
+    raise AssertionError("transport retry loop exited without a response")
+
+
 def _completion_kwargs(
     *,
     model: str,
     messages: list[dict[str, str]],
     api_base: str | None,
     api_key: str | None,
+    request_timeout: float,
 ) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": 0.7,
+        "timeout": request_timeout,
+        "max_retries": 0,
     }
 
     if api_base:
@@ -578,17 +759,27 @@ def _build_ai_output(
     api_base: str | None,
     api_key_provided: bool,
     max_repair_attempts: int,
+    request_timeout: float,
+    max_transport_retries: int,
     attempts: list[dict[str, Any]],
+    transport_attempts: list[dict[str, Any]],
+    fallback_reason: str | None,
     final: dict[str, Any] | None,
+    api_key: str | None,
 ) -> dict[str, Any]:
-    return {
+    output = {
         "model": model,
         "api_base": api_base,
         "api_key_provided": api_key_provided,
         "max_repair_attempts": max_repair_attempts,
+        "request_timeout": request_timeout,
+        "max_transport_retries": max_transport_retries,
         "attempts": attempts,
+        "transport_attempts": transport_attempts,
+        "fallback_reason": fallback_reason,
         "final": final,
     }
+    return _redact_sensitive_value(output, api_key)
 
 
 def _write_attempt_log(
@@ -598,8 +789,13 @@ def _write_attempt_log(
     api_base: str | None,
     api_key_provided: bool,
     max_repair_attempts: int,
+    request_timeout: float,
+    max_transport_retries: int,
     attempts: list[dict[str, Any]],
+    transport_attempts: list[dict[str, Any]],
+    fallback_reason: str | None,
     final: dict[str, Any] | None,
+    api_key: str | None,
 ) -> None:
     if path is None:
         return
@@ -611,14 +807,34 @@ def _write_attempt_log(
                 api_base=api_base,
                 api_key_provided=api_key_provided,
                 max_repair_attempts=max_repair_attempts,
+                request_timeout=request_timeout,
+                max_transport_retries=max_transport_retries,
                 attempts=attempts,
+                transport_attempts=transport_attempts,
+                fallback_reason=fallback_reason,
                 final=final,
+                api_key=api_key,
             ),
             ensure_ascii=False,
             indent=2,
         ),
         encoding="utf-8",
     )
+
+
+def _redact_sensitive_value(value: Any, api_key: str | None) -> Any:
+    if isinstance(value, str):
+        return value.replace(api_key, "[REDACTED]") if api_key else value
+    if isinstance(value, dict):
+        return {
+            _redact_sensitive_value(key, api_key): _redact_sensitive_value(item, api_key)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_value(item, api_key) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_sensitive_value(item, api_key) for item in value)
+    return value
 
 
 

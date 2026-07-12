@@ -135,12 +135,14 @@ tja-ai-chartgen generate song.mp3 \
   --use-ai \
   --model openai/custom-model \
   --ai-base-url https://llm.example.com/v1 \
-  --ai-api-key sk-...
+  --ai-api-key sk-... \
+  --ai-request-timeout 300 \
+  --ai-transport-retries 1
 ```
 
-`generation_config.json` 会记录最终解析使用的 `model`，但不会记录 `OPENAI_BASE_URL` 或 `OPENAI_API_KEY`。复跑 AI 生成时，请继续通过 `.env`、环境变量或命令行参数提供连接配置。
+`generation_config.json` 会记录最终解析使用的 `model`、单次请求超时和 transport 重试次数，但不会记录 `OPENAI_BASE_URL` 或 `OPENAI_API_KEY`。复跑 AI 生成时，请继续通过 `.env`、环境变量或命令行参数提供连接配置。
 
-AI 输出会先做严格格式校验；如果 JSON、bar 数量、notes 长度或字符不符合 MVP 约束，CLI 会自动向模型发送修复提示并重试。默认最多修复重试 2 次，可以用 `--ai-repair-retries` 调整。修复仍失败时会回退到规则生成器。
+每次 AI provider transport 尝试默认超时 300 秒，可用 `--ai-request-timeout` 在 1–600 秒范围内调整。超时、连接失败、HTTP 429 和主要 5xx 错误默认最多重试 1 次，可用 `--ai-transport-retries 0|1` 调整；LiteLLM 内部重试会被关闭，项目自行记录每次 transport 尝试的耗时和异常类别。认证或参数错误不会重试。该重试与内容修复独立：AI 输出若未通过 JSON、bar 数量、notes 长度、字符或质量校验，默认最多修复重试 2 次，可用 `--ai-repair-retries` 调整。任一阶段最终失败都会回退到规则生成器。
 
 通过已保存的生成配置复跑：
 
@@ -155,7 +157,7 @@ tja-ai-chartgen web
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 ```
 
-Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则谱面片段。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件。
+Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则或 AI 增强谱面片段。折叠的 AI 参数区可设置单次请求超时和 0–1 次 transport 重试；全曲生成会保存这两项非敏感设置供结果页沿用，局部 regenerate 的同步 AI 调用在线程池中执行，不阻塞 FastAPI 事件循环。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件。
 
 ## 输出文件
 
@@ -166,6 +168,7 @@ output/
 ├─ analysis.json
 ├─ generation_config.json
 ├─ ai_input.json
+├─ ai_attempts.json
 ├─ ai_output.json
 ├─ report.txt
 └─ web/
@@ -176,7 +179,7 @@ output/
 
 ## 可复现性
 
-每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、是否生成全难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、拍号覆盖值、BeatNet 开关、特殊音符开关、AI 开关、最终解析使用的模型名和 AI 修复重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
+每次执行 `generate` 都会在 TJA 输出旁写入 `generation_config.json`。该文件记录输入路径、元数据、难度、是否生成全难度、风格、密度、`--max-bars`、BPM/OFFSET 覆盖值、拍号覆盖值、BeatNet 开关、特殊音符开关、AI 开关、最终解析使用的模型名、AI 内容修复次数、请求超时和 transport 重试次数。后续可以使用 `generate-from-config` 用同一组参数重新生成谱面。`ai_attempts*.json` 会分别记录内容校验尝试和实际 transport 尝试，并在最终失败时写入稳定的 fallback 原因。API key 和 base URL 不会写入 `generation_config.json`；如需复跑 AI 生成，请继续通过 `.env`、环境变量或命令参数提供连接配置。
 
 ## 限制
 

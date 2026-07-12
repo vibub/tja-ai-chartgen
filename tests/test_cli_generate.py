@@ -1,7 +1,9 @@
 import json
 
+import pytest
 from typer.testing import CliRunner
 
+from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.cli import app
 from tja_ai_chartgen.tja.model import ChartBar
@@ -95,6 +97,8 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "use_ai": False,
         "model": None,
         "ai_repair_retries": 2,
+        "ai_request_timeout": 300.0,
+        "ai_transport_retries": 1,
     }
     assert f"Generation config: {output_dir / 'generation_config.json'}" in (
         output_dir / "report.txt"
@@ -225,6 +229,8 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     assert saved_config["time_signature"] == "3/4"
     assert "ai_base_url" not in saved_config
     assert saved_config["ai_repair_retries"] == 1
+    assert saved_config["ai_request_timeout"] == 300.0
+    assert saved_config["ai_transport_retries"] == 1
 
 
 def test_generate_from_config_reports_missing_file(tmp_path):
@@ -563,11 +569,15 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
         max_repair_attempts,
         special_notes,
         attempt_log_path,
+        request_timeout,
+        max_transport_retries,
     ):
         assert model == "openai/custom-model"
         assert api_base == "https://llm.example.com/v1"
         assert api_key == "secret-key"
         assert max_repair_attempts == 1
+        assert request_timeout == 45.5
+        assert max_transport_retries == 0
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
 
     monkeypatch.setattr(
@@ -593,6 +603,10 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
             "secret-key",
             "--ai-repair-retries",
             "1",
+            "--ai-request-timeout",
+            "45.5",
+            "--ai-transport-retries",
+            "0",
         ],
     )
 
@@ -601,6 +615,8 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
     assert saved_config["model"] == "openai/custom-model"
     assert "ai_base_url" not in saved_config
     assert saved_config["ai_repair_retries"] == 1
+    assert saved_config["ai_request_timeout"] == 45.5
+    assert saved_config["ai_transport_retries"] == 0
     assert "ai_api_key" not in saved_config
     assert "secret-key" not in (output_dir / "generation_config.json").read_text(encoding="utf-8")
 
@@ -626,6 +642,8 @@ def test_generate_with_ai_records_default_model(tmp_path, monkeypatch):
         max_repair_attempts,
         special_notes,
         attempt_log_path,
+        request_timeout,
+        max_transport_retries,
     ):
         assert model == "openai/gpt-4o-mini"
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
@@ -674,6 +692,8 @@ def test_generate_with_ai_records_model_from_environment(tmp_path, monkeypatch):
         max_repair_attempts,
         special_notes,
         attempt_log_path,
+        request_timeout,
+        max_transport_retries,
     ):
         assert model == "openai/env-model"
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
@@ -721,6 +741,114 @@ def test_generate_rejects_negative_ai_repair_retries(tmp_path):
 
     assert result.exit_code == 1
     assert "--ai-repair-retries must be greater than or equal to 0" in result.output
+
+
+@pytest.mark.parametrize("value", ["0", "601"])
+def test_generate_rejects_ai_request_timeout_outside_bounds(tmp_path, value):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--ai-request-timeout",
+            value,
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--ai-request-timeout must be between 1 and 600 seconds" in result.output
+
+
+@pytest.mark.parametrize("value", ["-1", "2"])
+def test_generate_rejects_ai_transport_retries_outside_bounds(tmp_path, value):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--ai-transport-retries",
+            value,
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--ai-transport-retries must be 0 or 1" in result.output
+
+
+def test_generate_with_ai_provider_failure_writes_structured_sidecars_and_falls_back(
+    tmp_path, monkeypatch
+):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    _patch_audio_pipeline(monkeypatch)
+    secret = "secret-key"
+    provider_output = {
+        "model": "fake/model",
+        "api_base": None,
+        "api_key_provided": True,
+        "max_repair_attempts": 2,
+        "request_timeout": 300.0,
+        "max_transport_retries": 1,
+        "attempts": [],
+        "transport_attempts": [
+            {
+                "content_attempt": 1,
+                "transport_attempt": 1,
+                "status": "error",
+                "elapsed_seconds": 0.1,
+                "error_type": "Timeout",
+                "error": "timed out",
+            }
+        ],
+        "fallback_reason": "transport_retries_exhausted",
+        "final": None,
+    }
+
+    def fake_generate_chart_bars_with_ai(*args, **kwargs):
+        raise AiProviderError("provider timed out", provider_output)
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--use-ai",
+            "--ai-api-key",
+            secret,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (output_dir / "song.tja").exists()
+    attempts = json.loads((output_dir / "ai_attempts.json").read_text(encoding="utf-8"))
+    output = json.loads((output_dir / "ai_output.json").read_text(encoding="utf-8"))
+    report = (output_dir / "report.txt").read_text(encoding="utf-8")
+    assert attempts["fallback_reason"] == "transport_retries_exhausted"
+    assert output["fallback_reason"] == "transport_retries_exhausted"
+    assert "provider timed out" in report
+    assert secret not in json.dumps(attempts)
+    assert secret not in json.dumps(output)
+    assert secret not in report
 
 
 def test_generate_with_ai_failure_falls_back_to_rules(tmp_path, monkeypatch):

@@ -31,6 +31,8 @@ COURSE_PRESETS = {
     "Oni": {"level": 10, "density": "max"},
 }
 MULTI_COURSES = tuple(COURSE_PRESETS)
+DEFAULT_AI_REQUEST_TIMEOUT = 300.0
+DEFAULT_AI_TRANSPORT_RETRIES = 1
 
 
 @app.command()
@@ -91,6 +93,16 @@ def generate(
         "--ai-repair-retries",
         help="Retry count for repairing invalid AI JSON output.",
     ),
+    ai_request_timeout: float = typer.Option(
+        DEFAULT_AI_REQUEST_TIMEOUT,
+        "--ai-request-timeout",
+        help="Timeout in seconds for each AI provider transport attempt (1-600).",
+    ),
+    ai_transport_retries: int = typer.Option(
+        DEFAULT_AI_TRANSPORT_RETRIES,
+        "--ai-transport-retries",
+        help="Retry count for transient AI provider transport failures (0 or 1).",
+    ),
 ) -> None:
     run_generate(
         input_audio=input_audio,
@@ -113,6 +125,8 @@ def generate(
         ai_base_url=ai_base_url,
         ai_api_key=ai_api_key,
         ai_repair_retries=ai_repair_retries,
+        ai_request_timeout=ai_request_timeout,
+        ai_transport_retries=ai_transport_retries,
     )
 
 
@@ -144,6 +158,16 @@ def generate_from_config(config_path: Path) -> None:
             ai_repair_retries=_optional_int(
                 config.get("ai_repair_retries", 2),
                 "ai_repair_retries",
+            )
+            or 0,
+            ai_request_timeout=(
+                _optional_float(config.get("ai_request_timeout"), "ai_request_timeout")
+                if config.get("ai_request_timeout") is not None
+                else DEFAULT_AI_REQUEST_TIMEOUT
+            ),
+            ai_transport_retries=_optional_int(
+                config.get("ai_transport_retries", DEFAULT_AI_TRANSPORT_RETRIES),
+                "ai_transport_retries",
             )
             or 0,
         )
@@ -217,6 +241,8 @@ def run_generate(
     ai_base_url: str | None,
     ai_api_key: str | None,
     ai_repair_retries: int,
+    ai_request_timeout: float,
+    ai_transport_retries: int,
 ) -> None:
     load_dotenv()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -232,6 +258,10 @@ def run_generate(
             _fail(str(error))
     if ai_repair_retries < 0:
         _fail("--ai-repair-retries must be greater than or equal to 0.")
+    if not 1 <= ai_request_timeout <= 600:
+        _fail("--ai-request-timeout must be between 1 and 600 seconds.")
+    if ai_transport_retries not in (0, 1):
+        _fail("--ai-transport-retries must be 0 or 1.")
     try:
         validate_density(density)
         validate_style(style)
@@ -268,6 +298,8 @@ def run_generate(
         use_ai=use_ai,
         model=resolved_model,
         ai_repair_retries=ai_repair_retries,
+        ai_request_timeout=ai_request_timeout,
+        ai_transport_retries=ai_transport_retries,
     )
     write_json(generation_config_path, generation_config)
 
@@ -319,6 +351,7 @@ def run_generate(
             try:
                 from tja_ai_chartgen.ai.client import (
                     AiOutputRepairError,
+                    AiProviderError,
                     generate_chart_bars_with_ai,
                     sanitize_ai_bars,
                 )
@@ -347,10 +380,12 @@ def run_generate(
                     max_repair_attempts=ai_repair_retries,
                     special_notes=special_notes,
                     attempt_log_path=course_ai_attempts_path,
+                    request_timeout=ai_request_timeout,
+                    max_transport_retries=ai_transport_retries,
                 )
                 write_json(course_ai_output_path, ai_output)
                 chart_bars = sanitize_ai_bars(ai_bars, expected_count=len(bars), expected_bars=bars)
-            except AiOutputRepairError as error:
+            except (AiOutputRepairError, AiProviderError) as error:
                 ai_failure = str(error)
                 console.print(f"AI generation failed for {course_name}. Falling back to rule-based generator.")
                 write_json(course_ai_attempts_path, {"error": ai_failure, **error.output})
@@ -483,6 +518,8 @@ def _build_generation_config(
     use_ai: bool,
     model: str | None,
     ai_repair_retries: int,
+    ai_request_timeout: float,
+    ai_transport_retries: int,
 ) -> dict[str, Any]:
     return {
         "input_audio": str(input_audio),
@@ -503,6 +540,8 @@ def _build_generation_config(
         "use_ai": use_ai,
         "model": model,
         "ai_repair_retries": ai_repair_retries,
+        "ai_request_timeout": ai_request_timeout,
+        "ai_transport_retries": ai_transport_retries,
     }
 
 

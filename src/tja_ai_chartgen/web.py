@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -34,6 +35,8 @@ WEB_SOUND_FILES = {
 }
 ALLOWED_WEB_NOTES = set("01234578")
 DEFAULT_WEB_BALLOON_COUNT = 8
+DEFAULT_AI_REQUEST_TIMEOUT = 300.0
+DEFAULT_AI_TRANSPORT_RETRIES = 1
 WEB_COURSE_OPTIONS = (
     ("Easy", "简单（Easy）"),
     ("Normal", "普通（Normal）"),
@@ -1735,6 +1738,8 @@ def create_app(
         ai_base_url: Annotated[str, Form()] = "",
         ai_api_key: Annotated[str, Form()] = "",
         ai_repair_retries: Annotated[int, Form()] = 2,
+        ai_request_timeout: Annotated[float, Form()] = DEFAULT_AI_REQUEST_TIMEOUT,
+        ai_transport_retries: Annotated[int, Form()] = DEFAULT_AI_TRANSPORT_RETRIES,
     ) -> HTMLResponse:
         job_dir: Path | None = None
         try:
@@ -1742,6 +1747,7 @@ def create_app(
             validate_style(style)
             if ai_repair_retries < 0:
                 raise ValueError("AI repair retries must be greater than or equal to 0")
+            _validate_ai_transport_settings(ai_request_timeout, ai_transport_retries)
             resolved_ai_base_url, resolved_ai_api_key = (None, None)
             if use_ai:
                 resolved_ai_base_url, resolved_ai_api_key = _resolve_web_ai_credentials(
@@ -1777,6 +1783,8 @@ def create_app(
                     "ai_base_url": resolved_ai_base_url,
                     "ai_api_key": resolved_ai_api_key,
                     "ai_repair_retries": ai_repair_retries,
+                    "ai_request_timeout": ai_request_timeout,
+                    "ai_transport_retries": ai_transport_retries,
                 },
                 daemon=True,
             ).start()
@@ -1924,12 +1932,15 @@ def create_app(
         ai_base_url: Annotated[str, Form()] = "",
         ai_api_key: Annotated[str, Form()] = "",
         ai_repair_retries: Annotated[int, Form()] = 2,
+        ai_request_timeout: Annotated[float, Form()] = DEFAULT_AI_REQUEST_TIMEOUT,
+        ai_transport_retries: Annotated[int, Form()] = DEFAULT_AI_TRANSPORT_RETRIES,
     ) -> HTMLResponse:
         try:
             validate_density(density)
             validate_style(style)
             if ai_repair_retries < 0:
                 raise ValueError("AI repair retries must be greater than or equal to 0")
+            _validate_ai_transport_settings(ai_request_timeout, ai_transport_retries)
             resolved_ai_base_url, resolved_ai_api_key = (None, None)
             if use_ai:
                 resolved_ai_base_url, resolved_ai_api_key = _resolve_web_ai_credentials(
@@ -1944,7 +1955,8 @@ def create_app(
             ai_failure: str | None = None
             if use_ai:
                 try:
-                    chart_bars = _generate_ai_chart_bars_for_web(
+                    chart_bars = await asyncio.to_thread(
+                        _generate_ai_chart_bars_for_web,
                         job_dir=job_dir,
                         analysis=analysis,
                         selected_bars=selected_bars,
@@ -1958,6 +1970,8 @@ def create_app(
                         api_base=resolved_ai_base_url,
                         api_key=resolved_ai_api_key,
                         ai_repair_retries=ai_repair_retries,
+                        ai_request_timeout=ai_request_timeout,
+                        ai_transport_retries=ai_transport_retries,
                         special_notes=special_notes,
                     )
                 except Exception as error:  # noqa: BLE001 - Web UI should still render a usable draft.
@@ -1997,7 +2011,13 @@ def create_app(
                         course=course,
                         level=level,
                     ),
-                    _regenerate_form(job_id, len(analysis.bars), course),
+                    _regenerate_form(
+                        job_id,
+                        len(analysis.bars),
+                        course,
+                        ai_request_timeout=ai_request_timeout,
+                        ai_transport_retries=ai_transport_retries,
+                    ),
                 ]
             )
             return HTMLResponse(_page("Regenerated bars", body))
@@ -2131,6 +2151,8 @@ def _run_analyze_job(
     ai_base_url: str | None,
     ai_api_key: str | None,
     ai_repair_retries: int,
+    ai_request_timeout: float,
+    ai_transport_retries: int,
 ) -> None:
     try:
         _write_progress(
@@ -2194,6 +2216,8 @@ def _run_analyze_job(
                     api_base=ai_base_url,
                     api_key=ai_api_key,
                     ai_repair_retries=ai_repair_retries,
+                    ai_request_timeout=ai_request_timeout,
+                    ai_transport_retries=ai_transport_retries,
                     special_notes=special_notes,
                 )
             except Exception as error:  # noqa: BLE001 - Web UI should still render a usable draft.
@@ -2209,7 +2233,14 @@ def _run_analyze_job(
         write_json(job_dir / _PROGRESS_CHART_BARS_JSON, chart_bars)
         write_json(
             job_dir / _PROGRESS_CHART_OPTIONS_JSON,
-            {"course": course, "level": level, "use_ai": use_ai, "ai_failure": ai_failure if use_ai else None},
+            {
+                "course": course,
+                "level": level,
+                "use_ai": use_ai,
+                "ai_failure": ai_failure if use_ai else None,
+                "ai_request_timeout": ai_request_timeout,
+                "ai_transport_retries": ai_transport_retries,
+            },
         )
 
         _write_progress(
@@ -2226,6 +2257,8 @@ def _run_analyze_job(
             level=level,
             use_ai=use_ai,
             ai_failure=ai_failure,
+            ai_request_timeout=ai_request_timeout,
+            ai_transport_retries=ai_transport_retries,
         )
         _write_progress(
             job_dir,
@@ -2258,6 +2291,8 @@ def _write_preview_result(
     level: int,
     use_ai: bool = False,
     ai_failure: str | None = None,
+    ai_request_timeout: float = DEFAULT_AI_REQUEST_TIMEOUT,
+    ai_transport_retries: int = DEFAULT_AI_TRANSPORT_RETRIES,
 ) -> Path:
     chart = TjaChart(
         metadata=ChartMetadata(
@@ -2285,7 +2320,13 @@ def _write_preview_result(
             course=course,
             level=level,
         )
-        + _regenerate_form(job_dir.name, len(analysis.bars), course)
+        + _regenerate_form(
+            job_dir.name,
+            len(analysis.bars),
+            course,
+            ai_request_timeout=ai_request_timeout,
+            ai_transport_retries=ai_transport_retries,
+        )
     )
     result_path = job_dir / _PROGRESS_RESULT_HTML
     result_path.write_text(_page("Game preview", result_body), encoding="utf-8")
@@ -2306,6 +2347,8 @@ def _render_job_preview_with_metadata(job_dir: Path, *, title: str, artist: str)
     level = int(options.get("level") or 10)
     use_ai = bool(options.get("use_ai"))
     ai_failure = options.get("ai_failure")
+    ai_request_timeout = float(options.get("ai_request_timeout", DEFAULT_AI_REQUEST_TIMEOUT))
+    ai_transport_retries = int(options.get("ai_transport_retries", DEFAULT_AI_TRANSPORT_RETRIES))
     result_path = _write_preview_result(
         job_dir=job_dir,
         analysis=analysis,
@@ -2314,6 +2357,8 @@ def _render_job_preview_with_metadata(job_dir: Path, *, title: str, artist: str)
         level=level,
         use_ai=use_ai,
         ai_failure=str(ai_failure) if ai_failure is not None else None,
+        ai_request_timeout=ai_request_timeout,
+        ai_transport_retries=ai_transport_retries,
     )
     write_json(job_dir / "analysis.json", analysis)
     _write_progress(
@@ -2653,6 +2698,8 @@ def _generate_ai_chart_bars_for_web(
     api_base: str | None,
     api_key: str | None,
     ai_repair_retries: int,
+    ai_request_timeout: float,
+    ai_transport_retries: int,
     special_notes: bool,
 ) -> list[ChartBar]:
     from tja_ai_chartgen.ai.client import generate_chart_bars_with_ai, sanitize_ai_bars
@@ -2686,6 +2733,8 @@ def _generate_ai_chart_bars_for_web(
             max_repair_attempts=ai_repair_retries,
             special_notes=special_notes,
             attempt_log_path=ai_attempts_path,
+            request_timeout=ai_request_timeout,
+            max_transport_retries=ai_transport_retries,
         )
     except Exception as error:
         _write_web_ai_failure(ai_attempts_path, error, api_key)
@@ -2753,6 +2802,13 @@ def _reindex_chart_bars(chart_bars: list[ChartBar], selected_bars: list[BarFeatu
 def _optional_form_text(value: str) -> str | None:
     stripped = value.strip()
     return stripped or None
+
+
+def _validate_ai_transport_settings(request_timeout: float, transport_retries: int) -> None:
+    if not 1 <= request_timeout <= 600:
+        raise ValueError("AI request timeout must be between 1 and 600 seconds")
+    if transport_retries not in (0, 1):
+        raise ValueError("AI transport retries must be 0 or 1")
 
 
 def _resolve_web_ai_credentials(ai_base_url: str, ai_api_key: str) -> tuple[str | None, str | None]:
@@ -2877,6 +2933,14 @@ def _analysis_form() -> str:
             <label class="field">
               修复重试
               <input name="ai_repair_retries" type="number" min="0" value="2">
+            </label>
+            <label class="field">
+              请求超时（秒）
+              <input name="ai_request_timeout" type="number" min="1" max="600" value="300">
+            </label>
+            <label class="field">
+              网络重试
+              <input name="ai_transport_retries" type="number" min="0" max="1" value="1">
             </label>
           </div>
         </details>
@@ -3040,8 +3104,16 @@ def _analysis_summary(analysis: SongAnalysis, analysis_path: Path, job_id: str) 
 """
 
 
-def _regenerate_form(job_id: str, bar_count: int, course: str = "Oni") -> str:
+def _regenerate_form(
+    job_id: str,
+    bar_count: int,
+    course: str = "Oni",
+    *,
+    ai_request_timeout: float = DEFAULT_AI_REQUEST_TIMEOUT,
+    ai_transport_retries: int = DEFAULT_AI_TRANSPORT_RETRIES,
+) -> str:
     end_bar = max(1, bar_count)
+    request_timeout_value = f"{ai_request_timeout:g}"
     return f"""
 <section class="panel" aria-labelledby="regen-heading">
   <p class="eyebrow">谱面片段</p>
@@ -3100,6 +3172,14 @@ def _regenerate_form(job_id: str, bar_count: int, course: str = "Oni") -> str:
           <label class="field">
             修复重试
             <input name="ai_repair_retries" type="number" min="0" value="2">
+          </label>
+          <label class="field">
+            请求超时（秒）
+            <input name="ai_request_timeout" type="number" min="1" max="600" value="{request_timeout_value}">
+          </label>
+          <label class="field">
+            网络重试
+            <input name="ai_transport_retries" type="number" min="0" max="1" value="{ai_transport_retries}">
           </label>
         </div>
       </details>

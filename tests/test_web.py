@@ -6,6 +6,7 @@ import pytest
 from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
+from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.tja.model import ChartBar
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
@@ -37,6 +38,8 @@ def test_web_index_shows_upload_form(tmp_path):
     assert 'name="use_ai" type="checkbox" value="true" data-role="ai-toggle" checked' in response.text
     assert '<details class="advanced-panel field-wide" data-role="ai-options">' in response.text
     assert 'name="ai_model"' in response.text
+    assert 'name="ai_request_timeout" type="number" min="1" max="600" value="300"' in response.text
+    assert 'name="ai_transport_retries" type="number" min="0" max="1" value="1"' in response.text
 
 
 def test_web_upload_limit_is_100_mib():
@@ -90,6 +93,8 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert '<details class="advanced-panel field-wide">' in result.text
     assert '<summary>AI 参数</summary>' in result.text
     assert '<details class="advanced-panel field-wide" open>' not in result.text
+    assert 'name="ai_request_timeout" type="number" min="1" max="600" value="300"' in result.text
+    assert 'name="ai_transport_retries" type="number" min="0" max="1" value="1"' in result.text
     assert "BPM: 180.0" not in result.text
     assert "OFFSET: 0.25" not in result.text
     assert "小节预览" not in result.text
@@ -346,6 +351,8 @@ def test_web_analyze_uses_admin_ai_environment_when_request_credentials_are_empt
         max_repair_attempts=2,
         special_notes=False,
         attempt_log_path=None,
+        request_timeout=300.0,
+        max_transport_retries=1,
     ):
         assert api_base == "https://env.example.com/v1"
         assert api_key == "env-secret"
@@ -397,6 +404,8 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
         max_repair_attempts=2,
         special_notes=False,
         attempt_log_path=None,
+        request_timeout=300.0,
+        max_transport_retries=1,
     ):
         assert course == "Hard"
         assert level == 8
@@ -406,6 +415,8 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
         assert api_base == "https://llm.example.com/v1"
         assert api_key == "secret-key"
         assert max_repair_attempts == 1
+        assert request_timeout == 42.5
+        assert max_transport_retries == 0
         assert special_notes is True
         assert attempt_log_path is not None
         assert attempt_log_path.name == "ai_attempts_1_2.json"
@@ -452,6 +463,8 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
             "ai_base_url": "https://llm.example.com/v1",
             "ai_api_key": "secret-key",
             "ai_repair_retries": "1",
+            "ai_request_timeout": "42.5",
+            "ai_transport_retries": "0",
         },
         files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
     )
@@ -470,6 +483,11 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
     assert "LEVEL:8" in generated_text
     assert "111100000000," in generated_text
     assert "222200000000," in generated_text
+    chart_options = json.loads((job_dir / "chart_options.json").read_text(encoding="utf-8"))
+    assert chart_options["ai_request_timeout"] == 42.5
+    assert chart_options["ai_transport_retries"] == 0
+    assert 'name="ai_request_timeout" type="number" min="1" max="600" value="42.5"' in result.text
+    assert 'name="ai_transport_retries" type="number" min="0" max="1" value="0"' in result.text
 
     for artifact_path in job_dir.rglob("*"):
         if artifact_path.is_file() and artifact_path.suffix in {".json", ".html", ".tja", ".txt"}:
@@ -477,6 +495,33 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
             artifact_text = artifact_path.read_text(encoding=encoding)
             assert "secret-key" not in artifact_text
             assert "server-key" not in artifact_text
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("ai_request_timeout", "0", "AI request timeout must be between 1 and 600 seconds"),
+        ("ai_request_timeout", "601", "AI request timeout must be between 1 and 600 seconds"),
+        ("ai_transport_retries", "-1", "AI transport retries must be 0 or 1"),
+        ("ai_transport_retries", "2", "AI transport retries must be 0 or 1"),
+    ],
+)
+def test_web_analyze_rejects_invalid_ai_transport_settings(
+    tmp_path, monkeypatch, field, value, message
+):
+    _patch_web_audio_pipeline(monkeypatch)
+    _patch_web_threads_to_run_synchronously(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", field: value},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 400
+    assert message in response.text
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_web_analyze_rejects_custom_ai_url_without_request_key(tmp_path, monkeypatch):
@@ -558,16 +603,27 @@ def test_web_ai_failure_sidecars_redact_api_key(tmp_path, monkeypatch):
     _patch_web_threads_to_run_synchronously(monkeypatch)
     secret = "request-secret-value"
 
-    class ProviderError(RuntimeError):
-        def __init__(self, api_key):
-            super().__init__(f"provider rejected {api_key}")
-            self.output = {
+    def fake_generate_chart_bars_with_ai(*args, **kwargs):
+        api_key = kwargs["api_key"]
+        raise AiProviderError(
+            f"provider timed out for {api_key}",
+            {
                 "api_key": api_key,
                 "provider": {"authorization": f"Bearer {api_key}"},
-            }
-
-    def fake_generate_chart_bars_with_ai(*args, **kwargs):
-        raise ProviderError(kwargs["api_key"])
+                "attempts": [],
+                "transport_attempts": [
+                    {
+                        "content_attempt": 1,
+                        "transport_attempt": 2,
+                        "status": "error",
+                        "elapsed_seconds": 300.0,
+                        "error_type": "Timeout",
+                        "error": f"provider timed out for {api_key}",
+                    }
+                ],
+                "fallback_reason": "transport_retries_exhausted",
+            },
+        )
 
     monkeypatch.setattr(
         "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
@@ -596,6 +652,8 @@ def test_web_ai_failure_sidecars_redact_api_key(tmp_path, monkeypatch):
     assert "AI 增强失败，已自动回退到规则生成" in result.text
     assert (job_dir / "ai_attempts_1_1.json").exists()
     assert (job_dir / "ai_output_1_1.json").exists()
+    attempts = json.loads((job_dir / "ai_attempts_1_1.json").read_text(encoding="utf-8"))
+    assert attempts["fallback_reason"] == "transport_retries_exhausted"
 
     artifact_texts = [result.text]
     for artifact_path in job_dir.rglob("*"):
@@ -623,6 +681,8 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
         max_repair_attempts=2,
         special_notes=False,
         attempt_log_path=None,
+        request_timeout=300.0,
+        max_transport_retries=1,
     ):
         assert course == "Oni"
         assert level == 10
@@ -632,6 +692,8 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
         assert api_base == "https://llm.example.com/v1"
         assert api_key == "secret-key"
         assert max_repair_attempts == 1
+        assert request_timeout == 42.5
+        assert max_transport_retries == 0
         assert special_notes is True
         assert attempt_log_path is not None
         assert attempt_log_path.name == "ai_attempts_1_2.json"
@@ -671,6 +733,8 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
             "ai_base_url": "https://llm.example.com/v1",
             "ai_api_key": "secret-key",
             "ai_repair_retries": "1",
+            "ai_request_timeout": "42.5",
+            "ai_transport_retries": "0",
         },
     )
 
@@ -682,6 +746,8 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
     generated_text = (job_dir / "regenerated_1_2.tja").read_text(encoding=TJA_FILE_ENCODING)
     assert "1111000000000000," in generated_text
     assert "2222000000000000," in generated_text
+    assert 'name="ai_request_timeout" type="number" min="1" max="600" value="42.5"' in response.text
+    assert 'name="ai_transport_retries" type="number" min="0" max="1" value="0"' in response.text
 
 
 def test_web_regenerate_rejects_custom_ai_url_without_request_key(tmp_path, monkeypatch):
@@ -725,6 +791,91 @@ def test_web_regenerate_rejects_custom_ai_url_without_request_key(tmp_path, monk
 
     assert response.status_code == 400
     assert "Custom AI base URL and API key must be provided together" in response.text
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("ai_request_timeout", "601", "AI request timeout must be between 1 and 600 seconds"),
+        ("ai_transport_retries", "2", "AI transport retries must be 0 or 1"),
+    ],
+)
+def test_web_regenerate_rejects_invalid_ai_transport_settings(
+    tmp_path, monkeypatch, field, value, message
+):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+    analyze_response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert analyze_response.status_code == 200
+    job_id = next(tmp_path.iterdir()).name
+    _wait_for_job_done(client, job_id)
+
+    response = client.post(
+        "/regenerate",
+        data={
+            "job_id": job_id,
+            "start_bar": "1",
+            "end_bar": "1",
+            "course": "Oni",
+            "level": "10",
+            "style": "technical",
+            "density": "auto",
+            field: value,
+        },
+    )
+
+    assert response.status_code == 400
+    assert message in response.text
+
+
+def test_web_regenerate_runs_ai_helper_via_asyncio_to_thread(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+    analyze_response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert analyze_response.status_code == 200
+    job_id = next(tmp_path.iterdir()).name
+    _wait_for_job_done(client, job_id)
+    calls = []
+
+    def fake_generate_ai(**kwargs):
+        return [ChartBar(index=0, notes="1000100010001000")]
+
+    async def fake_to_thread(function, *args, **kwargs):
+        calls.append((function, args, kwargs))
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr("tja_ai_chartgen.web._generate_ai_chart_bars_for_web", fake_generate_ai)
+    monkeypatch.setattr("tja_ai_chartgen.web.asyncio.to_thread", fake_to_thread)
+
+    response = client.post(
+        "/regenerate",
+        data={
+            "job_id": job_id,
+            "start_bar": "1",
+            "end_bar": "1",
+            "course": "Oni",
+            "level": "10",
+            "style": "technical",
+            "density": "auto",
+            "use_ai": "true",
+            "ai_request_timeout": "25",
+            "ai_transport_retries": "0",
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0][0] is fake_generate_ai
+    assert calls[0][2]["ai_request_timeout"] == 25
+    assert calls[0][2]["ai_transport_retries"] == 0
 
 
 def test_web_regenerate_shows_ai_option(tmp_path, monkeypatch):

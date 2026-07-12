@@ -1,9 +1,18 @@
 import json
 
 import pytest
+from litellm import (
+    APIConnectionError,
+    AuthenticationError,
+    InternalServerError,
+    RateLimitError,
+    ServiceUnavailableError,
+    Timeout,
+)
 
 from tja_ai_chartgen.ai.client import (
     AiOutputRepairError,
+    AiProviderError,
     generate_chart_bars_with_ai,
     sanitize_ai_bars,
 )
@@ -186,6 +195,217 @@ def test_generate_chart_bars_with_ai_reads_openai_env_names(monkeypatch):
     assert raw["model"] == "openai/env-model"
     assert raw["api_base"] == "https://env.example.com/v1"
     assert raw["api_key_provided"] is True
+
+
+def test_generate_chart_bars_with_ai_passes_timeout_and_disables_litellm_retries(monkeypatch):
+    payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    captured_kwargs = []
+
+    def fake_completion(**kwargs):
+        captured_kwargs.append(kwargs)
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    _, raw = generate_chart_bars_with_ai(
+        _analysis(),
+        "Oni",
+        10,
+        "technical",
+        request_timeout=12.5,
+        max_transport_retries=0,
+    )
+
+    assert captured_kwargs[0]["timeout"] == 12.5
+    assert captured_kwargs[0]["max_retries"] == 0
+    assert raw["request_timeout"] == 12.5
+    assert raw["max_transport_retries"] == 0
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [Timeout, APIConnectionError, RateLimitError, ServiceUnavailableError, InternalServerError],
+)
+def test_generate_chart_bars_with_ai_retries_transient_transport_once_without_consuming_content_attempt(
+    tmp_path, monkeypatch, error_type
+):
+    payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    attempt_log_path = tmp_path / "ai_attempts.json"
+    calls = 0
+
+    def fake_completion(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise error_type("temporary failure", model="fake/model", llm_provider="openai")
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    _, raw = generate_chart_bars_with_ai(
+        _analysis(),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=2,
+        max_transport_retries=1,
+        attempt_log_path=attempt_log_path,
+    )
+
+    assert calls == 2
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["ok"]
+    assert [attempt["status"] for attempt in raw["transport_attempts"]] == ["error", "ok"]
+    assert [attempt["content_attempt"] for attempt in raw["transport_attempts"]] == [1, 1]
+    assert [attempt["transport_attempt"] for attempt in raw["transport_attempts"]] == [1, 2]
+    assert raw["fallback_reason"] is None
+    assert attempt_log_path.exists()
+
+
+def test_generate_chart_bars_with_ai_stops_after_transport_retries_are_exhausted(
+    tmp_path, monkeypatch
+):
+    attempt_log_path = tmp_path / "ai_attempts.json"
+    calls = 0
+
+    def fake_completion(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise Timeout("timed out", model="fake/model", llm_provider="openai")
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    with pytest.raises(AiProviderError) as error:
+        generate_chart_bars_with_ai(
+            _analysis(),
+            "Oni",
+            10,
+            "technical",
+            model="fake/model",
+            max_repair_attempts=2,
+            request_timeout=5,
+            max_transport_retries=1,
+            attempt_log_path=attempt_log_path,
+        )
+
+    assert calls == 2
+    assert error.value.output["attempts"] == []
+    assert len(error.value.output["transport_attempts"]) == 2
+    assert error.value.output["fallback_reason"] == "transport_retries_exhausted"
+    assert error.value.output["request_timeout"] == 5
+    assert error.value.output["max_transport_retries"] == 1
+    assert json.loads(attempt_log_path.read_text(encoding="utf-8"))["fallback_reason"] == (
+        "transport_retries_exhausted"
+    )
+
+
+def test_generate_chart_bars_with_ai_does_not_retry_non_transient_provider_errors(monkeypatch):
+    calls = 0
+
+    def fake_completion(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise AuthenticationError("invalid key", model="fake/model", llm_provider="openai")
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    with pytest.raises(AiProviderError) as error:
+        generate_chart_bars_with_ai(
+            _analysis(),
+            "Oni",
+            10,
+            "technical",
+            model="fake/model",
+            max_transport_retries=1,
+        )
+
+    assert calls == 1
+    assert error.value.output["attempts"] == []
+    assert len(error.value.output["transport_attempts"]) == 1
+    assert error.value.output["fallback_reason"] == "provider_error"
+    assert error.value.output["transport_attempts"][0]["error_type"] == "AuthenticationError"
+
+
+@pytest.mark.parametrize("request_timeout", [0, 0.999, 600.001, 601])
+def test_generate_chart_bars_with_ai_rejects_request_timeout_outside_bounds(
+    monkeypatch, request_timeout
+):
+    completion_called = False
+
+    def fake_completion(**kwargs):
+        nonlocal completion_called
+        completion_called = True
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    with pytest.raises(ValueError, match="between 1 and 600"):
+        generate_chart_bars_with_ai(
+            _analysis(),
+            "Oni",
+            10,
+            "technical",
+            request_timeout=request_timeout,
+        )
+
+    assert completion_called is False
+
+
+@pytest.mark.parametrize("max_transport_retries", [-1, 2])
+def test_generate_chart_bars_with_ai_rejects_transport_retry_count_outside_bounds(
+    monkeypatch, max_transport_retries
+):
+    completion_called = False
+
+    def fake_completion(**kwargs):
+        nonlocal completion_called
+        completion_called = True
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    with pytest.raises(ValueError, match="0 or 1"):
+        generate_chart_bars_with_ai(
+            _analysis(),
+            "Oni",
+            10,
+            "technical",
+            max_transport_retries=max_transport_retries,
+        )
+
+    assert completion_called is False
+
+
+def test_generate_chart_bars_with_ai_redacts_api_key_from_provider_error_and_sidecar(
+    tmp_path, monkeypatch
+):
+    api_key = "secret-provider-key"
+    attempt_log_path = tmp_path / "ai_attempts.json"
+
+    def fake_completion(**kwargs):
+        raise AuthenticationError(
+            f"invalid key: {api_key}",
+            model="fake/model",
+            llm_provider="openai",
+        )
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    with pytest.raises(AiProviderError) as error:
+        generate_chart_bars_with_ai(
+            _analysis(),
+            "Oni",
+            10,
+            "technical",
+            model="fake/model",
+            api_key=api_key,
+            attempt_log_path=attempt_log_path,
+        )
+
+    serialized_output = json.dumps(error.value.output)
+    logged = attempt_log_path.read_text(encoding="utf-8")
+    assert api_key not in str(error.value)
+    assert api_key not in serialized_output
+    assert api_key not in logged
+    assert "[REDACTED]" in serialized_output
 
 
 def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
@@ -485,6 +705,11 @@ def test_generate_chart_bars_with_ai_raises_with_attempt_log_after_failed_repair
     assert [attempt["status"] for attempt in error.value.output["attempts"]] == [
         "invalid",
         "invalid",
+    ]
+    assert error.value.output["fallback_reason"] == "invalid_content_retries_exhausted"
+    assert [attempt["status"] for attempt in error.value.output["transport_attempts"]] == [
+        "ok",
+        "ok",
     ]
 
 
