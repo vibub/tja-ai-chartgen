@@ -1,11 +1,14 @@
 from collections import Counter
+from fractions import Fraction
 from math import isfinite
+from statistics import mean
 
 from pydantic import BaseModel, Field
 
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
+from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.features.silence import edge_silence_indexes
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar
+from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ResolutionPlan
 
 
 NOTE_STREAM_MAX_GAP_SECONDS = 0.3
@@ -43,11 +46,31 @@ class QualityReport(BaseModel):
     special_note_duration_seconds: float = Field(ge=0.0)
     balloon_required_hits: int = Field(ge=0)
     balloon_hits_per_second: float = Field(ge=0.0)
+    structure_density_correlation: float = Field(default=0.0, ge=-1.0, le=1.0)
+    peak_contrast: float = 0.0
+    build_up_slope_agreement: float = Field(default=0.0, ge=-1.0, le=1.0)
+    cadence_variation_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    fill_candidate_precision: float = Field(default=1.0, ge=0.0, le=1.0)
+    section_motif_consistency: float = Field(default=1.0, ge=0.0, le=1.0)
+    section_return_variation: float = Field(default=0.0, ge=0.0, le=1.0)
+    highlight_note_contrast: float = 0.0
+    base_resolution: int = Field(default=0, ge=0)
+    resolution_change_count: int = Field(default=0, ge=0)
+    resolution_changes_per_100_bars: float = Field(default=0.0, ge=0.0)
+    high_resolution_bar_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    resolution_quantization_error: float | None = Field(default=None, ge=0.0)
+    avoided_resolution_changes: int = Field(default=0, ge=0)
+    cross_course_resolution_consistency: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+    )
 
 
 def build_quality_report(
     chart_bars: list[ChartBar],
     feature_bars: list[BarFeature],
+    resolution_plan: ResolutionPlan | None = None,
 ) -> QualityReport:
     paired_count = min(len(chart_bars), len(feature_bars))
     paired_chart_bars = chart_bars[:paired_count]
@@ -68,23 +91,26 @@ def build_quality_report(
         if index < len(paired_chart_bars)
     )
 
-    nonempty_patterns = [bar.notes for bar in chart_bars if chart_activity_count(bar.notes) > 0]
-    repeated_bar_count = sum(count - 1 for count in Counter(nonempty_patterns).values())
+    nonempty_pattern_counts = pattern_counts(chart_bars)
+    nonempty_pattern_count = sum(nonempty_pattern_counts.values())
+    repeated_bar_count = sum(count - 1 for count in nonempty_pattern_counts.values())
     don_count, ka_count, longest_monochrome_run = note_color_metrics(chart_bars)
     normal_note_count = don_count + ka_count
     timed_hit_counts: list[int] = []
     timed_durations: list[float] = []
     active_durations: list[float] = []
     note_times: list[float] = []
+    paired_notes_per_second = [0.0] * paired_count
     accent_candidate_count = 0
     accent_hit_count = 0
-    for chart_bar, feature_bar in zip(
-        paired_chart_bars, paired_feature_bars, strict=True
+    for position, (chart_bar, feature_bar) in enumerate(
+        zip(paired_chart_bars, paired_feature_bars, strict=True)
     ):
         duration = feature_bar.end_time - feature_bar.start_time
         if not isfinite(duration) or duration <= 0 or not chart_bar.notes:
             continue
         hit_count = playable_hit_count(chart_bar.notes)
+        paired_notes_per_second[position] = hit_count / duration
         timed_hit_counts.append(hit_count)
         timed_durations.append(duration)
         if hit_count:
@@ -110,6 +136,16 @@ def build_quality_report(
     ) = special_note_metrics(chart_bars, feature_bars)
     special_note_count = drumroll_count + balloon_count
     special_note_duration = drumroll_duration + balloon_duration
+    structure_metrics = _structure_quality_metrics(
+        paired_chart_bars,
+        paired_feature_bars,
+        paired_notes_per_second,
+    )
+    resolution_metrics = _resolution_quality_metrics(
+        chart_bars,
+        feature_bars,
+        resolution_plan,
+    )
 
     return QualityReport(
         bar_count=len(chart_bars),
@@ -122,7 +158,7 @@ def build_quality_report(
         longest_empty_bar_run=longest_empty_bar_run(activity_counts),
         repeated_bar_count=repeated_bar_count,
         repeated_bar_rate=(
-            repeated_bar_count / len(nonempty_patterns) if nonempty_patterns else 0.0
+            repeated_bar_count / nonempty_pattern_count if nonempty_pattern_count else 0.0
         ),
         don_count=don_count,
         ka_count=ka_count,
@@ -161,7 +197,284 @@ def build_quality_report(
         balloon_hits_per_second=(
             balloon_required_hits / balloon_duration if balloon_duration else 0.0
         ),
+        **structure_metrics,
+        **resolution_metrics,
     )
+
+
+def _structure_quality_metrics(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+    notes_per_second: list[float],
+) -> dict[str, float]:
+    if not chart_bars or not feature_bars:
+        return {
+            "structure_density_correlation": 0.0,
+            "peak_contrast": 0.0,
+            "build_up_slope_agreement": 0.0,
+            "cadence_variation_rate": 0.0,
+            "fill_candidate_precision": 1.0,
+            "section_motif_consistency": 1.0,
+            "section_return_variation": 0.0,
+            "highlight_note_contrast": 0.0,
+        }
+
+    has_structure = any(
+        bar.phrase_id is not None
+        or bar.transition_role != "stable"
+        or bar.energy_percentile > 0
+        for bar in feature_bars
+    )
+    energy_values = [
+        bar.energy_percentile if has_structure else bar.energy for bar in feature_bars
+    ]
+    structure_density_correlation = _correlation(energy_values, notes_per_second)
+
+    peak_values = [
+        value
+        for value, bar in zip(notes_per_second, feature_bars, strict=True)
+        if bar.transition_role == "peak"
+    ]
+    baseline_values = [
+        value
+        for value, bar in zip(notes_per_second, feature_bars, strict=True)
+        if bar.transition_role in {"stable", "breakdown"}
+    ]
+    peak_contrast = (
+        _average(peak_values) - _average(baseline_values) if peak_values else 0.0
+    )
+
+    phrase_positions: dict[int, list[int]] = {}
+    for position, bar in enumerate(feature_bars):
+        if bar.phrase_id is not None:
+            phrase_positions.setdefault(bar.phrase_id, []).append(position)
+    build_up_agreements: list[float] = []
+    for positions in phrase_positions.values():
+        if not any(feature_bars[position].transition_role == "build_up" for position in positions):
+            continue
+        progress = [feature_bars[position].phrase_progress for position in positions]
+        values = [notes_per_second[position] for position in positions]
+        if len(positions) >= 2:
+            build_up_agreements.append(_correlation(progress, values))
+
+    cadence_positions = [
+        position
+        for position, bar in enumerate(feature_bars)
+        if bar.transition_role == "cadence"
+    ]
+    cadence_variations = [
+        _normalized_pattern_signature(chart_bars[position].notes)
+        != _normalized_pattern_signature(chart_bars[position - 1].notes)
+        for position in cadence_positions
+        if position > 0
+    ]
+
+    actual_fill_positions = _actual_fill_positions(chart_bars)
+    candidate_positions = {
+        position for position, bar in enumerate(feature_bars) if bar.fill_candidate
+    }
+    fill_candidate_precision = (
+        len(actual_fill_positions & candidate_positions) / len(actual_fill_positions)
+        if actual_fill_positions
+        else 1.0
+    )
+
+    section_motif_consistency = _section_motif_consistency(chart_bars, feature_bars)
+    section_return_variation = _section_return_variation(chart_bars, feature_bars)
+    highlight_values = [
+        value
+        for value, bar in zip(notes_per_second, feature_bars, strict=True)
+        if bar.transition_role in {"peak", "drop", "cadence"} or bar.fill_candidate
+    ]
+    non_highlight_values = [
+        value
+        for value, bar in zip(notes_per_second, feature_bars, strict=True)
+        if bar.transition_role not in {"peak", "drop", "cadence"}
+        and not bar.fill_candidate
+    ]
+    highlight_note_contrast = (
+        _average(highlight_values) - _average(non_highlight_values)
+        if highlight_values
+        else 0.0
+    )
+
+    return {
+        "structure_density_correlation": _rounded_metric(
+            structure_density_correlation
+        ),
+        "peak_contrast": _rounded_metric(peak_contrast),
+        "build_up_slope_agreement": _rounded_metric(
+            _average(build_up_agreements) if build_up_agreements else 0.0
+        ),
+        "cadence_variation_rate": _rounded_metric(
+            sum(cadence_variations) / len(cadence_variations)
+            if cadence_variations
+            else 0.0
+        ),
+        "fill_candidate_precision": _rounded_metric(fill_candidate_precision),
+        "section_motif_consistency": _rounded_metric(section_motif_consistency),
+        "section_return_variation": _rounded_metric(section_return_variation),
+        "highlight_note_contrast": _rounded_metric(highlight_note_contrast),
+    }
+
+
+def _actual_fill_positions(chart_bars: list[ChartBar]) -> set[int]:
+    hit_counts = [density_hit_count(bar.notes) for bar in chart_bars]
+    positions: set[int] = set()
+    for position, bar in enumerate(chart_bars):
+        if any(note in "57" for note in bar.notes):
+            positions.add(position)
+            continue
+        neighbors = [
+            hit_counts[index]
+            for index in (position - 1, position + 1)
+            if 0 <= index < len(hit_counts)
+        ]
+        if neighbors and hit_counts[position] >= _average(neighbors) + 2:
+            positions.add(position)
+    return positions
+
+
+def _section_motif_consistency(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+) -> float:
+    sections: dict[str, list[str]] = {}
+    for chart_bar, feature_bar in zip(chart_bars, feature_bars, strict=True):
+        if not feature_bar.section_id:
+            continue
+        sections.setdefault(feature_bar.section_id, []).append(
+            _rhythm_signature(chart_bar.notes)
+        )
+    repeated_sections = [patterns for patterns in sections.values() if len(patterns) >= 2]
+    if not repeated_sections:
+        return 1.0
+    consistent = sum(max(Counter(patterns).values()) for patterns in repeated_sections)
+    total = sum(len(patterns) for patterns in repeated_sections)
+    return consistent / total if total else 1.0
+
+
+def _section_return_variation(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+) -> float:
+    sections: dict[str, dict[int, list[str]]] = {}
+    for chart_bar, feature_bar in zip(chart_bars, feature_bars, strict=True):
+        if not feature_bar.section_id or feature_bar.phrase_id is None:
+            continue
+        sections.setdefault(feature_bar.section_id, {}).setdefault(
+            feature_bar.phrase_id,
+            [],
+        ).append(_rhythm_signature(chart_bar.notes))
+    comparisons = 0
+    variations = 0
+    for phrases in sections.values():
+        ordered = [tuple(patterns) for _phrase_id, patterns in sorted(phrases.items())]
+        if len(ordered) < 2:
+            continue
+        reference = ordered[0]
+        for returned in ordered[1:]:
+            comparisons += 1
+            variations += returned != reference
+    return variations / comparisons if comparisons else 0.0
+
+
+def _rhythm_signature(notes: str) -> str:
+    if not notes:
+        return ""
+    return "|".join(
+        str(Fraction(index, len(notes)))
+        for index, note in enumerate(notes)
+        if note in "1234"
+    )
+
+
+def _resolution_quality_metrics(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+    resolution_plan: ResolutionPlan | None,
+) -> dict[str, int | float | None]:
+    if resolution_plan is not None and resolution_plan.bar_resolutions:
+        resolutions = []
+        for position, chart_bar in enumerate(chart_bars):
+            feature_index = (
+                feature_bars[position].index
+                if position < len(feature_bars)
+                else chart_bar.index
+            )
+            if 0 <= feature_index < len(resolution_plan.bar_resolutions):
+                resolutions.append(resolution_plan.bar_resolutions[feature_index])
+            elif position < len(resolution_plan.bar_resolutions):
+                resolutions.append(resolution_plan.bar_resolutions[position])
+            else:
+                resolutions.append(len(chart_bar.notes))
+        base_resolution = resolution_plan.base_resolution
+    else:
+        resolutions = [len(bar.notes) for bar in chart_bars]
+        base_resolution = (
+            Counter(resolutions).most_common(1)[0][0] if resolutions else 0
+        )
+    resolution_change_count = sum(
+        previous != current
+        for previous, current in zip(resolutions[:-1], resolutions[1:], strict=True)
+    )
+    high_resolution_count = 0
+    for position, resolution in enumerate(resolutions):
+        if position < len(feature_bars):
+            base = get_meter_spec(feature_bars[position].time_signature).legacy_grids_per_bar
+        else:
+            base = 16
+        high_resolution_count += resolution > base
+    quantization_error: float | None = None
+    if resolution_plan is not None and resolution_plan.decision is not None:
+        quantization_error = resolution_plan.decision.candidate_errors.get(
+            str(resolution_plan.base_resolution)
+        )
+    avoided_changes = sum(
+        feature_bars[position - 1].phrase_id != feature_bars[position].phrase_id
+        and resolutions[position - 1] == resolutions[position]
+        for position in range(1, min(len(feature_bars), len(resolutions)))
+    )
+    return {
+        "base_resolution": base_resolution,
+        "resolution_change_count": resolution_change_count,
+        "resolution_changes_per_100_bars": _rounded_metric(
+            resolution_change_count / len(resolutions) * 100 if resolutions else 0.0
+        ),
+        "high_resolution_bar_ratio": _rounded_metric(
+            high_resolution_count / len(resolutions) if resolutions else 0.0
+        ),
+        "resolution_quantization_error": quantization_error,
+        "avoided_resolution_changes": avoided_changes,
+        "cross_course_resolution_consistency": None,
+    }
+
+
+def _correlation(first: list[float], second: list[float]) -> float:
+    count = min(len(first), len(second))
+    if count < 2:
+        return 0.0
+    left = first[:count]
+    right = second[:count]
+    left_mean = mean(left)
+    right_mean = mean(right)
+    numerator = sum(
+        (left_value - left_mean) * (right_value - right_mean)
+        for left_value, right_value in zip(left, right, strict=True)
+    )
+    left_scale = sum((value - left_mean) ** 2 for value in left) ** 0.5
+    right_scale = sum((value - right_mean) ** 2 for value in right) ** 0.5
+    if left_scale <= 0 or right_scale <= 0:
+        return 0.0
+    return max(-1.0, min(1.0, numerator / (left_scale * right_scale)))
+
+
+def _average(values: list[float] | list[int]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _rounded_metric(value: float) -> float:
+    return round(float(value), 6)
 
 
 def playable_hit_count(notes: str) -> int:
@@ -216,12 +529,25 @@ def accent_coverage_counts(
     chart_bar: ChartBar,
     feature_bar: BarFeature,
 ) -> tuple[int, int]:
-    grid_count = min(len(chart_bar.notes), feature_bar.grids_per_bar)
-    candidates = {
-        grid for grid in feature_bar.accent_16 if 0 <= grid < grid_count
+    if not chart_bar.notes or feature_bar.grids_per_bar <= 0:
+        return 0, 0
+    feature_candidates = {
+        grid
+        for grid in feature_bar.accent_grids
+        if 0 <= grid < feature_bar.grids_per_bar
     }
-    if feature_bar.downbeat_grid is not None and 0 <= feature_bar.downbeat_grid < grid_count:
-        candidates.add(feature_bar.downbeat_grid)
+    if (
+        feature_bar.downbeat_grid is not None
+        and 0 <= feature_bar.downbeat_grid < feature_bar.grids_per_bar
+    ):
+        feature_candidates.add(feature_bar.downbeat_grid)
+    candidates = {
+        min(
+            len(chart_bar.notes) - 1,
+            round(grid / feature_bar.grids_per_bar * len(chart_bar.notes)),
+        )
+        for grid in feature_candidates
+    }
     hits = sum(chart_bar.notes[grid] in "1234" for grid in candidates)
     return len(candidates), hits
 
@@ -280,7 +606,7 @@ def special_note_metrics(
 def normalized_hit_count(notes: str, expected_length: int) -> float:
     if expected_length <= 0:
         return 0.0
-    return density_hit_count(notes) * 16 / expected_length
+    return float(density_hit_count(notes))
 
 
 def density_hint_is_satisfied(hit_count: int, hint: BarDensityHint) -> bool:
@@ -325,7 +651,21 @@ def longest_empty_bar_run(hit_counts: list[int]) -> int:
 
 
 def pattern_counts(chart_bars: list[ChartBar]) -> Counter[str]:
-    return Counter(bar.notes for bar in chart_bars if chart_activity_count(bar.notes) > 0)
+    return Counter(
+        _normalized_pattern_signature(bar.notes)
+        for bar in chart_bars
+        if chart_activity_count(bar.notes) > 0
+    )
+
+
+def _normalized_pattern_signature(notes: str) -> str:
+    if not notes:
+        return ""
+    return "|".join(
+        f"{Fraction(index, len(notes))}:{note}"
+        for index, note in enumerate(notes)
+        if note != "0"
+    )
 
 
 def note_color_metrics(chart_bars: list[ChartBar]) -> tuple[int, int, int]:

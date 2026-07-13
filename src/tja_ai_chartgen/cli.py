@@ -11,6 +11,8 @@ from tja_ai_chartgen import __version__
 from tja_ai_chartgen.features.meter import validate_time_signature
 from tja_ai_chartgen.generation import (
     GenerationConfig,
+    GenerationNotice,
+    build_analysis_notices,
     build_song_analysis,
     generate_chart_bars,
     load_generation_config,
@@ -267,6 +269,7 @@ def run_generate(
     ai_input_path = output_dir / "ai_input.json"
     ai_output_path = output_dir / "ai_output.json"
     quality_report_path = output_dir / "quality_report.json"
+    notices_path = output_dir / "generation_notices.json"
     report_path = output_dir / "report.txt"
 
     generation_config = GenerationConfig(
@@ -320,6 +323,9 @@ def run_generate(
     tja_paths: list[Path] = []
     all_issues: list[ValidationIssue] = []
     ai_failures: list[str] = []
+    notices = build_analysis_notices(analysis, requested_beatnet=use_beatnet)
+    for notice in notices:
+        _print_notice(notice)
 
     for course_spec in course_specs:
         course_name = str(course_spec["course"])
@@ -355,6 +361,9 @@ def run_generate(
         )
         chart_bars = generation_result.chart_bars
         ai_failure = generation_result.ai_failure
+        notices.extend(generation_result.notices)
+        for notice in generation_result.notices:
+            _print_notice(notice)
         if ai_failure:
             console.print(
                 f"AI generation failed for {course_name}. Falling back to rule-based generator."
@@ -386,9 +395,25 @@ def run_generate(
         if ai_failure:
             ai_failures.append(f"{course_name}: {ai_failure}")
 
-    _write_report(report_path, tja_paths, analysis_path, generation_config_path, all_issues, ai_failures)
+    write_json(notices_path, notices)
+    _write_report(
+        report_path,
+        tja_paths,
+        analysis_path,
+        generation_config_path,
+        all_issues,
+        ai_failures,
+        notices,
+    )
 
-    _print_result(tja_paths, analysis_path, generation_config_path, report_path, all_issues)
+    _print_result(
+        tja_paths,
+        analysis_path,
+        generation_config_path,
+        notices_path,
+        report_path,
+        all_issues,
+    )
 
     if any(issue.level == "error" for issue in all_issues):
         raise typer.Exit(1)
@@ -447,6 +472,7 @@ def _write_report(
     generation_config_path: Path,
     issues: list[ValidationIssue],
     ai_failures: list[str],
+    notices: list[GenerationNotice],
 ) -> Path:
     lines: list[str] = [
         "TJA AI Chart Generator Report",
@@ -467,6 +493,15 @@ def _write_report(
         lines.extend(ai_failures)
         lines.append("")
 
+    if notices:
+        lines.append("Generation notices:")
+        for notice in notices:
+            scope = f" {notice.scope}" if notice.scope else ""
+            lines.append(f"- [{notice.level}]{scope} {notice.message}")
+            if notice.detail:
+                lines.append(f"  {notice.detail}")
+        lines.append("")
+
     if issues:
         lines.append("Validation issues:")
         for issue in issues:
@@ -479,10 +514,19 @@ def _write_report(
     return report_path
 
 
+def _print_notice(notice: GenerationNotice) -> None:
+    color = "red" if notice.level == "error" else "yellow" if notice.level == "warning" else "cyan"
+    scope = f" {notice.scope}" if notice.scope else ""
+    console.print(f"[{color}]{notice.level.upper()}{scope}:[/] {notice.message}")
+    if notice.detail:
+        console.print(f"  {notice.detail}")
+
+
 def _print_result(
     tja_paths: list[Path],
     analysis_path: Path,
     generation_config_path: Path,
+    notices_path: Path,
     report_path: Path,
     issues: list[ValidationIssue],
 ) -> None:
@@ -491,6 +535,7 @@ def _print_result(
         console.print(f"- {tja_path}")
     console.print(f"- {analysis_path}")
     console.print(f"- {generation_config_path}")
+    console.print(f"- {notices_path}")
     console.print(f"- {report_path}")
 
     for issue in issues:

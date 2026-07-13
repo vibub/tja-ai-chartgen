@@ -7,6 +7,8 @@ from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_override
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.density import build_density_hints
+from tja_ai_chartgen.features.resolution import build_resolution_plan
+from tja_ai_chartgen.features.structure import analyze_song_structure
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
 from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, SongAnalysis, TjaChart
 from tja_ai_chartgen.tja.quality import build_quality_report, playable_hit_count
@@ -58,15 +60,24 @@ def test_real_audio_pipeline(
     assert raw.tempo_analysis.normalized_support >= 0.85
     assert raw.tempo_analysis.onset_count >= 12
     assert raw.tempo_analysis.time_coverage >= 0.75
+    assert raw.spectral.status == "complete"
+    assert raw.spectral.feature_version == "spectral-v1"
+    assert raw.spectral.frame_count == len(raw.spectral.spectral_flux_envelope)
+    assert any(value > 0.0 for value in raw.spectral.spectral_flux_envelope)
 
     features = build_bar_features(raw)
 
     assert features
     assert all(bar.time_signature == "4/4" for bar in features)
-    assert all(bar.grids_per_bar == 16 for bar in features)
-    assert any(bar.onset_16 for bar in features)
+    assert all(bar.grids_per_bar == 48 for bar in features)
+    assert any(bar.onset_grids for bar in features)
+    assert any(bar.spectral_flux > 0.0 for bar in features)
+    assert any(bar.spectral_grid_features for bar in features)
 
     analysis = SongAnalysis(
+        spectral_feature_version=raw.spectral.feature_version,
+        spectral_analysis_status=raw.spectral.status,
+        spectral_analysis_reason=raw.spectral.reason,
         title="Golden Click Track",
         audio_file=str(fixture_path),
         ogg_file=str(ogg_path),
@@ -79,6 +90,8 @@ def test_real_audio_pipeline(
     serialized_analysis = analysis.model_dump(mode="json")
 
     assert serialized_analysis["analyzer"] == "librosa+onset-grid"
+    assert serialized_analysis["spectral_feature_version"] == "spectral-v1"
+    assert serialized_analysis["spectral_analysis_status"] == "complete"
     assert serialized_analysis["tempo_analysis"]["accepted"] is True
     assert serialized_analysis["tempo_analysis"]["fallback_source"] == "librosa"
     assert serialized_analysis["bars"][0]["rms_dbfs"] is not None
@@ -87,15 +100,34 @@ def test_real_audio_pipeline(
     legacy_analysis = serialized_analysis.copy()
     legacy_analysis.pop("analyzer")
     legacy_analysis.pop("tempo_analysis")
+    legacy_analysis.pop("spectral_feature_version")
+    legacy_analysis.pop("spectral_analysis_status")
+    legacy_analysis.pop("spectral_analysis_reason")
     for bar in legacy_analysis["bars"]:
+        bar["onset_16"] = bar.pop("onset_grids")
+        bar["accent_16"] = bar.pop("accent_grids")
+        bar["activity_16"] = bar.pop("activity_grids")
         bar.pop("rms_dbfs")
         bar.pop("peak_rms_dbfs")
         bar.pop("relative_rms_db")
         bar.pop("sustained_activity_ratio")
+        bar.pop("spectral_grid_features")
+        bar.pop("low_onset_strength")
+        bar.pop("mid_onset_strength")
+        bar.pop("high_onset_strength")
+        bar.pop("spectral_flux")
+        bar.pop("brightness")
+        bar.pop("harmonic_novelty")
+        bar.pop("texture_novelty")
+        bar.pop("percussive_ratio")
     restored_legacy = SongAnalysis.model_validate(legacy_analysis)
     assert restored_legacy.analyzer == "unknown"
     assert restored_legacy.tempo_analysis is None
+    assert restored_legacy.spectral_feature_version is None
+    assert restored_legacy.spectral_analysis_status == "unavailable"
     assert restored_legacy.bars[0].rms_dbfs is None
+    assert restored_legacy.bars[0].spectral_grid_features == []
+    assert restored_legacy.bars[0].spectral_flux == 0.0
 
     chart = TjaChart(
         metadata=ChartMetadata(
@@ -198,7 +230,7 @@ def test_quality_audio_fixtures_support_repeatable_course_evaluation(
     if fixture_name == "sparse_120.wav":
         oni_bars, _ = course_results[-1]
         for chart_bar, feature_bar in zip(oni_bars, features, strict=True):
-            if len(feature_bar.onset_16) <= 2:
+            if len(feature_bar.onset_grids) <= 2:
                 assert playable_hit_count(chart_bar.notes) <= 4
     else:
         hard_report = course_results[-2][1]
@@ -207,6 +239,106 @@ def test_quality_audio_fixtures_support_repeatable_course_evaluation(
             hard_report.active_average_notes_per_second
         )
         assert oni_report.longest_note_stream_count > hard_report.longest_note_stream_count
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "pattern", "expected_resolution"),
+    [
+        ("straight_120.wav", "straight", 16),
+        ("triplet_120.wav", "triplet", 24),
+        ("mixed_120.wav", "mixed", 48),
+    ],
+)
+def test_resolution_audio_fixtures_select_stable_output_grid(
+    tmp_path: Path,
+    fixture_name: str,
+    pattern: str,
+    expected_resolution: int,
+):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required for the real audio pipeline integration test")
+
+    fixture_path = FIXTURE_DIR / fixture_name
+    assert fixture_path.is_file(), f"Missing resolution fixture: {fixture_path}"
+    ogg_path = convert_to_ogg(fixture_path, tmp_path / f"{fixture_path.stem}.ogg")
+    analyzed = analyze_audio(ogg_path)
+    raw = apply_analysis_overrides(analyzed, bpm=120.0, offset=0.5)
+
+    beat_interval = 0.5
+    onset_times: list[float] = []
+    for bar_index in range(4):
+        bar_start = 0.5 + bar_index * beat_interval * 4
+        subdivisions = (
+            4
+            if pattern == "straight" or (pattern == "mixed" and bar_index % 2 == 0)
+            else 3
+        )
+        for beat_index in range(4):
+            beat_start = bar_start + beat_index * beat_interval
+            onset_times.extend(
+                beat_start + subdivision_index * beat_interval / subdivisions
+                for subdivision_index in range(subdivisions)
+            )
+    raw = raw.model_copy(update={"onset_times": onset_times, "onset_strengths": []})
+
+    features = build_bar_features(raw, max_bars=4)
+    plan = build_resolution_plan(raw, features)
+    chart_bars = generate_fallback_chart_bars(
+        features,
+        density="high",
+        course="Oni",
+        level=10,
+        resolution_plan=plan,
+    )
+
+    assert raw.rms_envelope
+    assert plan.base_resolution == expected_resolution
+    assert plan.bar_resolutions == [expected_resolution] * len(features)
+    assert all(len(chart_bar.notes) == expected_resolution for chart_bar in chart_bars)
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title=f"Resolution {pattern}",
+            wave=ogg_path.name,
+            bpm=raw.bpm,
+            offset=raw.offset,
+        ),
+        bars=chart_bars,
+    )
+    assert "#END" in render_tja(chart)
+
+
+def test_structure_audio_fixture_detects_build_up_peak_and_drop(tmp_path: Path):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required for the real audio pipeline integration test")
+
+    fixture_path = FIXTURE_DIR / "structure_build_up_120.wav"
+    assert fixture_path.is_file(), f"Missing structure fixture: {fixture_path}"
+    ogg_path = convert_to_ogg(fixture_path, tmp_path / "structure_build_up_120.ogg")
+    analyzed = analyze_audio(ogg_path)
+    raw = apply_analysis_overrides(analyzed, bpm=120.0, offset=0.5)
+    beat_interval = 0.5
+    subdivisions_by_bar = [1, 1, 1, 1, 1, 2, 3, 4, 4, 4, 1, 1]
+    onset_times: list[float] = []
+    for bar_index, subdivisions in enumerate(subdivisions_by_bar):
+        bar_start = 0.5 + bar_index * beat_interval * 4
+        for beat_index in range(4):
+            beat_start = bar_start + beat_index * beat_interval
+            onset_times.extend(
+                beat_start + subdivision_index * beat_interval / subdivisions
+                for subdivision_index in range(subdivisions)
+            )
+    raw = raw.model_copy(update={"onset_times": onset_times, "onset_strengths": []})
+
+    structure = analyze_song_structure(build_bar_features(raw, max_bars=12))
+    roles = [item.transition_role for item in structure.bar_structures]
+
+    assert len(structure.bars) == 12
+    assert len(structure.phrases) >= 2
+    assert "build_up" in roles
+    assert "peak" in roles
+    assert "drop" in roles
+    assert structure.bars[3].phrase_position != "phrase_end"
+    assert structure.bars[7].phrase_position != "phrase_end"
 
 
 def test_transient_noise_intro_is_forced_to_edge_silence(tmp_path: Path):
@@ -236,9 +368,9 @@ def test_transient_noise_intro_is_forced_to_edge_silence(tmp_path: Path):
     assert features[0].relative_rms_db is not None and features[0].relative_rms_db <= -40.0
     assert features[0].sustained_activity_ratio is not None
     assert features[0].sustained_activity_ratio <= 0.15
-    assert features[0].onset_16
+    assert features[0].onset_grids
     assert hints[0].kind == "silent"
-    assert chart_bars[0].notes == "0" * features[0].grids_per_bar
+    assert chart_bars[0].notes == "0" * 16
     assert hints[1].kind != "silent"
     assert playable_hit_count(chart_bars[1].notes) > 0
     assert report.silent_bar_note_count == 0

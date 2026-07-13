@@ -5,13 +5,22 @@ import pytest
 from pydantic import ValidationError
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
+from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw
 from tja_ai_chartgen.generation import (
     GenerationConfig,
+    build_analysis_notices,
     build_song_analysis,
     generate_chart_bars,
     load_generation_config,
 )
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    ChartBar,
+    ResolutionDecision,
+    ResolutionPlan,
+    SongAnalysis,
+    TempoAnalysisDecision,
+)
 
 
 def _bar(index: int = 0) -> BarFeature:
@@ -91,6 +100,10 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
         beat_times=[],
         onset_times=[],
         onset_strengths=[],
+        spectral=SpectralAnalysisRaw(
+            feature_version="spectral-v1",
+            status="complete",
+        ),
     )
     converted: list[tuple[Path, Path]] = []
 
@@ -118,6 +131,64 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.time_signature == "3/4"
     assert len(analysis.bars) == 2
     assert all(bar.time_signature == "3/4" for bar in analysis.bars)
+    assert analysis.analysis_schema_version == 4
+    assert analysis.spectral_feature_version == "spectral-v1"
+    assert analysis.spectral_analysis_status == "complete"
+    assert analysis.structure_feature_version == "structure-v1"
+    assert analysis.structure_confidence is not None
+    assert len(analysis.bar_structures) == 2
+    assert len(analysis.phrase_plan) == 1
+    assert analysis.phrase_plan[0].resolution == 12
+    assert analysis.resolution_policy_version == "song-global-v1"
+    assert analysis.resolution_plan is not None
+    assert analysis.resolution_plan.canonical_grids_per_bar == 36
+    assert analysis.resolution_plan.bar_resolutions == [12, 12]
+
+
+def test_build_analysis_notices_reports_optional_analysis_fallbacks():
+    bars = [_bar(index=index) for index in range(4)]
+    analysis = _analysis(bars).model_copy(
+        update={
+            "analyzer": "librosa",
+            "spectral_feature_version": "spectral-v1",
+            "spectral_analysis_status": "fallback",
+            "spectral_analysis_reason": "extractor-error:RuntimeError",
+            "structure_confidence": 0.2,
+            "tempo_analysis": TempoAnalysisDecision(
+                fallback_source="librosa",
+                selected_source="librosa",
+                estimated_bpm=120.0,
+                estimated_offset=0.0,
+                normalized_support=0.15,
+                onset_count=3,
+                time_coverage=0.2,
+                accepted=False,
+                reason="insufficient_onsets",
+            ),
+            "resolution_plan": ResolutionPlan(
+                canonical_grids_per_bar=48,
+                base_resolution=16,
+                bar_resolutions=[16] * 4,
+                decision=ResolutionDecision(
+                    selected_resolution=16,
+                    evidence_count=0,
+                    reason="insufficient reliable onset evidence",
+                ),
+            ),
+        }
+    )
+
+    notices = build_analysis_notices(analysis, requested_beatnet=True)
+
+    assert {notice.code for notice in notices} == {
+        "beatnet-fallback",
+        "spectral-analysis-fallback",
+        "tempo-refinement-fallback",
+        "structure-low-confidence",
+        "resolution-evidence-fallback",
+    }
+    assert all(notice.level == "warning" for notice in notices)
+    assert all(notice.stage == "analysis" for notice in notices)
 
 
 def test_generate_chart_bars_falls_back_and_builds_quality_report(monkeypatch):
@@ -158,9 +229,40 @@ def test_generate_chart_bars_falls_back_and_builds_quality_report(monkeypatch):
                 "special_notes": False,
                 "course": "Oni",
                 "level": 10,
+                "resolution_plan": None,
             },
         )
     ]
+
+
+def test_generate_chart_bars_exposes_structured_ai_fallback_notice(monkeypatch):
+    analysis = _analysis()
+
+    def fail_ai_generation(**kwargs):
+        raise RuntimeError(f"provider rejected {kwargs['api_key']}")
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.generation._generate_ai_bars",
+        fail_ai_generation,
+    )
+
+    result = generate_chart_bars(
+        analysis=analysis,
+        selected_bars=analysis.bars,
+        course="Oni",
+        level=10,
+        style="technical",
+        density="high",
+        special_notes=False,
+        use_ai=True,
+        api_key="request-secret",
+    )
+
+    assert result.used_fallback is True
+    assert result.ai_failure == "provider rejected [REDACTED]"
+    assert [notice.code for notice in result.notices] == ["ai-fallback"]
+    assert result.notices[0].detail == result.ai_failure
+    assert result.notices[0].scope == "Oni"
 
 
 def test_generate_chart_bars_writes_ai_sidecars_and_sanitizes(tmp_path, monkeypatch):
@@ -197,3 +299,5 @@ def test_generate_chart_bars_writes_ai_sidecars_and_sanitizes(tmp_path, monkeypa
     assert result.used_fallback is False
     assert result.chart_bars[0].index == 3
     assert result.chart_bars[0].notes == "1111000000000000"
+    assert [notice.code for notice in result.notices] == ["ai-generation-succeeded"]
+    assert result.notices[0].scope == "Oni"

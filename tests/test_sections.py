@@ -15,7 +15,7 @@ def test_assign_sections_uses_relative_energy_for_quiet_songs():
     assert [bar.section for bar in assigned] == ["intro", "intro", "intro", "intro"]
 
 
-def test_assign_sections_marks_middle_low_energy_onset_bars_as_playable():
+def test_assign_sections_keeps_mixed_bars_in_one_detected_phrase_section():
     bars = [
         BarFeature(index=index, start_time=index * 2, end_time=(index + 1) * 2, energy=0, onset_16=[])
         for index in range(8)
@@ -37,10 +37,13 @@ def test_assign_sections_marks_middle_low_energy_onset_bars_as_playable():
 
     assigned = assign_sections(bars)
 
-    assert assigned[8].section == "break"
-    assert assigned[9].section == "verse"
-    assert assigned[10].section == "chorus"
-    assert assigned[11].section == "break"
+    assert assigned[8].section != "break"
+    assert assigned[9].section in {"verse", "chorus"}
+    assert assigned[10].section in {"verse", "chorus"}
+    for phrase_id in {bar.phrase_id for bar in assigned[8:12]}:
+        phrase_bars = [bar for bar in assigned[8:12] if bar.phrase_id == phrase_id]
+        assert len({bar.section_id for bar in phrase_bars}) == 1
+        assert len({bar.section for bar in phrase_bars}) == 1
 
 
 def test_assign_sections_uses_activity_for_sustained_music():
@@ -64,4 +67,5 @@ def test_assign_sections_uses_activity_for_sustained_music():
     assigned = assign_sections(bars)
 
     assert assigned[8].section == "verse"
-    assert assigned[9].section == "break"
+    assert assigned[9].section == "verse"
+    assert assigned[8].section_id == assigned[9].section_id

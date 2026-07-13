@@ -4,6 +4,7 @@ from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.tja.model import TjaChart
 
 SUPPORTED_NOTE_CHARACTERS = frozenset("01234578")
+MAX_NOTE_GRIDS_PER_BAR = 192
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,13 +35,13 @@ def validate_chart(chart: TjaChart) -> None:
     issues: list[ChartValidationIssue] = []
 
     for bar in chart.bars:
-        meter = get_meter_spec(bar.time_signature)
-        if len(bar.notes) != meter.grids_per_bar:
+        get_meter_spec(bar.time_signature)
+        if not 1 <= len(bar.notes) <= MAX_NOTE_GRIDS_PER_BAR:
             issues.append(
                 ChartValidationIssue(
                     code="invalid-note-count",
                     message=(
-                        f"expected {meter.grids_per_bar} note grids for {bar.time_signature}, "
+                        f"expected between 1 and {MAX_NOTE_GRIDS_PER_BAR} note grids, "
                         f"got {len(bar.notes)}"
                     ),
                     bar_index=bar.index,

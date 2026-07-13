@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
+from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw
 from tja_ai_chartgen.tja.model import ChartBar, SongAnalysis, TempoAnalysisDecision
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
 from tja_ai_chartgen.web import (
@@ -81,6 +82,7 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     job_dir = next(tmp_path.iterdir())
     status = _wait_for_job_done(client, job_dir.name)
     assert status["status"] == "done"
+    assert status["notices"] == []
     result = client.get(f"/jobs/{job_dir.name}/result")
     assert result.status_code == 200
     assert "游玩预览" in result.text
@@ -106,8 +108,54 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert analysis["tempo_analysis"]["selected_source"] == "librosa"
     assert analysis["tempo_analysis"]["reason"] == "insufficient_onsets"
     quality_report = json.loads((job_dir / "quality_report_1_1.json").read_text(encoding="utf-8"))
+    notices = json.loads((job_dir / "generation_notices.json").read_text(encoding="utf-8"))
     assert quality_report["bar_count"] == 1
+    assert notices == []
     assert (job_dir / "preview.tja").exists()
+
+
+def test_web_analysis_fallback_notice_is_persisted_and_rendered(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    assert [notice["code"] for notice in status["notices"]] == [
+        "tempo-refinement-fallback"
+    ]
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    assert "onset-grid 节拍校正置信度不足" in result.text
+    notices = json.loads((job_dir / "generation_notices.json").read_text(encoding="utf-8"))
+    assert [notice["code"] for notice in notices] == ["tempo-refinement-fallback"]
+
+
+def test_web_spectral_fallback_notice_is_persisted_and_rendered(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch, spectral_fallback=True)
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1", "bpm": "120"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    assert [notice["code"] for notice in status["notices"]] == [
+        "spectral-analysis-fallback"
+    ]
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    assert "频谱语义增强未生效" in result.text
+    notices = json.loads((job_dir / "generation_notices.json").read_text(encoding="utf-8"))
+    assert notices[0]["detail"] == "reason=extractor-error:RuntimeError"
 
 
 def test_web_analyze_oversized_upload_returns_413_and_removes_job(tmp_path, monkeypatch):
@@ -432,6 +480,32 @@ def test_web_progress_status_reports_failed_stage(tmp_path, monkeypatch):
     assert "ffmpeg missing" in status["error"]
 
 
+def test_web_remote_progress_hides_background_error_details(tmp_path, monkeypatch):
+    private_detail = r"D:\private\audio\ffmpeg missing"
+
+    def fake_convert_to_ogg(input_path, output_path):
+        raise RuntimeError(private_detail)
+
+    monkeypatch.setattr("tja_ai_chartgen.generation.convert_to_ogg", fake_convert_to_ogg)
+    client = TestClient(create_app(output_dir=tmp_path, remote_mode=True))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_id = next(tmp_path.iterdir()).name
+    status = _wait_for_job_done(client, job_id, final_status="error")
+    serialized = json.dumps(status, ensure_ascii=False)
+    assert private_detail not in serialized
+    assert "RuntimeError" in status["error"]
+    assert "远程模式已隐藏" in status["error"]
+    assert status["notices"][0]["code"] == "convert-failed"
+    assert "detail" not in status["notices"][0]
+
+
 def test_web_encoding_error_can_retry_metadata_without_regeneration(tmp_path, monkeypatch):
     _patch_web_audio_pipeline(monkeypatch)
     client = TestClient(create_app(output_dir=tmp_path))
@@ -460,6 +534,8 @@ def test_web_encoding_error_can_retry_metadata_without_regeneration(tmp_path, mo
 
     assert retry.status_code == 200
     assert "游玩预览" in retry.text
+    assert "已复用现有分析与谱面" in retry.text
+    assert "任务停止，请根据错误信息调整参数后重试" not in retry.text
     assert (tmp_path / job_id / "preview.tja").exists()
     generated_text = (tmp_path / job_id / "preview.tja").read_text(encoding=TJA_FILE_ENCODING)
     assert "TITLE:Song Title" in generated_text
@@ -533,6 +609,7 @@ def test_web_job_file_download_uses_public_artifact_allowlist(tmp_path, monkeypa
         "progress.json",
         "chart_bars.json",
         "chart_options.json",
+        "generation_notices.json",
         "result.html",
         "ai_input_1_1.json",
         "ai_output_1_1.json",
@@ -857,6 +934,10 @@ def test_web_ai_failure_sidecars_redact_api_key(tmp_path, monkeypatch):
     job_dir = next(tmp_path.iterdir())
     status = _wait_for_job_done(client, job_dir.name)
     assert status["status"] == "done"
+    ai_notice = next(notice for notice in status["notices"] if notice["code"] == "ai-fallback")
+    assert ai_notice["level"] == "warning"
+    assert secret not in ai_notice["detail"]
+    assert "[REDACTED]" in ai_notice["detail"]
     result = client.get(f"/jobs/{job_dir.name}/result")
     assert result.status_code == 200
     assert "AI 增强失败，已自动回退到规则生成" in result.text
@@ -874,6 +955,48 @@ def test_web_ai_failure_sidecars_redact_api_key(tmp_path, monkeypatch):
 
     assert all(secret not in artifact_text for artifact_text in artifact_texts)
     assert any("[REDACTED]" in artifact_text for artifact_text in artifact_texts)
+
+
+def test_web_remote_ai_fallback_hides_provider_details(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    _patch_web_threads_to_run_synchronously(monkeypatch)
+    secret = "remote-request-secret"
+    private_detail = "provider response from https://private-provider.example/v1"
+
+    def fake_generate_chart_bars_with_ai(*args, **kwargs):
+        raise AiProviderError(
+            f"{private_detail} with {kwargs['api_key']}",
+            {"fallback_reason": "transport_retries_exhausted"},
+        )
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.generate_chart_bars_with_ai",
+        fake_generate_chart_bars_with_ai,
+    )
+    client = TestClient(create_app(output_dir=tmp_path, remote_mode=True))
+
+    response = client.post(
+        "/analyze",
+        data={
+            "title": "Song Title",
+            "max_bars": "1",
+            "use_ai": "true",
+            "ai_base_url": "https://request.example.com/v1",
+            "ai_api_key": secret,
+        },
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    public_text = json.dumps(status, ensure_ascii=False) + result.text
+    assert "AI 增强失败，已自动回退到规则生成" in result.text
+    assert private_detail not in public_text
+    assert secret not in public_text
+    ai_notice = next(notice for notice in status["notices"] if notice["code"] == "ai-fallback")
+    assert "detail" not in ai_notice
 
 
 def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
@@ -954,6 +1077,10 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
     job_dir = tmp_path / job_id
     assert (job_dir / "ai_input_1_2.json").exists()
     assert (job_dir / "ai_output_1_2.json").exists()
+    notices = json.loads(
+        (job_dir / "generation_notices_1_2.json").read_text(encoding="utf-8")
+    )
+    assert any(notice["code"] == "ai-generation-succeeded" for notice in notices)
     generated_text = (job_dir / "regenerated_1_2.tja").read_text(encoding=TJA_FILE_ENCODING)
     assert "1111000000000000," in generated_text
     assert "2222000000000000," in generated_text
@@ -1185,6 +1312,41 @@ LEVEL:10
     assert (next(tmp_path.iterdir()) / "debug.tja").exists()
 
 
+def test_web_preview_tja_supports_variable_bar_resolutions(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path))
+    notes_24 = "1" + ("0" * 11) + "2" + ("0" * 11)
+    notes_48 = "1" + ("0" * 11) + "2" + ("0" * 11) + "1" + ("0" * 23)
+    tja_text = f"""TITLE:Variable Resolution
+BPM:120
+OFFSET:-0.5
+COURSE:Oni
+LEVEL:10
+
+#START
+1,
+{notes_24},
+{notes_48},
+#END
+"""
+
+    response = client.post(
+        "/preview-tja",
+        files={
+            "tja": ("variable.tja", tja_text.encode("utf-8"), "text/plain"),
+            "audio": ("song.ogg", b"fake ogg", "audio/ogg"),
+        },
+    )
+
+    assert response.status_code == 200
+    assert '"time": 0.5, "type": "1"' in response.text
+    assert '"time": 2.5, "type": "1"' in response.text
+    assert '"time": 3.5, "type": "2"' in response.text
+    assert '"time": 4.5, "type": "1"' in response.text
+    assert '"time": 5.0, "type": "2"' in response.text
+    assert '"time": 5.5, "type": "1"' in response.text
+
+
 def test_web_serves_taiko_hit_sounds(tmp_path):
     client = TestClient(create_app(output_dir=tmp_path))
 
@@ -1278,7 +1440,7 @@ def _patch_web_threads_to_run_synchronously(monkeypatch):
     monkeypatch.setattr("tja_ai_chartgen.web.Thread", SynchronousThread)
 
 
-def _patch_web_audio_pipeline(monkeypatch, duration=2.0):
+def _patch_web_audio_pipeline(monkeypatch, duration=2.0, spectral_fallback=False):
     def fake_convert_to_ogg(input_path, output_path):
         output_path.write_bytes(b"fake ogg")
         return output_path
@@ -1296,6 +1458,11 @@ def _patch_web_audio_pipeline(monkeypatch, duration=2.0):
             duration=duration,
             offset=0.0,
             analyzer="librosa",
+            spectral=SpectralAnalysisRaw(
+                feature_version="spectral-v1" if spectral_fallback else None,
+                status="fallback" if spectral_fallback else "unavailable",
+                reason="extractor-error:RuntimeError" if spectral_fallback else None,
+            ),
             tempo_analysis=TempoAnalysisDecision(
                 fallback_source="librosa",
                 selected_source="librosa",

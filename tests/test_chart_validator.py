@@ -1,6 +1,10 @@
 import pytest
 
-from tja_ai_chartgen.tja.chart_validator import ChartValidationError, validate_chart
+from tja_ai_chartgen.tja.chart_validator import (
+    MAX_NOTE_GRIDS_PER_BAR,
+    ChartValidationError,
+    validate_chart,
+)
 from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, TjaChart
 
 
@@ -19,9 +23,16 @@ def _chart(*bars: ChartBar) -> TjaChart:
 @pytest.mark.parametrize(
     ("time_signature", "notes"),
     [
+        ("4/4", "1"),
+        ("4/4", "1000"),
         ("4/4", "1000100010001000"),
+        ("4/4", "1" + ("0" * 23)),
+        ("4/4", "1" + ("0" * 47)),
         ("3/4", "100010001000"),
+        ("3/4", "1" + ("0" * 17)),
+        ("3/4", "1" + ("0" * 35)),
         ("6/8", "100000100000"),
+        ("6/8", "1" + ("0" * 35)),
     ],
 )
 def test_validate_chart_accepts_supported_bar_lengths(time_signature, notes):
@@ -43,21 +54,14 @@ def test_validate_chart_reports_all_unsupported_note_characters():
     assert "unsupported note character 'X'" in str(error.value)
 
 
-@pytest.mark.parametrize(
-    ("time_signature", "notes", "expected"),
-    [
-        ("4/4", "100010001000", 16),
-        ("3/4", "1000100010001000", 12),
-        ("6/8", "1000100010001000", 12),
-    ],
-)
-def test_validate_chart_rejects_note_count_mismatch(time_signature, notes, expected):
+@pytest.mark.parametrize("notes", ["", "0" * (MAX_NOTE_GRIDS_PER_BAR + 1)])
+def test_validate_chart_rejects_unsafe_note_count(notes):
     with pytest.raises(ChartValidationError) as error:
-        validate_chart(_chart(ChartBar(index=1, notes=notes, time_signature=time_signature)))
+        validate_chart(_chart(ChartBar(index=1, notes=notes)))
 
     issue = next(issue for issue in error.value.issues if issue.code == "invalid-note-count")
     assert issue.bar_index == 1
-    assert f"expected {expected} note grids" in issue.message
+    assert "between 1 and" in issue.message
 
 
 @pytest.mark.parametrize(
@@ -142,10 +146,9 @@ def test_validate_chart_aggregates_multiple_issue_types_in_stable_order():
         validate_chart(_chart(bar))
 
     assert [issue.code for issue in error.value.issues] == [
-        "invalid-note-count",
         "extra-balloon-count",
         "invalid-balloon-count",
         "unclosed-roll",
         "unsupported-note-character",
     ]
-    assert str(error.value).startswith("Chart preflight failed with 5 issues:")
+    assert str(error.value).startswith("Chart preflight failed with 4 issues:")

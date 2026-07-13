@@ -17,21 +17,82 @@ from tja_ai_chartgen.ai.client import (
     sanitize_ai_bars,
 )
 from tja_ai_chartgen.ai.prompts import build_chart_generation_payload, build_chart_generation_prompt
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    BarStructureFeature,
+    ChartBar,
+    PhraseFeature,
+    ResolutionPlan,
+    SongAnalysis,
+    SpectralGridFeature,
+)
 
 
-def test_sanitize_ai_bars_normalizes_count_length_and_characters():
-    bars = [
-        ChartBar(index=10, notes="12x"),
-        ChartBar(index=11, notes="12340123401234012340"),
-    ]
+def _event_bar(
+    bar_number: int,
+    notes: str,
+    *,
+    canonical_grids: int = 48,
+    balloon_counts: list[int] | None = None,
+) -> dict[str, object]:
+    if not notes or canonical_grids % len(notes) != 0:
+        raise ValueError("test notes must divide the canonical grid exactly")
 
-    sanitized = sanitize_ai_bars(bars, expected_count=3)
+    step = canonical_grids // len(notes)
+    hits: list[list[object]] = []
+    long_notes: list[dict[str, object]] = []
+    balloons = iter(balloon_counts or [])
+    active_long_start: tuple[int, str] | None = None
 
-    assert [bar.index for bar in sanitized] == [0, 1, 2]
-    assert sanitized[0].notes == "1200000000000000"
-    assert sanitized[1].notes == "1234012340123401"
-    assert sanitized[2].notes == "1000100010001000"
+    for index, note in enumerate(notes):
+        tick = index * step
+        if note in "1234":
+            hits.append([tick, note])
+        elif note in "57":
+            active_long_start = (tick, note)
+        elif note == "8" and active_long_start is not None:
+            start_tick, start_note = active_long_start
+            long_note: dict[str, object] = {
+                "start_tick": start_tick,
+                "end_tick": tick,
+                "kind": "balloon" if start_note == "7" else "drumroll",
+            }
+            if start_note == "7":
+                long_note["balloon_count"] = next(balloons)
+            long_notes.append(long_note)
+            active_long_start = None
+
+    return {"bar": bar_number, "hits": hits, "long_notes": long_notes}
+
+
+def _event_payload(
+    notes_by_bar: list[str],
+    *,
+    canonical_grids: int = 48,
+) -> dict[str, list[dict[str, object]]]:
+    return {
+        "bars": [
+            _event_bar(index + 1, notes, canonical_grids=canonical_grids)
+            for index, notes in enumerate(notes_by_bar)
+        ]
+    }
+
+
+def test_sanitize_ai_bars_rejects_bar_count_mismatch():
+    with pytest.raises(ValueError, match="exactly 2 bars"):
+        sanitize_ai_bars([ChartBar(index=10, notes="1000100010001000")], expected_count=2)
+
+
+@pytest.mark.parametrize(
+    ("notes", "message"),
+    [
+        ("12x0000000000000", "unsupported character"),
+        ("12340123401234012340", "expected resolution 16"),
+    ],
+)
+def test_sanitize_ai_bars_rejects_invalid_notes_instead_of_rewriting(notes, message):
+    with pytest.raises(ValueError, match=message):
+        sanitize_ai_bars([ChartBar(index=10, notes=notes)], expected_count=1)
 
 
 def test_sanitize_ai_bars_forces_expected_edge_silence_to_empty():
@@ -71,8 +132,12 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density_policy"]["quality_average_min_per_16_grid_bar"] == 6.5
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
-    assert payload["schema"] == "tja-ai-chartgen-compact-v1"
-    assert payload["bars"][0]["grids_per_bar"] == 16
+    assert payload["schema"] == "tja-ai-chartgen-compact-v2"
+    assert len(payload["reference_windows"]) == 3
+    assert "reference_window_bar_columns" in payload["legend"]
+    assert payload["bars"][0]["canonical_grids_per_bar"] == 48
+    assert payload["bars"][0]["output_resolution"] == 16
+    assert payload["bars"][0]["allowed_tick_step"] == 3
     assert "grid_features" in payload["bars"][0]
     assert payload["legend"]["grid_feature_columns"] == [
         "grid",
@@ -83,6 +148,119 @@ def test_build_chart_generation_payload_includes_density():
         "strength",
         "activity",
     ]
+
+
+def test_build_chart_generation_payload_includes_compact_structure_plan():
+    analysis = _analysis(bar_count=2).model_copy(
+        update={
+            "structure_feature_version": "structure-v1",
+            "structure_confidence": 0.81,
+            "bar_structures": [
+                BarStructureFeature(
+                    index=0,
+                    energy_percentile=0.3,
+                    phrase_id=0,
+                    phrase_progress=0.0,
+                    phrase_position="start",
+                    transition_role="build_up",
+                    section_id="section-1",
+                    section="verse",
+                    section_confidence=0.9,
+                    fill_candidate_score=0.1,
+                ),
+                BarStructureFeature(
+                    index=1,
+                    energy_percentile=0.8,
+                    energy_delta=0.5,
+                    boundary_confidence=0.7,
+                    phrase_id=0,
+                    phrase_progress=1.0,
+                    phrase_position="end",
+                    transition_role="peak",
+                    section_id="section-1",
+                    section="verse",
+                    section_confidence=0.9,
+                    fill_candidate_score=0.75,
+                ),
+            ],
+            "phrase_plan": [
+                PhraseFeature(
+                    phrase_id=0,
+                    start_bar=0,
+                    end_bar=1,
+                    section_id="section-1",
+                    section="verse",
+                    mean_energy=0.55,
+                    peak_energy=0.8,
+                    energy_trend=0.5,
+                    primary_role="build_up",
+                    ending_boundary_confidence=0.7,
+                    resolution=16,
+                )
+            ],
+        }
+    )
+
+    payload = build_chart_generation_payload(analysis, "Oni", 10, "technical", "high")
+
+    structure_columns = payload["legend"]["bar_structure_columns"]
+    role_index = structure_columns.index("transition_role")
+    fill_index = structure_columns.index("fill_candidate_score")
+    assert payload["structure_feature_version"] == "structure-v1"
+    assert payload["structure_confidence"] == 0.81
+    assert payload["bar_structure"][0][role_index] == "build_up"
+    assert payload["bar_structure"][1][fill_index] == 0.75
+    assert payload["legend"]["phrase_columns"][-1] == "resolution"
+    assert payload["phrase_plan"][0][-1] == 16
+
+
+def test_build_chart_generation_payload_includes_compact_spectral_semantics():
+    analysis = _analysis()
+    spectral_bar = analysis.bars[0].model_copy(
+        update={
+            "low_onset_strength": 0.8,
+            "mid_onset_strength": 0.3,
+            "high_onset_strength": 0.6,
+            "spectral_flux": 0.9,
+            "brightness": 0.55,
+            "harmonic_novelty": 0.7,
+            "texture_novelty": 0.4,
+            "percussive_ratio": 0.75,
+            "spectral_grid_features": [
+                SpectralGridFeature(
+                    grid=12,
+                    low_onset_strength=0.8,
+                    high_onset_strength=0.2,
+                    spectral_flux=0.9,
+                )
+            ],
+        }
+    )
+    analysis = analysis.model_copy(
+        update={
+            "spectral_feature_version": "spectral-v1",
+            "spectral_analysis_status": "complete",
+            "bars": [spectral_bar],
+        }
+    )
+
+    payload = build_chart_generation_payload(analysis, "Oni", 10, "technical")
+
+    structure_columns = payload["legend"]["bar_structure_columns"]
+    flux_index = structure_columns.index("spectral_flux")
+    novelty_index = structure_columns.index("harmonic_novelty")
+    assert payload["spectral_feature_version"] == "spectral-v1"
+    assert payload["spectral_analysis_status"] == "complete"
+    assert payload["bar_structure"][0][flux_index] == 0.9
+    assert payload["bar_structure"][0][novelty_index] == 0.7
+    assert payload["legend"]["spectral_grid_columns"] == [
+        "grid",
+        "low_onset",
+        "mid_onset",
+        "high_onset",
+        "spectral_flux",
+    ]
+    assert payload["bars"][0]["spectral_events"] == [[12, 0.8, 0.0, 0.2, 0.9]]
 
 
 def test_build_chart_generation_payload_can_include_static_reference_prompt():
@@ -110,6 +288,9 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     )
 
     assert "Grid 0 is the barline and primary downbeat candidate" in prompt
+    assert "Never output the legacy notes or balloon_counts fields" in prompt
+    assert "For build_up roles, increase activity gradually across the whole phrase" in prompt
+    assert "Do not create a fill merely because a bar number is divisible by 4 or 8" in prompt
     assert "prefer starting the bar with a 1/2 note on grid 0" in prompt
     assert "Big notes 3/4 require both hands hitting together" in prompt
     assert "Do not place big notes 3/4 inside dense streams" in prompt
@@ -128,7 +309,7 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
-    payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    payload = _event_payload(["1000100010001000"])
 
     def fake_completion(**kwargs):
         assert kwargs["model"] == "fake/model"
@@ -146,8 +327,108 @@ def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
     assert bars == [ChartBar(index=0, notes="1000100010001000")]
 
 
+def test_generate_chart_bars_with_ai_encodes_canonical_event_ticks(monkeypatch):
+    payload = {
+        "bars": [
+            {
+                "bar": 1,
+                "hits": [[0, "1"], [12, "2"], [24, "1"], [36, "2"]],
+                "long_notes": [],
+            }
+        ]
+    }
+    analysis = SongAnalysis(
+        title="Song Title",
+        audio_file="song.mp3",
+        ogg_file="song.ogg",
+        bpm=120,
+        offset=0,
+        resolution_plan=ResolutionPlan(
+            canonical_grids_per_bar=48,
+            base_resolution=16,
+            bar_resolutions=[16],
+        ),
+        bars=[
+            BarFeature(
+                index=0,
+                start_time=0,
+                end_time=2,
+                energy=0.2,
+                grids_per_bar=48,
+                onset_grids=[0, 12, 24, 36],
+                beat_grids=[0, 12, 24, 36],
+                downbeat_grid=0,
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.completion",
+        lambda **_kwargs: {"choices": [{"message": {"content": json.dumps(payload)}}]},
+    )
+
+    bars, _ = generate_chart_bars_with_ai(
+        analysis,
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+    )
+
+    assert bars == [ChartBar(index=0, notes="1000200010002000")]
+
+
+def test_generate_chart_bars_with_ai_repairs_unrepresentable_event_tick(monkeypatch):
+    responses = [
+        {"bars": [{"bar": 1, "hits": [[1, "1"], [12, "2"]], "long_notes": []}]},
+        {"bars": [{"bar": 1, "hits": [[0, "1"], [12, "2"]], "long_notes": []}]},
+    ]
+    analysis = SongAnalysis(
+        title="Song Title",
+        audio_file="song.mp3",
+        ogg_file="song.ogg",
+        bpm=120,
+        offset=0,
+        resolution_plan=ResolutionPlan(
+            canonical_grids_per_bar=48,
+            base_resolution=16,
+            bar_resolutions=[16],
+        ),
+        bars=[
+            BarFeature(
+                index=0,
+                start_time=0,
+                end_time=2,
+                energy=0.2,
+                grids_per_bar=48,
+                onset_grids=[0, 12, 24, 36],
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.completion",
+        lambda **_kwargs: {
+            "choices": [{"message": {"content": json.dumps(responses.pop(0))}}]
+        },
+    )
+
+    bars, output = generate_chart_bars_with_ai(
+        analysis,
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert bars == [ChartBar(index=0, notes="1000200000000000")]
+    assert [attempt["status"] for attempt in output["attempts"]] == ["invalid", "ok"]
+    assert "tick-not-representable" in output["attempts"][0]["issues"][0]
+
+
 def test_generate_chart_bars_with_ai_passes_openai_compatible_connection_options(monkeypatch):
-    payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    payload = _event_payload(["1000100010001000"])
     monkeypatch.setenv("OPENAI_BASE_URL", "https://env.example.com/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "env-key")
 
@@ -177,7 +458,7 @@ def test_generate_chart_bars_with_ai_passes_openai_compatible_connection_options
 
 
 def test_generate_chart_bars_with_ai_reads_openai_env_names(monkeypatch):
-    payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    payload = _event_payload(["1000100010001000"])
     monkeypatch.setenv("MODEL", "openai/env-model")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://env.example.com/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "env-key")
@@ -198,7 +479,7 @@ def test_generate_chart_bars_with_ai_reads_openai_env_names(monkeypatch):
 
 
 def test_generate_chart_bars_with_ai_passes_timeout_and_disables_litellm_retries(monkeypatch):
-    payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    payload = _event_payload(["1000100010001000"])
     captured_kwargs = []
 
     def fake_completion(**kwargs):
@@ -229,7 +510,7 @@ def test_generate_chart_bars_with_ai_passes_timeout_and_disables_litellm_retries
 def test_generate_chart_bars_with_ai_retries_transient_transport_once_without_consuming_content_attempt(
     tmp_path, monkeypatch, error_type
 ):
-    payload = {"bars": [{"bar": 1, "notes": "1000100010001000"}]}
+    payload = _event_payload(["1000100010001000"])
     attempt_log_path = tmp_path / "ai_attempts.json"
     calls = 0
 
@@ -408,10 +689,10 @@ def test_generate_chart_bars_with_ai_redacts_api_key_from_provider_error_and_sid
     assert "[REDACTED]" in serialized_output
 
 
-def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
+def test_generate_chart_bars_with_ai_repairs_legacy_notes_schema(monkeypatch):
     responses = [
-        {"bars": [{"bar": 1, "notes": "12x"}]},
         {"bars": [{"bar": 1, "notes": "1000100010001000"}]},
+        _event_payload(["1000100010001000"]),
     ]
     captured_messages = []
 
@@ -433,13 +714,20 @@ def test_generate_chart_bars_with_ai_repairs_invalid_output(monkeypatch):
 
     assert bars == [ChartBar(index=0, notes="1000100010001000")]
     assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert "legacy notes schema" in raw["attempts"][0]["issues"][0]
     assert "Fix the output" in captured_messages[1][-1]["content"]
 
 
 def test_generate_chart_bars_with_ai_writes_invalid_attempt_log(tmp_path, monkeypatch):
+    invalid_payload = {
+        "bars": [
+            {"bar": 1, "hits": [["0", "1"]], "long_notes": []},
+            {"bar": 2, "hits": [[0, "9"]], "long_notes": []},
+        ]
+    }
     responses = [
-        {"bars": [{"bar": 1, "notes": "12x"}]},
-        {"bars": [{"bar": 1, "notes": "1000100010001000"}]},
+        invalid_payload,
+        _event_payload(["1000100010001000", "1000100010001000"]),
     ]
     attempt_log_path = tmp_path / "ai_attempts.json"
 
@@ -450,7 +738,7 @@ def test_generate_chart_bars_with_ai_writes_invalid_attempt_log(tmp_path, monkey
     monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
 
     bars, raw = generate_chart_bars_with_ai(
-        _analysis(),
+        _analysis(bar_count=2),
         "Oni",
         10,
         "technical",
@@ -460,17 +748,28 @@ def test_generate_chart_bars_with_ai_writes_invalid_attempt_log(tmp_path, monkey
     )
 
     logged = json.loads(attempt_log_path.read_text(encoding="utf-8"))
-    assert bars == [ChartBar(index=0, notes="1000100010001000")]
+    assert bars == [
+        ChartBar(index=0, notes="1000100010001000"),
+        ChartBar(index=1, notes="1000100010001000"),
+    ]
     assert [attempt["status"] for attempt in logged["attempts"]] == ["invalid", "ok"]
-    assert logged["attempts"][0]["content"] == json.dumps({"bars": [{"bar": 1, "notes": "12x"}]})
-    assert any("must be exactly 16 characters" in issue for issue in logged["attempts"][0]["issues"])
-    assert any("illegal character" in issue for issue in logged["attempts"][0]["issues"])
+    assert logged["attempts"][0]["content"] == json.dumps(invalid_payload)
+    assert any("must be an integer" in issue for issue in logged["attempts"][0]["issues"])
+    assert any("unsupported-hit-note" in issue for issue in logged["attempts"][0]["issues"])
     assert logged["final"] == raw["final"]
 
 
 
 def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(monkeypatch):
-    payload = {"bars": [{"bar": 1, "notes": "7000000080000000", "balloon_counts": [8]}]}
+    payload = {
+        "bars": [
+            _event_bar(
+                1,
+                "7000000080000000",
+                balloon_counts=[8],
+            )
+        ]
+    }
 
     def fake_completion(**kwargs):
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
@@ -490,9 +789,7 @@ def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(m
 
 
 def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypatch):
-    sparse_payload = {
-        "bars": [{"bar": index + 1, "notes": "1000000000000000"} for index in range(8)]
-    }
+    sparse_payload = _event_payload(["1000000000000000"] * 8)
     dense_notes = [
         "1022101210201220",
         "1212102210121020",
@@ -503,9 +800,7 @@ def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypa
         "1022121010201220",
         "1210202210121020",
     ]
-    dense_payload = {
-        "bars": [{"bar": index + 1, "notes": notes} for index, notes in enumerate(dense_notes)]
-    }
+    dense_payload = _event_payload(dense_notes)
     responses = [sparse_payload, dense_payload]
     captured_messages = []
 
@@ -533,8 +828,8 @@ def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypa
 
 def test_generate_chart_bars_with_ai_repairs_sparse_single_bar_output(monkeypatch):
     responses = [
-        {"bars": [{"bar": 1, "notes": "0000000000000000"}]},
-        {"bars": [{"bar": 1, "notes": "1000100010001000"}]},
+        _event_payload(["0000000000000000"]),
+        _event_payload(["1000100010001000"]),
     ]
     captured_messages = []
 
@@ -559,12 +854,8 @@ def test_generate_chart_bars_with_ai_repairs_sparse_single_bar_output(monkeypatc
 
 
 def test_generate_chart_bars_with_ai_repairs_dense_four_bar_output(monkeypatch):
-    dense_payload = {
-        "bars": [{"bar": index + 1, "notes": "1111111111111111"} for index in range(4)]
-    }
-    fixed_payload = {
-        "bars": [{"bar": index + 1, "notes": "1000100010001000"} for index in range(4)]
-    }
+    dense_payload = _event_payload(["1111111111111111"] * 4)
+    fixed_payload = _event_payload(["1000100010001000"] * 4)
     responses = [dense_payload, fixed_payload]
     captured_messages = []
 
@@ -589,9 +880,7 @@ def test_generate_chart_bars_with_ai_repairs_dense_four_bar_output(monkeypatch):
 
 
 def test_generate_chart_bars_with_ai_accepts_valid_seven_bar_output(monkeypatch):
-    payload = {
-        "bars": [{"bar": index + 1, "notes": "1000100000000000"} for index in range(7)]
-    }
+    payload = _event_payload(["1000100000000000"] * 7)
     call_count = 0
 
     def fake_completion(**kwargs):
@@ -616,18 +905,18 @@ def test_generate_chart_bars_with_ai_accepts_valid_seven_bar_output(monkeypatch)
 
 
 def test_generate_chart_bars_with_ai_allows_empty_musical_rest_in_high_density(monkeypatch):
-    payload = {
-        "bars": [
-            {"bar": 1, "notes": "1022101210201220"},
-            {"bar": 2, "notes": "1212102210121020"},
-            {"bar": 3, "notes": "0000000000000000"},
-            {"bar": 4, "notes": "1022121010221010"},
-            {"bar": 5, "notes": "1210201210221020"},
-            {"bar": 6, "notes": "1022101212101022"},
-            {"bar": 7, "notes": "1212102010221012"},
-            {"bar": 8, "notes": "1022121010201220"},
+    payload = _event_payload(
+        [
+            "1022101210201220",
+            "1212102210121020",
+            "0000000000000000",
+            "1022121010221010",
+            "1210201210221020",
+            "1022101212101022",
+            "1212102010221012",
+            "1022121010201220",
         ]
-    }
+    )
 
     def fake_completion(**kwargs):
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
@@ -649,12 +938,7 @@ def test_generate_chart_bars_with_ai_allows_empty_musical_rest_in_high_density(m
 
 
 def test_generate_chart_bars_with_ai_repairs_all_don_output(monkeypatch):
-    don_payload = {
-        "bars": [
-            {"bar": index + 1, "notes": "1010101010101010"}
-            for index in range(8)
-        ]
-    }
+    don_payload = _event_payload(["1010101010101010"] * 8)
     mixed_notes = [
         "1020102010201020",
         "1012101210121022",
@@ -665,9 +949,7 @@ def test_generate_chart_bars_with_ai_repairs_all_don_output(monkeypatch):
         "1022101210201220",
         "1210102012102012",
     ]
-    mixed_payload = {
-        "bars": [{"bar": index + 1, "notes": notes} for index, notes in enumerate(mixed_notes)]
-    }
+    mixed_payload = _event_payload(mixed_notes)
     responses = [don_payload, mixed_payload]
     captured_messages = []
 
@@ -693,20 +975,20 @@ def test_generate_chart_bars_with_ai_repairs_all_don_output(monkeypatch):
 
 
 def test_generate_chart_bars_with_ai_repairs_notes_in_edge_silence(monkeypatch):
-    noisy_payload = {
-        "bars": [
-            {"bar": 1, "notes": "1000100010001000"},
-            {"bar": 2, "notes": "1010101010101011"},
-            {"bar": 3, "notes": "1000100010001000"},
+    noisy_payload = _event_payload(
+        [
+            "1000100010001000",
+            "1010101010101011",
+            "1000100010001000",
         ]
-    }
-    fixed_payload = {
-        "bars": [
-            {"bar": 1, "notes": "0000000000000000"},
-            {"bar": 2, "notes": "1010101010101011"},
-            {"bar": 3, "notes": "0000000000000000"},
+    )
+    fixed_payload = _event_payload(
+        [
+            "0000000000000000",
+            "1010101010101011",
+            "0000000000000000",
         ]
-    }
+    )
     responses = [noisy_payload, fixed_payload]
     captured_messages = []
 
@@ -736,7 +1018,7 @@ def test_generate_chart_bars_with_ai_repairs_notes_in_edge_silence(monkeypatch):
 
 
 def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeypatch):
-    payload = {"bars": [{"bar": 1, "notes": "100010001000"}]}
+    payload = _event_payload(["100010001000"], canonical_grids=36)
     analysis = SongAnalysis(
         title="Song Title",
         artist=None,
@@ -745,6 +1027,11 @@ def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeyp
         bpm=120,
         offset=0,
         time_signature="3/4",
+        resolution_plan=ResolutionPlan(
+            canonical_grids_per_bar=36,
+            base_resolution=12,
+            bar_resolutions=[12],
+        ),
         bars=[
             BarFeature(
                 index=0,
@@ -752,7 +1039,7 @@ def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeyp
                 end_time=1.5,
                 energy=0.2,
                 time_signature="3/4",
-                grids_per_bar=12,
+                grids_per_bar=36,
             )
         ],
     )
@@ -768,7 +1055,7 @@ def test_generate_chart_bars_with_ai_accepts_variable_meter_note_lengths(monkeyp
 
 
 def test_generate_chart_bars_with_ai_raises_with_attempt_log_after_failed_repairs(monkeypatch):
-    payload = {"bars": [{"bar": 1, "notes": "12x"}]}
+    payload = {"bars": [{"bar": 1, "hits": [[1, "1"]], "long_notes": []}]}
 
     def fake_completion(**kwargs):
         return {"choices": [{"message": {"content": json.dumps(payload)}}]}
@@ -807,8 +1094,9 @@ def _analysis_with_middle_rest() -> SongAnalysis:
                     start_time=index * 2,
                     end_time=(index + 1) * 2,
                     energy=0.01,
-                    onset_16=[],
-                    beat_grids=[0, 4, 8, 12],
+                    grids_per_bar=48,
+                    onset_grids=[],
+                    beat_grids=[0, 12, 24, 36],
                     downbeat_grid=0,
                     phrase_position="phrase_middle",
                     section="break",
@@ -821,8 +1109,9 @@ def _analysis_with_middle_rest() -> SongAnalysis:
                     start_time=index * 2,
                     end_time=(index + 1) * 2,
                     energy=0.6,
-                    onset_16=[0, 2, 4, 6, 8, 10, 12, 14],
-                    beat_grids=[0, 4, 8, 12],
+                    grids_per_bar=48,
+                    onset_grids=[0, 6, 12, 18, 24, 30, 36, 42],
+                    beat_grids=[0, 12, 24, 36],
                     downbeat_grid=0,
                     phrase_position="phrase_start" if index % 4 == 0 else "phrase_middle",
                     section="verse",
@@ -835,6 +1124,11 @@ def _analysis_with_middle_rest() -> SongAnalysis:
         ogg_file="song.ogg",
         bpm=120,
         offset=0,
+        resolution_plan=ResolutionPlan(
+            canonical_grids_per_bar=48,
+            base_resolution=16,
+            bar_resolutions=[16] * len(bars),
+        ),
         bars=bars,
     )
 
@@ -847,13 +1141,19 @@ def _analysis_with_edge_silence() -> SongAnalysis:
         ogg_file="song.ogg",
         bpm=120,
         offset=0,
+        resolution_plan=ResolutionPlan(
+            canonical_grids_per_bar=48,
+            base_resolution=16,
+            bar_resolutions=[16, 16, 16],
+        ),
         bars=[
             BarFeature(
                 index=0,
                 start_time=0,
                 end_time=2,
                 energy=0.068,
-                onset_16=[0, 11, 12],
+                grids_per_bar=48,
+                onset_grids=[0, 33, 36],
                 rms_dbfs=-59.7,
                 peak_rms_dbfs=-46.7,
                 relative_rms_db=-53.5,
@@ -866,8 +1166,9 @@ def _analysis_with_edge_silence() -> SongAnalysis:
                 start_time=2,
                 end_time=4,
                 energy=0.5,
-                onset_16=[0, 4, 8, 12],
-                beat_grids=[0, 4, 8, 12],
+                grids_per_bar=48,
+                onset_grids=[0, 12, 24, 36],
+                beat_grids=[0, 12, 24, 36],
                 downbeat_grid=0,
                 phrase_position="phrase_middle",
                 section="verse",
@@ -877,6 +1178,7 @@ def _analysis_with_edge_silence() -> SongAnalysis:
                 start_time=4,
                 end_time=6,
                 energy=0,
+                grids_per_bar=48,
                 phrase_position="song_end",
                 section="outro",
             ),
@@ -892,14 +1194,20 @@ def _analysis(bar_count: int = 1, energy: float = 0.2) -> SongAnalysis:
         ogg_file="song.ogg",
         bpm=120,
         offset=0,
+        resolution_plan=ResolutionPlan(
+            canonical_grids_per_bar=48,
+            base_resolution=16,
+            bar_resolutions=[16] * bar_count,
+        ),
         bars=[
             BarFeature(
                 index=index,
                 start_time=index * 2,
                 end_time=(index + 1) * 2,
                 energy=energy,
-                onset_16=[0, 4, 8, 12],
-                beat_grids=[0, 4, 8, 12],
+                grids_per_bar=48,
+                onset_grids=[0, 12, 24, 36],
+                beat_grids=[0, 12, 24, 36],
                 downbeat_grid=0,
                 phrase_position="phrase_start" if index % 4 == 0 else "phrase_middle",
                 section="verse",

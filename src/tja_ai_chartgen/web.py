@@ -15,7 +15,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import ValidationError
 
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
-from tja_ai_chartgen.generation import build_song_analysis, generate_chart_bars
+from tja_ai_chartgen.generation import (
+    GenerationNotice,
+    build_analysis_notices,
+    build_song_analysis,
+    generate_chart_bars,
+)
 from tja_ai_chartgen.rules.fallback_generator import validate_density
 from tja_ai_chartgen.rules.styles import validate_style
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ChartMetadata, SongAnalysis, TjaChart
@@ -1166,6 +1171,22 @@ pre {
   border-radius: var(--radius-md);
 }
 
+.notice-stack {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.notice-stack .notice {
+  margin: 0;
+}
+
+.warning {
+  color: #ffe9bd;
+  background: rgba(214, 168, 95, 0.14);
+  border-color: rgba(214, 168, 95, 0.42);
+}
+
 .error {
   color: #ffe1d7;
   background: rgba(224, 138, 116, 0.12);
@@ -1322,6 +1343,7 @@ function setupProgressPage(root) {
   const statusUrl = root.dataset.statusUrl;
   const message = root.querySelector('[data-role="progress-message"]');
   const meter = root.querySelector('[data-role="progress-meter"]');
+  const notices = root.querySelector('[data-role="progress-notices"]');
   const error = root.querySelector('[data-role="progress-error"]');
   const retryPanel = root.querySelector('[data-role="metadata-retry"]');
   const retryTitle = root.querySelector('[data-role="metadata-retry-title"]');
@@ -1337,8 +1359,24 @@ function setupProgressPage(root) {
     return '等待';
   }
 
+  function renderNotices(items) {
+    if (!notices) return;
+    notices.replaceChildren();
+    (items || []).forEach((item) => {
+      const notice = document.createElement('p');
+      const level = item.level === 'error' ? 'error' : item.level === 'warning' ? 'warning' : '';
+      notice.className = `notice ${level}`.trim();
+      const scope = item.scope ? `${item.scope}：` : '';
+      const detail = item.detail ? ` ${item.detail}` : '';
+      notice.textContent = `${scope}${item.message || '生成过程有一条提示。'}${detail}`;
+      notices.appendChild(notice);
+    });
+    notices.hidden = notices.childElementCount === 0;
+  }
+
   function renderProgress(data) {
     if (message) message.textContent = data.message || '正在处理音频。';
+    renderNotices(data.notices);
     if (meter) meter.style.width = `${Math.max(0, Math.min(100, Number(data.progress) || 0))}%`;
     const stepStateByKey = Object.fromEntries((data.steps || []).map((step) => [step.key, step.state]));
     steps.forEach((step) => {
@@ -1794,6 +1832,7 @@ def create_app(
                     "ai_repair_retries": ai_repair_retries,
                     "ai_request_timeout": ai_request_timeout,
                     "ai_transport_retries": ai_transport_retries,
+                    "remote_mode": app.state.remote_mode,
                 },
                 daemon=True,
             ).start()
@@ -1849,7 +1888,12 @@ def create_app(
     ) -> HTMLResponse:
         try:
             job_dir = _job_dir(app.state.output_dir, job_id)
-            result_path = _render_job_preview_with_metadata(job_dir, title=title, artist=artist)
+            result_path = _render_job_preview_with_metadata(
+                job_dir,
+                title=title,
+                artist=artist,
+                remote_mode=app.state.remote_mode,
+            )
             return HTMLResponse(result_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, ValidationError, ValueError) as error:
             return HTMLResponse(
@@ -1985,10 +2029,19 @@ def create_app(
                 else generate_chart_bars(**generation_kwargs)
             )
             chart_bars = generation_result.chart_bars
-            ai_failure = generation_result.ai_failure
+            notices = [
+                notice
+                for notice in _read_job_notices(job_dir)
+                if notice.stage == "analysis"
+            ]
+            notices.extend(generation_result.notices)
             write_json(
                 job_dir / f"quality_report_{start_bar}_{end_bar}.json",
                 generation_result.quality_report,
+            )
+            write_json(
+                job_dir / f"generation_notices_{start_bar}_{end_bar}.json",
+                notices,
             )
             chart = TjaChart(
                 metadata=ChartMetadata(
@@ -2007,7 +2060,10 @@ def create_app(
             write_tja_text(output_path, tja_text)
             body = "".join(
                 [
-                    _ai_generation_notice(ai_failure) if use_ai else "",
+                    _generation_notices_panel(
+                        notices,
+                        include_details=not app.state.remote_mode,
+                    ),
                     _result_panel(
                         job_id=job_id,
                         output_path=output_path,
@@ -2029,7 +2085,12 @@ def create_app(
             return HTMLResponse(_page("Regenerated bars", body))
         except (FileNotFoundError, ValidationError, ValueError) as error:
             return HTMLResponse(
-                _page("Regeneration failed", _error_notice(str(error))),
+                _page(
+                    "Regeneration failed",
+                    _error_notice(
+                        _web_error_detail(str(error), error, remote_mode=app.state.remote_mode)
+                    ),
+                ),
                 status_code=400,
             )
 
@@ -2217,6 +2278,7 @@ def _run_analyze_job(
     ai_repair_retries: int,
     ai_request_timeout: float,
     ai_transport_retries: int,
+    remote_mode: bool,
 ) -> None:
     try:
         ogg_path = job_dir / f"{input_path.stem}.ogg"
@@ -2251,6 +2313,8 @@ def _run_analyze_job(
         )
         bars = analysis.bars
         write_json(job_dir / "analysis.json", analysis)
+        notices = build_analysis_notices(analysis, requested_beatnet=use_beatnet)
+        _write_job_notices(job_dir, notices)
 
         _write_progress(
             job_dir,
@@ -2261,6 +2325,8 @@ def _run_analyze_job(
                 if use_ai
                 else "正在用规则生成器生成全曲谱面。"
             ),
+            notices=notices,
+            include_notice_details=not remote_mode,
         )
         generation_result = generate_chart_bars(
             analysis=analysis,
@@ -2283,6 +2349,8 @@ def _run_analyze_job(
         )
         chart_bars = generation_result.chart_bars
         ai_failure = generation_result.ai_failure
+        notices.extend(generation_result.notices)
+        _write_job_notices(job_dir, notices)
         write_json(
             job_dir / f"quality_report_1_{len(bars)}.json",
             generation_result.quality_report,
@@ -2305,6 +2373,8 @@ def _run_analyze_job(
             status=_PROGRESS_RUNNING,
             step="render",
             message="正在写入 preview.tja，并准备可视化游玩预览。",
+            notices=notices,
+            include_notice_details=not remote_mode,
         )
         _write_preview_result(
             job_dir=job_dir,
@@ -2312,8 +2382,8 @@ def _run_analyze_job(
             chart_bars=chart_bars,
             course=course,
             level=level,
-            use_ai=use_ai,
-            ai_failure=ai_failure,
+            notices=notices,
+            remote_mode=remote_mode,
             ai_request_timeout=ai_request_timeout,
             ai_transport_retries=ai_transport_retries,
         )
@@ -2323,19 +2393,35 @@ def _run_analyze_job(
             step="render",
             message="谱面生成完成，正在打开游玩预览。",
             result_url=f"/jobs/{job_dir.name}/result",
+            notices=notices,
+            include_notice_details=not remote_mode,
         )
     except Exception as error:  # noqa: BLE001 - Background job reports failures through status JSON.
         step = str(_read_progress(job_dir).get("step", "upload"))
         can_retry_metadata, retry_analysis = _metadata_retry_state(job_dir)
+        private_error = _redact_secret(str(error), ai_api_key)
+        notices = _read_job_notices(job_dir)
+        notices.append(
+            GenerationNotice(
+                code=f"{step}-failed",
+                level="error",
+                stage=_notice_stage_for_progress_step(step),
+                message="任务停止，请根据错误信息调整参数后重试。",
+                detail=private_error,
+            )
+        )
+        _write_job_notices(job_dir, notices)
         _write_progress(
             job_dir,
             status=_PROGRESS_ERROR,
             step=step,
             message="任务停止，请根据错误信息调整参数后重试。",
-            error=str(error),
+            error=_web_error_detail(private_error, error, remote_mode=remote_mode),
             can_retry_metadata=can_retry_metadata,
             title=retry_analysis.title if retry_analysis else None,
             artist=retry_analysis.artist if retry_analysis else None,
+            notices=notices,
+            include_notice_details=not remote_mode,
         )
 
 
@@ -2346,8 +2432,8 @@ def _write_preview_result(
     chart_bars: list[ChartBar],
     course: str,
     level: int,
-    use_ai: bool = False,
-    ai_failure: str | None = None,
+    notices: list[GenerationNotice] | None = None,
+    remote_mode: bool = False,
     ai_request_timeout: float = DEFAULT_AI_REQUEST_TIMEOUT,
     ai_transport_retries: int = DEFAULT_AI_TRANSPORT_RETRIES,
 ) -> Path:
@@ -2367,7 +2453,7 @@ def _write_preview_result(
     output_path = job_dir / "preview.tja"
     write_tja_text(output_path, tja_text)
     result_body = (
-        (_ai_generation_notice(ai_failure) if use_ai else "")
+        _generation_notices_panel(notices or [], include_details=not remote_mode)
         + _result_panel(
             job_id=job_dir.name,
             output_path=output_path,
@@ -2390,7 +2476,13 @@ def _write_preview_result(
     return result_path
 
 
-def _render_job_preview_with_metadata(job_dir: Path, *, title: str, artist: str) -> Path:
+def _render_job_preview_with_metadata(
+    job_dir: Path,
+    *,
+    title: str,
+    artist: str,
+    remote_mode: bool = False,
+) -> Path:
     normalized_title = title.strip()
     if not normalized_title:
         raise ValueError("Title is required")
@@ -2402,18 +2494,30 @@ def _render_job_preview_with_metadata(job_dir: Path, *, title: str, artist: str)
     options = _read_job_chart_options(job_dir)
     course = str(options.get("course") or "Oni")
     level = int(options.get("level") or 10)
-    use_ai = bool(options.get("use_ai"))
-    ai_failure = options.get("ai_failure")
     ai_request_timeout = float(options.get("ai_request_timeout", DEFAULT_AI_REQUEST_TIMEOUT))
     ai_transport_retries = int(options.get("ai_transport_retries", DEFAULT_AI_TRANSPORT_RETRIES))
+    notices = [
+        notice
+        for notice in _read_job_notices(job_dir)
+        if not (notice.stage == "render" and notice.level == "error")
+    ]
+    notices.append(
+        GenerationNotice(
+            code="metadata-retry-succeeded",
+            level="info",
+            stage="render",
+            message="已复用现有分析与谱面，仅更新元数据并重新写入预览。",
+        )
+    )
+    _write_job_notices(job_dir, notices)
     result_path = _write_preview_result(
         job_dir=job_dir,
         analysis=analysis,
         chart_bars=chart_bars,
         course=course,
         level=level,
-        use_ai=use_ai,
-        ai_failure=str(ai_failure) if ai_failure is not None else None,
+        notices=notices,
+        remote_mode=remote_mode,
         ai_request_timeout=ai_request_timeout,
         ai_transport_retries=ai_transport_retries,
     )
@@ -2424,6 +2528,8 @@ def _render_job_preview_with_metadata(job_dir: Path, *, title: str, artist: str)
         step="render",
         message="谱面生成完成，正在打开游玩预览。",
         result_url=f"/jobs/{job_dir.name}/result",
+        notices=notices,
+        include_notice_details=not remote_mode,
     )
     return result_path
 
@@ -2446,6 +2552,20 @@ def _read_job_chart_options(job_dir: Path) -> dict[str, object]:
     if not isinstance(data, dict):
         raise ValueError("Generated chart options file is invalid")
     return data
+
+
+def _write_job_notices(job_dir: Path, notices: list[GenerationNotice]) -> Path:
+    return write_json(job_dir / _PROGRESS_NOTICES_JSON, notices)
+
+
+def _read_job_notices(job_dir: Path) -> list[GenerationNotice]:
+    path = job_dir / _PROGRESS_NOTICES_JSON
+    if not path.is_file():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("Generation notices file is invalid")
+    return [GenerationNotice.model_validate(item) for item in data]
 
 
 def _metadata_retry_state(job_dir: Path) -> tuple[bool, SongAnalysis | None]:
@@ -2856,6 +2976,7 @@ def _bar_features_from_chart(chart_bars: list[ChartBar], *, bpm: float, offset: 
         meter = get_meter_spec(chart_bar.time_signature)
         bar_length = meter.beats_per_bar * 60.0 / bpm
         note_grids = [index for index, note in enumerate(chart_bar.notes) if note != "0"]
+        accent_grids = meter.accent_grids_for_resolution(len(chart_bar.notes))
         features.append(
             BarFeature(
                 index=chart_bar.index,
@@ -2864,9 +2985,9 @@ def _bar_features_from_chart(chart_bars: list[ChartBar], *, bpm: float, offset: 
                 energy=round(min(1.0, len(note_grids) / max(1, len(chart_bar.notes))), 3),
                 time_signature=chart_bar.time_signature,
                 grids_per_bar=len(chart_bar.notes),
-                onset_16=note_grids,
-                accent_16=[grid for grid in note_grids if grid in meter.accent_grids],
-                beat_grids=sorted(meter.accent_grids),
+                onset_grids=note_grids,
+                accent_grids=[grid for grid in note_grids if grid in accent_grids],
+                beat_grids=list(accent_grids),
                 downbeat_grid=0,
                 section="tja",
             )
@@ -3066,6 +3187,7 @@ def _progress_page(job_id: str) -> str:
     <ol class="progress-stage-list" aria-label="当前生成阶段">
       {steps}
     </ol>
+    <div class="notice-stack" data-role="progress-notices" aria-live="polite" hidden></div>
     <p class="notice error" data-role="progress-error" hidden></p>
     <section class="metadata-retry-card" data-role="metadata-retry" aria-labelledby="metadata-retry-heading" hidden>
       <p class="eyebrow">元数据修正</p>
@@ -3571,11 +3693,29 @@ def _export_success_notice(export_ogg_path: Path, export_tja_path: Path) -> str:
     )
 
 
-def _ai_generation_notice(ai_failure: str | None) -> str:
-    if ai_failure:
-        message = f"AI 增强失败，已自动回退到规则生成：{ai_failure}"
-        return f'<p class="notice error">{_escape(message)}</p>'
-    return '<p class="notice">AI 增强已完成，本次谱面来自 AI 输出校验后的结果。</p>'
+def _generation_notices_panel(
+    notices: list[GenerationNotice],
+    *,
+    include_details: bool = True,
+) -> str:
+    if not notices:
+        return ""
+
+    items: list[str] = []
+    for notice in notices:
+        css_class = (
+            " error"
+            if notice.level == "error"
+            else " warning"
+            if notice.level == "warning"
+            else ""
+        )
+        scope = f"{notice.scope}：" if notice.scope else ""
+        detail = f" {_escape(notice.detail)}" if include_details and notice.detail else ""
+        items.append(
+            f'<p class="notice{css_class}">{_escape(scope + notice.message)}{detail}</p>'
+        )
+    return '<section class="notice-stack" aria-label="生成提示">' + "".join(items) + "</section>"
 
 
 def _error_notice(message: str) -> str:
@@ -3705,6 +3845,42 @@ _PROGRESS_JSON = "progress.json"
 _PROGRESS_RESULT_HTML = "result.html"
 _PROGRESS_CHART_BARS_JSON = "chart_bars.json"
 _PROGRESS_CHART_OPTIONS_JSON = "chart_options.json"
+_PROGRESS_NOTICES_JSON = "generation_notices.json"
+
+
+def _notice_payloads(
+    notices: list[GenerationNotice],
+    *,
+    include_details: bool,
+) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
+    for notice in notices:
+        payload = notice.model_dump(exclude_none=True)
+        if not include_details:
+            payload.pop("detail", None)
+        payloads.append(payload)
+    return payloads
+
+
+def _notice_stage_for_progress_step(step: str) -> str:
+    if step in {"upload", "convert", "analyze"}:
+        return "analysis"
+    if step == "generate":
+        return "generation"
+    return "render"
+
+
+def _redact_secret(message: str, secret: str | None) -> str:
+    return message.replace(secret, "[REDACTED]") if secret else message
+
+
+def _web_error_detail(message: str, error: Exception, *, remote_mode: bool) -> str:
+    if not remote_mode:
+        return message
+    return (
+        f"任务失败（{type(error).__name__}）。"
+        "远程模式已隐藏服务器路径、连接地址和 provider 响应详情。"
+    )
 
 
 def _progress_payload(
@@ -3717,6 +3893,7 @@ def _progress_payload(
     can_retry_metadata: bool = False,
     title: str | None = None,
     artist: str | None = None,
+    notices: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     current_index = _PROGRESS_STEP_INDEX.get(step, -1)
     steps = []
@@ -3742,6 +3919,7 @@ def _progress_payload(
         "can_retry_metadata": can_retry_metadata,
         "title": title,
         "artist": artist,
+        "notices": notices or [],
     }
 
 
@@ -3767,7 +3945,17 @@ def _write_progress(
     can_retry_metadata: bool = False,
     title: str | None = None,
     artist: str | None = None,
+    notices: list[GenerationNotice] | None = None,
+    include_notice_details: bool = True,
 ) -> None:
+    if notices is None:
+        existing_notices = _read_progress(job_dir).get("notices", [])
+        notice_payloads = existing_notices if isinstance(existing_notices, list) else []
+    else:
+        notice_payloads = _notice_payloads(
+            notices,
+            include_details=include_notice_details,
+        )
     write_json(
         job_dir / _PROGRESS_JSON,
         _progress_payload(
@@ -3779,6 +3967,7 @@ def _write_progress(
             can_retry_metadata=can_retry_metadata,
             title=title,
             artist=artist,
+            notices=notice_payloads,
         ),
     )
 

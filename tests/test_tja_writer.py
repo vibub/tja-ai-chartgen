@@ -29,6 +29,28 @@ def test_render_tja_outputs_required_sections():
     assert "1000100010001000," in text
 
 
+def test_render_tja_preserves_variable_bar_resolutions():
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title="Variable Resolution",
+            wave="song.ogg",
+            bpm=120.0,
+            offset=0.0,
+        ),
+        bars=[
+            ChartBar(index=0, notes="1000"),
+            ChartBar(index=1, notes="1" + ("0" * 23)),
+            ChartBar(index=2, notes="1" + ("0" * 47)),
+        ],
+    )
+
+    text = render_tja(chart)
+
+    assert "1000," in text
+    assert f"{'1' + ('0' * 23)}," in text
+    assert f"{'1' + ('0' * 47)}," in text
+
+
 def test_render_tja_writes_tja_offset_with_opposite_sign():
     chart = TjaChart(
         metadata=ChartMetadata(

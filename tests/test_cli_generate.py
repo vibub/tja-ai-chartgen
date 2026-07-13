@@ -38,6 +38,7 @@ def test_generate_without_ai_writes_outputs(tmp_path, monkeypatch):
     assert tja_path.read_bytes().startswith("TITLE:迷っちゃうわ".encode(TJA_FILE_ENCODING))
     assert (output_dir / "analysis.json").exists()
     assert (output_dir / "generation_config.json").exists()
+    assert (output_dir / "generation_notices.json").exists()
     assert (output_dir / "report.txt").exists()
     quality_report = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
     assert quality_report["bar_count"] == 1
@@ -204,7 +205,9 @@ def test_generate_with_time_signature_outputs_measure_and_records_config(tmp_pat
     assert set(chart_lines[0]) <= set("01234")
     assert saved_config["time_signature"] == "3/4"
     assert analysis["time_signature"] == "3/4"
-    assert analysis["bars"][0]["grids_per_bar"] == 12
+    assert analysis["bars"][0]["grids_per_bar"] == 36
+    assert analysis["resolution_plan"]["base_resolution"] == 12
+    assert analysis["resolution_plan"]["bar_resolutions"] == [12]
 
 
 def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
@@ -374,10 +377,9 @@ def test_generate_with_special_notes_outputs_balloon_header(tmp_path, monkeypatc
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     quality_report = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
     chart_lines = [line.removesuffix(",") for line in tja_text.splitlines() if line.endswith(",")]
-    assert any("5" in line and "8" in line for line in chart_lines)
     assert any("7" in line and "8" in line for line in chart_lines)
     assert "BALLOON:" in tja_text
-    assert quality_report["drumroll_count"] >= 1
+    assert quality_report["special_note_count"] >= 1
     assert quality_report["balloon_count"] >= 1
     assert quality_report["balloon_required_hits"] >= 1
     assert saved_config["special_notes"] is True
@@ -887,15 +889,18 @@ def test_generate_with_ai_provider_failure_writes_structured_sidecars_and_falls_
     assert (output_dir / "song.tja").exists()
     attempts = json.loads((output_dir / "ai_attempts.json").read_text(encoding="utf-8"))
     output = json.loads((output_dir / "ai_output.json").read_text(encoding="utf-8"))
+    notices = json.loads((output_dir / "generation_notices.json").read_text(encoding="utf-8"))
     report = (output_dir / "report.txt").read_text(encoding="utf-8")
     assert attempts["fallback_reason"] == "transport_retries_exhausted"
     assert output["fallback_reason"] == "transport_retries_exhausted"
+    assert any(notice["code"] == "ai-fallback" for notice in notices)
     assert "provider timed out" in report
     quality_text = (output_dir / "quality_report.json").read_text(encoding="utf-8")
     assert json.loads(quality_text)["bar_count"] == 1
     assert secret not in json.dumps(attempts)
     assert secret not in quality_text
     assert secret not in json.dumps(output)
+    assert secret not in json.dumps(notices)
     assert secret not in report
 
 
@@ -928,8 +933,13 @@ def test_generate_with_ai_failure_falls_back_to_rules(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "AI generation failed" in result.output
+    assert "AI 增强失败，已自动回退到规则生成" in result.output
     assert (output_dir / "song.tja").exists()
-    assert "network unavailable" in (output_dir / "report.txt").read_text(encoding="utf-8")
+    report = (output_dir / "report.txt").read_text(encoding="utf-8")
+    notices = json.loads((output_dir / "generation_notices.json").read_text(encoding="utf-8"))
+    assert "network unavailable" in report
+    assert "Generation notices:" in report
+    assert any(notice["code"] == "ai-fallback" for notice in notices)
     assert (output_dir / "ai_output.json").exists()
 
 

@@ -36,6 +36,7 @@ def test_density_hint_payload_is_json_ready():
             "max_hits": 0,
             "allow_empty": True,
             "count_in_quality_average": False,
+            "target_scale": 1.0,
             "reason": "low-energy musical pause or break",
         }
     ]
@@ -52,6 +53,9 @@ def test_build_density_hints_caps_silent_rest_and_phrase_fill():
             energy=0.04,
             onset_16=[0, 4, 8, 12],
             phrase_position="phrase_end",
+            fill_candidate=True,
+            fill_candidate_score=0.8,
+            transition_role="cadence",
             section="verse",
         ),
     ]
@@ -63,6 +67,66 @@ def test_build_density_hints_caps_silent_rest_and_phrase_fill():
         ("sparse", 1, 4),
         ("fill", 3, 14),
     ]
+
+
+def test_build_density_hints_uses_structure_role_target_scales():
+    bars = [
+        BarFeature(
+            index=0,
+            start_time=0,
+            end_time=2,
+            energy=0.5,
+            onset_grids=[0, 4, 8, 12],
+            transition_role="build_up",
+            phrase_progress=0.0,
+        ),
+        BarFeature(
+            index=1,
+            start_time=2,
+            end_time=4,
+            energy=0.5,
+            onset_grids=[0, 4, 8, 12],
+            transition_role="build_up",
+            phrase_progress=1.0,
+        ),
+        BarFeature(
+            index=2,
+            start_time=4,
+            end_time=6,
+            energy=0.5,
+            onset_grids=[0, 4, 8, 12],
+            transition_role="peak",
+        ),
+        BarFeature(
+            index=3,
+            start_time=6,
+            end_time=8,
+            energy=0.5,
+            onset_grids=[0, 4, 8, 12],
+            transition_role="breakdown",
+        ),
+    ]
+
+    hints = build_density_hints(bars)
+
+    assert [hint.target_scale for hint in hints] == [0.9, 1.1, 1.12, 0.72]
+
+
+def test_phrase_end_without_fill_score_does_not_force_fill_hint():
+    bar = BarFeature(
+        index=3,
+        start_time=6,
+        end_time=8,
+        energy=0.2,
+        onset_grids=[0, 4, 8, 12],
+        phrase_position="phrase_end",
+        fill_candidate=False,
+    )
+
+    hint = build_density_hints([bar])[0]
+
+    assert hint.kind == "normal"
+    assert hint.reason == "phrase ending without enough fill evidence"
 
 
 def test_build_density_hints_treats_sustained_activity_as_normal():

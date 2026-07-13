@@ -2,13 +2,24 @@ from dataclasses import dataclass
 from math import floor, isfinite
 
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
+from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.rules.styles import (
     StyleTemplate,
     get_style_template,
     style_color_sequence,
     style_grid_bias,
 )
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar, GridFeature
+from tja_ai_chartgen.tja.event_encoder import encode_chart_bar_events
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    ChartBar,
+    ChartBarEvents,
+    ChartHitEvent,
+    ChartLongNoteEvent,
+    GridFeature,
+    ResolutionPlan,
+    SpectralGridFeature,
+)
 
 MAX_HITS_PER_SECOND = 12.0
 BALLOON_HITS_PER_SECOND = {
@@ -58,7 +69,16 @@ def choose_pattern(
     profile = _course_load_profile(course)
     template = get_style_template(style)
     hint = build_density_hints([bar])[0]
-    return _feature_driven_pattern(bar, hint, density, template, profile, level)
+    output_resolution = _default_output_resolution(bar)
+    return _feature_driven_pattern(
+        bar,
+        hint,
+        density,
+        template,
+        profile,
+        level,
+        output_resolution=output_resolution,
+    )
 
 
 def generate_fallback_chart_bars(
@@ -68,6 +88,7 @@ def generate_fallback_chart_bars(
     special_notes: bool = False,
     course: str = "Oni",
     level: int = 10,
+    resolution_plan: ResolutionPlan | None = None,
 ) -> list[ChartBar]:
     validate_density(density)
     profile = _course_load_profile(course)
@@ -75,43 +96,42 @@ def generate_fallback_chart_bars(
     density_hints = build_density_hints(bars)
     chart_bars: list[ChartBar] = []
     previous_was_special = False
-    for index, bar in enumerate(bars):
-        hint = density_hints[index]
+    for position, bar in enumerate(bars):
+        hint = density_hints[position]
+        output_resolution = _resolution_for_bar(resolution_plan, bar, position)
+        events: ChartBarEvents | None = None
         if hint.kind in {"silent", "rest"}:
-            chart_bars.append(
-                ChartBar(
-                    index=bar.index,
-                    notes="0" * bar.grids_per_bar,
-                    time_signature=bar.time_signature,
-                )
-            )
+            events = ChartBarEvents(index=bar.index)
             previous_was_special = False
-            continue
-
-        special_bar = None
-        if special_notes and not previous_was_special:
-            special_bar = _special_chart_bar(
+        elif special_notes and not previous_was_special:
+            events = _special_bar_events(
                 bar,
                 density=density,
                 template=template,
                 profile=profile,
                 level=level,
+                output_resolution=output_resolution,
             )
-        if special_bar is not None:
-            chart_bars.append(special_bar)
-            previous_was_special = True
-            continue
-
+            previous_was_special = events is not None
+        if events is None:
+            events = _feature_driven_events(
+                bar,
+                hint,
+                density,
+                template,
+                profile,
+                level,
+                output_resolution=output_resolution,
+            )
+            previous_was_special = False
         chart_bars.append(
-            ChartBar(
-                index=bar.index,
-                notes=_feature_driven_pattern(
-                    bar, hint, density, template, profile, level
-                ),
+            encode_chart_bar_events(
+                events,
+                canonical_grids_per_bar=bar.grids_per_bar,
+                output_resolution=output_resolution,
                 time_signature=bar.time_signature,
             )
         )
-        previous_was_special = False
     return chart_bars
 
 
@@ -128,22 +148,76 @@ def _feature_driven_pattern(
     template: StyleTemplate,
     profile: CourseLoadProfile,
     level: int,
+    *,
+    output_resolution: int,
 ) -> str:
-    target_hits = _target_hit_count(bar, hint, density, profile, level)
-    if target_hits <= 0:
-        return "0" * bar.grids_per_bar
+    events = _feature_driven_events(
+        bar,
+        hint,
+        density,
+        template,
+        profile,
+        level,
+        output_resolution=output_resolution,
+    )
+    return encode_chart_bar_events(
+        events,
+        canonical_grids_per_bar=bar.grids_per_bar,
+        output_resolution=output_resolution,
+        time_signature=bar.time_signature,
+    ).notes
 
-    grid_features = _grid_features_for_bar(bar)
-    selected = _select_hit_grids(bar, grid_features, target_hits, template)
+
+def _feature_driven_events(
+    bar: BarFeature,
+    hint: BarDensityHint,
+    density: str,
+    template: StyleTemplate,
+    profile: CourseLoadProfile,
+    level: int,
+    *,
+    output_resolution: int,
+) -> ChartBarEvents:
+    grid_features = _project_grid_features(
+        bar,
+        _grid_features_for_bar(bar),
+        output_resolution=output_resolution,
+    )
+    spectral_features = _project_spectral_grid_features(
+        bar,
+        output_resolution=output_resolution,
+    )
+    target_hits = _target_hit_count(
+        bar,
+        hint,
+        density,
+        profile,
+        level,
+        output_resolution=output_resolution,
+        grid_features=grid_features,
+    )
+    if target_hits <= 0:
+        return ChartBarEvents(index=bar.index)
+
+    selected = _select_hit_grids(
+        bar,
+        grid_features,
+        target_hits,
+        template,
+        spectral_features=spectral_features,
+    )
     colors = style_color_sequence(template, _effective_density(density, hint), bar.index)
-    accent_grids = {feature.grid for feature in grid_features if feature.accent or feature.downbeat}
-    notes = ["0"] * bar.grids_per_bar
+    accent_grids = {
+        feature.grid for feature in grid_features if feature.accent or feature.downbeat
+    }
+    hits: list[ChartHitEvent] = []
     for sequence_index, grid in enumerate(sorted(selected)):
         color = colors[sequence_index % len(colors)]
+        color = _spectral_color(color, spectral_features.get(grid))
         if template.name == "performance" and grid in accent_grids:
             color = "3" if color in {"1", "3"} else "4"
-        notes[grid] = color
-    return "".join(notes)
+        hits.append(ChartHitEvent(tick=grid, note=color))
+    return ChartBarEvents(index=bar.index, hits=hits)
 
 
 def _target_hit_count(
@@ -152,22 +226,32 @@ def _target_hit_count(
     density: str,
     profile: CourseLoadProfile,
     level: int,
+    *,
+    output_resolution: int,
+    grid_features: list[GridFeature],
 ) -> int:
-    hint_maximum = hint.max_hits if hint.max_hits is not None else bar.grids_per_bar
-    occupancy_cap = max(1, floor(bar.grids_per_bar * profile.max_occupancy))
-    maximum = min(hint_maximum, bar.grids_per_bar, occupancy_cap)
+    meter = get_meter_spec(bar.time_signature)
+    hint_maximum = hint.max_hits if hint.max_hits is not None else output_resolution
+    occupancy_cap = max(
+        1,
+        floor(meter.legacy_grids_per_bar * profile.max_occupancy),
+    )
+    maximum = min(hint_maximum, output_resolution, occupancy_cap)
     if hint.kind == "normal":
         evidence_count = max(
-            len(bar.onset_16),
-            len(bar.beat_grids),
-            sum(activity >= 0.18 for activity in bar.activity_16),
+            sum(feature.onset for feature in grid_features),
+            sum(feature.beat is not None for feature in grid_features),
+            sum(feature.activity >= 0.18 for feature in grid_features),
         )
-        evidence_allowance = floor(bar.grids_per_bar * profile.max_occupancy / 2)
+        evidence_allowance = floor(
+            meter.legacy_grids_per_bar * profile.max_occupancy / 2
+        )
         maximum = min(maximum, max(hint.min_hits, evidence_count + evidence_allowance))
     minimum = min(hint.min_hits, maximum)
     duration = bar.end_time - bar.start_time
 
-    richness = min(1.0, len(bar.onset_16) / max(1, bar.grids_per_bar / 2))
+    onset_count = sum(feature.onset for feature in grid_features)
+    richness = min(1.0, onset_count / max(1, meter.legacy_grids_per_bar / 2))
     musical_factor = 0.75 + min(1.0, max(0.0, (bar.energy + richness) / 2)) * 0.35
     if hint.kind in {"dense", "fill"}:
         musical_factor = max(musical_factor, 1.0)
@@ -176,13 +260,13 @@ def _target_hit_count(
 
     if isfinite(duration) and duration > 0:
         target_nps = _target_notes_per_second(profile, level, density)
-        target = round(target_nps * musical_factor * duration)
+        target = round(target_nps * musical_factor * hint.target_scale * duration)
         speed_cap = max(1, floor(duration * min(profile.speed_cap, MAX_HITS_PER_SECOND)))
         maximum = min(maximum, speed_cap)
         minimum = min(minimum, maximum)
     else:
         position = min(1.0, max(0.0, musical_factor - 0.5))
-        target = round(minimum + (maximum - minimum) * position)
+        target = round((minimum + (maximum - minimum) * position) * hint.target_scale)
 
     return max(minimum, min(target, maximum))
 
@@ -213,9 +297,17 @@ def _target_notes_per_second(
 
 
 def _grid_features_for_bar(bar: BarFeature) -> list[GridFeature]:
-    existing = {feature.grid: feature for feature in bar.grid_features if 0 <= feature.grid < bar.grids_per_bar}
-    onset_grids = {grid for grid in bar.onset_16 if 0 <= grid < bar.grids_per_bar}
-    accent_grids = {grid for grid in bar.accent_16 if 0 <= grid < bar.grids_per_bar}
+    existing = {
+        feature.grid: feature
+        for feature in bar.grid_features
+        if 0 <= feature.grid < bar.grids_per_bar
+    }
+    onset_grids = {
+        grid for grid in bar.onset_grids if 0 <= grid < bar.grids_per_bar
+    }
+    accent_grids = {
+        grid for grid in bar.accent_grids if 0 <= grid < bar.grids_per_bar
+    }
     beat_numbers = {
         grid: number
         for number, grid in enumerate(
@@ -223,7 +315,7 @@ def _grid_features_for_bar(bar: BarFeature) -> list[GridFeature]:
             start=1,
         )
     }
-    activity = bar.activity_16
+    activity = bar.activity_grids
 
     features: list[GridFeature] = []
     for grid in range(bar.grids_per_bar):
@@ -245,11 +337,82 @@ def _grid_features_for_bar(bar: BarFeature) -> list[GridFeature]:
     return features
 
 
+def _project_grid_features(
+    bar: BarFeature,
+    features: list[GridFeature],
+    *,
+    output_resolution: int,
+) -> list[GridFeature]:
+    if output_resolution <= 0 or bar.grids_per_bar % output_resolution:
+        raise ValueError(
+            f"Bar {bar.index} canonical grid {bar.grids_per_bar} is incompatible with "
+            f"resolution {output_resolution}"
+        )
+    step = bar.grids_per_bar // output_resolution
+    projected = {
+        grid: GridFeature(grid=grid)
+        for grid in range(0, bar.grids_per_bar, step)
+    }
+    for feature in features:
+        target = round(feature.grid / step) * step
+        target = min(bar.grids_per_bar - step, max(0, target))
+        current = projected[target]
+        projected[target] = GridFeature(
+            grid=target,
+            onset=current.onset or feature.onset,
+            accent=current.accent or feature.accent,
+            beat=current.beat if current.beat is not None else feature.beat,
+            downbeat=current.downbeat or feature.downbeat,
+            strength=max(current.strength, feature.strength),
+            activity=max(current.activity, feature.activity),
+        )
+    return [projected[grid] for grid in sorted(projected)]
+
+
+def _project_spectral_grid_features(
+    bar: BarFeature,
+    *,
+    output_resolution: int,
+) -> dict[int, SpectralGridFeature]:
+    if output_resolution <= 0 or bar.grids_per_bar % output_resolution:
+        raise ValueError(
+            f"Bar {bar.index} canonical grid {bar.grids_per_bar} is incompatible with "
+            f"resolution {output_resolution}"
+        )
+    step = bar.grids_per_bar // output_resolution
+    projected: dict[int, SpectralGridFeature] = {}
+    for feature in bar.spectral_grid_features:
+        if feature.grid < 0 or feature.grid >= bar.grids_per_bar:
+            continue
+        target = round(feature.grid / step) * step
+        target = min(bar.grids_per_bar - step, max(0, target))
+        current = projected.get(target, SpectralGridFeature(grid=target))
+        projected[target] = SpectralGridFeature(
+            grid=target,
+            low_onset_strength=max(
+                current.low_onset_strength,
+                feature.low_onset_strength,
+            ),
+            mid_onset_strength=max(
+                current.mid_onset_strength,
+                feature.mid_onset_strength,
+            ),
+            high_onset_strength=max(
+                current.high_onset_strength,
+                feature.high_onset_strength,
+            ),
+            spectral_flux=max(current.spectral_flux, feature.spectral_flux),
+        )
+    return projected
+
+
 def _select_hit_grids(
     bar: BarFeature,
     grid_features: list[GridFeature],
     target_hits: int,
     template: StyleTemplate,
+    *,
+    spectral_features: dict[int, SpectralGridFeature],
 ) -> set[int]:
     selected: set[int] = set()
     remaining = {feature.grid: feature for feature in grid_features}
@@ -257,7 +420,13 @@ def _select_hit_grids(
         best_grid = max(
             remaining,
             key=lambda grid: (
-                _grid_score(bar, remaining[grid], selected, template),
+                _grid_score(
+                    bar,
+                    remaining[grid],
+                    selected,
+                    template,
+                    spectral_feature=spectral_features.get(grid),
+                ),
                 -grid,
             ),
         )
@@ -271,6 +440,8 @@ def _grid_score(
     feature: GridFeature,
     selected: set[int],
     template: StyleTemplate,
+    *,
+    spectral_feature: SpectralGridFeature | None,
 ) -> float:
     score = 0.0
     if feature.onset:
@@ -283,6 +454,13 @@ def _grid_score(
         score += 3.0
     score += feature.strength * 4.0
     score += feature.activity
+    if spectral_feature is not None:
+        score += spectral_feature.spectral_flux * 3.0
+        score += max(
+            spectral_feature.low_onset_strength,
+            spectral_feature.mid_onset_strength,
+            spectral_feature.high_onset_strength,
+        ) * 2.0
     score += style_grid_bias(template, feature.grid, bar.grids_per_bar, bar.index)
 
     if selected:
@@ -292,8 +470,23 @@ def _grid_score(
         elif template.name == "stamina" and distance == 1:
             score += 0.8
         elif template.name == "hybrid":
-            score += (0.6 if distance == 1 else min(distance, 3) * 0.15)
+            score += 0.6 if distance == 1 else min(distance, 3) * 0.15
     return score
+
+
+def _spectral_color(
+    color: str,
+    feature: SpectralGridFeature | None,
+) -> str:
+    if feature is None:
+        return color
+    low_drive = feature.low_onset_strength + feature.mid_onset_strength * 0.2
+    high_drive = feature.high_onset_strength + feature.mid_onset_strength * 0.1
+    if max(low_drive, high_drive) < 0.25 or abs(low_drive - high_drive) < 0.18:
+        return color
+    if low_drive > high_drive:
+        return "3" if color in {"3", "4"} else "1"
+    return "4" if color in {"3", "4"} else "2"
 
 
 def _effective_density(density: str, hint: BarDensityHint) -> str:
@@ -306,34 +499,40 @@ def _effective_density(density: str, hint: BarDensityHint) -> str:
     return "medium"
 
 
-def _special_chart_bar(
+def _special_bar_events(
     bar: BarFeature,
     *,
     density: str,
     template: StyleTemplate,
     profile: CourseLoadProfile,
     level: int,
-) -> ChartBar | None:
+    output_resolution: int,
+) -> ChartBarEvents | None:
     if density not in {"auto", "high", "max"}:
         return None
-    if not (
-        bar.fill_candidate
-        or bar.phrase_position in {"phrase_end", "song_end"}
-    ):
+    if not bar.fill_candidate:
         return None
 
     duration = bar.end_time - bar.start_time
-    if not isfinite(duration) or duration <= 0 or bar.grids_per_bar < 3:
+    if not isfinite(duration) or duration <= 0 or output_resolution < 3:
         return None
-    has_activity = bool(bar.onset_16) or any(value > 0 for value in bar.activity_16)
-    onset_richness = min(1.0, len(bar.onset_16) / max(1, bar.grids_per_bar / 4))
-    activity_score = max(bar.energy, onset_richness, max(bar.activity_16, default=0.0))
+    has_activity = bool(bar.onset_grids) or any(value > 0 for value in bar.activity_grids)
+    meter = get_meter_spec(bar.time_signature)
+    onset_richness = min(
+        1.0,
+        len(bar.onset_grids) / max(1, meter.legacy_grids_per_bar / 4),
+    )
+    activity_score = max(
+        bar.energy,
+        onset_richness,
+        max(bar.activity_grids, default=0.0),
+    )
     if not has_activity or activity_score < template.special_min_energy:
         return None
     if density == "auto" and activity_score < 0.75:
         return None
 
-    start_grid, end_grid = _special_note_span(bar)
+    start_grid, end_grid = _special_note_span(bar, output_resolution=output_resolution)
     special_duration = duration * (end_grid - start_grid) / bar.grids_per_bar
     is_balloon = special_duration >= duration / 4 and (
         (
@@ -342,48 +541,58 @@ def _special_chart_bar(
         )
         or (bar.fill_candidate and bar.energy >= template.balloon_min_energy)
     )
-    notes = ["0"] * bar.grids_per_bar
-    notes[start_grid] = "7" if is_balloon else "5"
-    notes[end_grid] = "8"
-    balloon_counts = (
-        [
-            _balloon_hit_count(
-                special_duration,
-                profile=profile,
-                level=level,
-                multiplier=template.balloon_hits_multiplier,
-            )
-        ]
+    balloon_count = (
+        _balloon_hit_count(
+            special_duration,
+            profile=profile,
+            level=level,
+            multiplier=template.balloon_hits_multiplier,
+        )
         if is_balloon
-        else []
+        else None
     )
-    return ChartBar(
+    return ChartBarEvents(
         index=bar.index,
-        notes="".join(notes),
-        time_signature=bar.time_signature,
-        balloon_counts=balloon_counts,
+        long_notes=[
+            ChartLongNoteEvent(
+                start_tick=start_grid,
+                end_tick=end_grid,
+                kind="balloon" if is_balloon else "drumroll",
+                balloon_count=balloon_count,
+            )
+        ],
     )
 
 
-def _special_note_span(bar: BarFeature) -> tuple[int, int]:
-    earliest_start = max(0, bar.grids_per_bar // 2)
-    latest_start = bar.grids_per_bar - 2
+def _special_note_span(bar: BarFeature, *, output_resolution: int) -> tuple[int, int]:
+    features = _project_grid_features(
+        bar,
+        _grid_features_for_bar(bar),
+        output_resolution=output_resolution,
+    )
+    step = bar.grids_per_bar // output_resolution
+    earliest_start = max(0, (bar.grids_per_bar // 2 // step) * step)
+    latest_start = bar.grids_per_bar - (2 * step)
     feature_grids = {
         feature.grid
-        for feature in _grid_features_for_bar(bar)
+        for feature in features
         if earliest_start <= feature.grid <= latest_start
         and (feature.onset or feature.accent or feature.beat is not None)
     }
     start_grid = min(feature_grids) if feature_grids else earliest_start
 
-    later_beats = sorted(
-        grid
-        for grid in bar.beat_grids
-        if start_grid + 1 < grid < bar.grids_per_bar
+    projected_beats = sorted(
+        {
+            min(bar.grids_per_bar - step, round(grid / step) * step)
+            for grid in bar.beat_grids
+        }
     )
-    end_grid = later_beats[-1] if later_beats else bar.grids_per_bar - 1
+    later_beats = [
+        grid for grid in projected_beats if start_grid + step < grid < bar.grids_per_bar
+    ]
+    end_grid = later_beats[-1] if later_beats else bar.grids_per_bar - step
     if end_grid <= start_grid:
-        end_grid = min(bar.grids_per_bar - 1, start_grid + 1)
+        end_grid = min(bar.grids_per_bar - step, start_grid + step)
     return start_grid, end_grid
 
 
@@ -402,3 +611,24 @@ def _balloon_hit_count(
     )
     hits_per_second = minimum + (maximum - minimum) * level_position
     return max(1, round(duration * hits_per_second * multiplier))
+
+
+def _resolution_for_bar(
+    plan: ResolutionPlan | None,
+    bar: BarFeature,
+    position: int,
+) -> int:
+    if plan is not None:
+        if 0 <= bar.index < len(plan.bar_resolutions):
+            return plan.bar_resolutions[bar.index]
+        if 0 <= position < len(plan.bar_resolutions):
+            return plan.bar_resolutions[position]
+        return plan.base_resolution
+    return _default_output_resolution(bar)
+
+
+def _default_output_resolution(bar: BarFeature) -> int:
+    meter = get_meter_spec(bar.time_signature)
+    if bar.grids_per_bar == meter.grids_per_bar:
+        return meter.legacy_grids_per_bar
+    return bar.grids_per_bar

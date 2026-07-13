@@ -6,6 +6,7 @@ import librosa
 import numpy as np
 from pydantic import BaseModel, Field
 
+from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw, extract_spectral_features
 from tja_ai_chartgen.tja.model import TempoAnalysisDecision
 
 
@@ -69,6 +70,7 @@ class AudioAnalysisRaw(BaseModel):
     time_signature: str = "4/4"
     analyzer: str = "librosa"
     tempo_analysis: TempoAnalysisDecision | None = None
+    spectral: SpectralAnalysisRaw = Field(default_factory=SpectralAnalysisRaw)
 
 
 def normalize_bpm(bpm: float) -> float:
@@ -557,6 +559,11 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
     hop_length = 512
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
     activity_env, rms_env = _rms_envelopes(y, hop_length=hop_length)
+    spectral = extract_spectral_features(
+        y,
+        sample_rate=int(sr),
+        hop_length=hop_length,
+    )
     tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, onset_envelope=onset_env)
     tempo_value = float(np.asarray(tempo).reshape(-1)[0])
 
@@ -601,6 +608,7 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         hop_length=hop_length,
         analyzer=analyzer,
         tempo_analysis=estimate.to_decision("librosa"),
+        spectral=spectral,
     )
 
     if not use_beatnet:

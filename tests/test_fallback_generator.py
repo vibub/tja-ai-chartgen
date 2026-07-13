@@ -1,7 +1,12 @@
 import pytest
 
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
-from tja_ai_chartgen.tja.model import BarFeature, GridFeature
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    GridFeature,
+    ResolutionPlan,
+    SpectralGridFeature,
+)
 from tja_ai_chartgen.tja.quality import playable_hit_count
 
 
@@ -61,6 +66,33 @@ def test_accent_and_strength_prioritize_competing_onsets():
     )[0].notes
 
     assert _hit_grids(notes) == {5, 7}
+
+
+def test_spectral_attacks_prioritize_grids_and_inform_don_ka_coloring():
+    bar = _feature(0, energy=0.3, downbeat=None).model_copy(
+        update={
+            "spectral_grid_features": [
+                SpectralGridFeature(
+                    grid=3,
+                    low_onset_strength=1.0,
+                    spectral_flux=1.0,
+                ),
+                SpectralGridFeature(
+                    grid=11,
+                    high_onset_strength=1.0,
+                    spectral_flux=1.0,
+                ),
+            ]
+        }
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar], density="low", course="Easy", level=1
+    )[0].notes
+
+    assert _hit_grids(notes) == {3, 11}
+    assert notes[3] == "1"
+    assert notes[11] == "2"
 
 
 def test_missing_onsets_falls_back_to_downbeat_and_beats():
@@ -357,13 +389,14 @@ def test_special_notes_require_phrase_or_fill_candidate():
     assert all(not bar.balloon_counts for bar in chart_bars)
 
 
-def test_special_notes_can_emit_roll_and_balloon_at_active_phrase_candidates():
+def test_special_notes_can_emit_roll_and_balloon_at_active_fill_candidates():
     bars = [
         _feature(
             0,
             energy=0.8,
             onsets=[8, 10, 12, 14],
             phrase_position="phrase_end",
+            fill_candidate=True,
         ),
         _feature(1, energy=0.8, onsets=[0, 4, 8, 12]),
         _feature(
@@ -458,6 +491,82 @@ def test_balloon_count_increases_with_bar_duration():
     assert generate_count(1.0) < generate_count(2.0)
 
 
+def test_canonical_features_use_resolution_plan_without_changing_hit_target():
+    bar = _feature(
+        0,
+        energy=0.8,
+        grids=48,
+        onsets=[0, 6, 12, 18, 24, 30, 36, 42],
+        accents=[0, 12, 24, 36],
+        beats=[0, 12, 24, 36],
+    )
+
+    chart_bars = []
+    for resolution in (16, 24, 48):
+        plan = ResolutionPlan(
+            canonical_grids_per_bar=48,
+            base_resolution=resolution,
+            bar_resolutions=[resolution],
+        )
+        chart_bars.append(
+            generate_fallback_chart_bars(
+                [bar],
+                density="high",
+                course="Hard",
+                level=7,
+                resolution_plan=plan,
+            )[0]
+        )
+
+    assert [len(chart_bar.notes) for chart_bar in chart_bars] == [16, 24, 48]
+    assert len({playable_hit_count(chart_bar.notes) for chart_bar in chart_bars}) == 1
+
+
+def test_structure_roles_shape_fallback_load_without_changing_hard_caps():
+    build_up_bars = [
+        _feature(
+            index,
+            energy=0.6,
+            grids=48,
+            onsets=list(range(0, 48, 6)),
+            beats=[0, 12, 24, 36],
+            transition_role="build_up",
+            phrase_progress=index / 3,
+        )
+        for index in range(4)
+    ]
+    peak_bar = _feature(
+        4,
+        energy=0.6,
+        grids=48,
+        onsets=list(range(0, 48, 6)),
+        beats=[0, 12, 24, 36],
+        transition_role="peak",
+    )
+    breakdown_bar = _feature(
+        5,
+        energy=0.6,
+        grids=48,
+        onsets=list(range(0, 48, 6)),
+        beats=[0, 12, 24, 36],
+        transition_role="breakdown",
+    )
+
+    chart_bars = generate_fallback_chart_bars(
+        [*build_up_bars, peak_bar, breakdown_bar],
+        density="auto",
+        course="Normal",
+        level=5,
+    )
+    counts = [playable_hit_count(bar.notes) for bar in chart_bars]
+
+    assert counts[:4] == sorted(counts[:4])
+    assert counts[0] < counts[3]
+    assert counts[4] >= counts[3]
+    assert counts[5] < counts[4]
+    assert max(counts) <= 8
+
+
 def _feature(
     index: int,
     *,
@@ -472,6 +581,8 @@ def _feature(
     downbeat: int | None = 0,
     phrase_position: str = "unknown",
     fill_candidate: bool = False,
+    transition_role: str = "stable",
+    phrase_progress: float = 0.0,
     section: str = "unknown",
     rms_dbfs: float | None = None,
     peak_rms_dbfs: float | None = None,
@@ -511,6 +622,8 @@ def _feature(
         downbeat_grid=downbeat,
         phrase_position=phrase_position,
         fill_candidate=fill_candidate,
+        transition_role=transition_role,
+        phrase_progress=phrase_progress,
         section=section,
     )
 

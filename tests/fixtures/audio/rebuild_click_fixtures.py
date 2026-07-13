@@ -19,6 +19,12 @@ QUALITY_FIXTURES = {
     "dense_180.wav": (180.0, 0.5, "dense"),
 }
 TRANSIENT_NOISE_FIXTURE = "transient_noise_intro_120.wav"
+RESOLUTION_FIXTURES = {
+    "straight_120.wav": "straight",
+    "triplet_120.wav": "triplet",
+    "mixed_120.wav": "mixed",
+}
+STRUCTURE_FIXTURE = "structure_build_up_120.wav"
 
 
 def build_click_track(path: Path, *, first_beat_seconds: float) -> None:
@@ -61,6 +67,57 @@ def build_quality_track(
             events.append((event_time, subdivision_index == 0))
 
     duration = first_beat_seconds + bar_count * bar_duration + TAIL_SECONDS
+    _write_click_events(path, duration=duration, events=events)
+
+
+def build_resolution_track(path: Path, *, pattern: str) -> None:
+    first_beat_seconds = 0.5
+    beat_interval = 60.0 / 120.0
+    bar_count = 4
+    events: list[tuple[float, bool]] = []
+    for bar_index in range(bar_count):
+        bar_start = first_beat_seconds + bar_index * beat_interval * 4
+        subdivisions = (
+            4
+            if pattern == "straight" or (pattern == "mixed" and bar_index % 2 == 0)
+            else 3
+        )
+        if pattern not in {"straight", "triplet", "mixed"}:
+            raise ValueError(f"Unknown resolution fixture pattern: {pattern}")
+        for beat_index in range(4):
+            beat_start = bar_start + beat_index * beat_interval
+            for subdivision_index in range(subdivisions):
+                events.append(
+                    (
+                        beat_start + subdivision_index * beat_interval / subdivisions,
+                        beat_index == 0 and subdivision_index == 0,
+                    )
+                )
+    duration = first_beat_seconds + bar_count * beat_interval * 4 + TAIL_SECONDS
+    _write_click_events(path, duration=duration, events=events)
+
+
+def build_structure_track(path: Path) -> None:
+    first_beat_seconds = 0.5
+    beat_interval = 60.0 / 120.0
+    subdivisions_by_bar = [1, 1, 1, 1, 1, 2, 3, 4, 4, 4, 1, 1]
+    events: list[tuple[float, bool]] = []
+    for bar_index, subdivisions in enumerate(subdivisions_by_bar):
+        bar_start = first_beat_seconds + bar_index * beat_interval * 4
+        for beat_index in range(4):
+            beat_start = bar_start + beat_index * beat_interval
+            for subdivision_index in range(subdivisions):
+                events.append(
+                    (
+                        beat_start + subdivision_index * beat_interval / subdivisions,
+                        beat_index == 0 and subdivision_index == 0,
+                    )
+                )
+    duration = (
+        first_beat_seconds
+        + len(subdivisions_by_bar) * beat_interval * 4
+        + TAIL_SECONDS
+    )
     _write_click_events(path, duration=duration, events=events)
 
 
@@ -129,6 +186,9 @@ def main() -> None:
             pattern=pattern,
         )
     build_transient_noise_intro_track(output_dir / TRANSIENT_NOISE_FIXTURE)
+    for filename, pattern in RESOLUTION_FIXTURES.items():
+        build_resolution_track(output_dir / filename, pattern=pattern)
+    build_structure_track(output_dir / STRUCTURE_FIXTURE)
 
 
 if __name__ == "__main__":

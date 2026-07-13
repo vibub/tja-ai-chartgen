@@ -1,8 +1,13 @@
 import pytest
 
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar
-from tja_ai_chartgen.tja.quality import build_quality_report
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    ChartBar,
+    ResolutionDecision,
+    ResolutionPlan,
+)
+from tja_ai_chartgen.tja.quality import build_quality_report, pattern_counts
 
 
 def test_quality_report_records_density_compliance_and_silent_notes():
@@ -89,6 +94,132 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.accent_candidate_count == 0
     assert report.accent_hit_count == 0
     assert report.accent_coverage_rate == 1.0
+
+
+def test_quality_report_is_independent_of_notes_resolution():
+    feature = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.5,
+        time_signature="4/4",
+        grids_per_bar=48,
+        onset_grids=[0, 12, 24, 36],
+        accent_grids=[0, 12, 24, 36],
+        beat_grids=[0, 12, 24, 36],
+        downbeat_grid=0,
+    )
+
+    reports = []
+    for resolution in (16, 24, 48):
+        notes = ["0"] * resolution
+        for index, note in zip(
+            (0, resolution // 4, resolution // 2, resolution * 3 // 4),
+            "1212",
+            strict=True,
+        ):
+            notes[index] = note
+        reports.append(build_quality_report([_chart_bar(0, "".join(notes))], [feature]))
+
+    comparable = [
+        (
+            report.playable_note_count,
+            report.average_notes_per_second,
+            report.peak_bar_notes_per_second,
+            report.accent_candidate_count,
+            report.accent_hit_count,
+            report.accent_coverage_rate,
+            report.don_count,
+            report.ka_count,
+        )
+        for report in reports
+    ]
+    assert comparable[0] == comparable[1] == comparable[2]
+
+
+def test_pattern_counts_normalizes_equivalent_resolutions():
+    notes_16 = "1000200010002000"
+    notes_48 = ["0"] * 48
+    for index, note in zip((0, 12, 24, 36), "1212", strict=True):
+        notes_48[index] = note
+
+    chart_bars = [_chart_bar(0, notes_16), _chart_bar(1, "".join(notes_48))]
+    counts = pattern_counts(chart_bars)
+    report = build_quality_report(chart_bars, [_feature(0), _feature(1)])
+
+    assert list(counts.values()) == [2]
+    assert report.repeated_bar_count == 1
+    assert report.repeated_bar_rate == 0.5
+
+
+def test_quality_report_records_structure_and_resolution_metrics():
+    features = [
+        _feature(
+            index,
+            energy=0.2 + index * 0.15,
+            energy_percentile=0.2 + index * 0.2,
+            grids=48,
+            phrase_id=0,
+            phrase_progress=index / 3,
+            transition_role="build_up",
+            section_id="section-1",
+        )
+        for index in range(4)
+    ]
+    features.extend(
+        [
+            _feature(
+                4,
+                energy=0.95,
+                energy_percentile=1.0,
+                grids=48,
+                phrase_id=1,
+                transition_role="peak",
+                section_id="section-2",
+                fill_candidate=True,
+            ),
+            _feature(
+                5,
+                energy=0.25,
+                energy_percentile=0.1,
+                grids=48,
+                phrase_id=1,
+                phrase_progress=1.0,
+                transition_role="stable",
+                section_id="section-2",
+            ),
+        ]
+    )
+    chart_bars = [
+        _chart_bar(index, _notes_with_hits(hit_count, 48))
+        for index, hit_count in enumerate([2, 4, 6, 8, 10, 3])
+    ]
+    plan = ResolutionPlan(
+        canonical_grids_per_bar=48,
+        base_resolution=48,
+        bar_resolutions=[48] * 6,
+        decision=ResolutionDecision(
+            selected_resolution=48,
+            candidate_errors={"16": 0.5, "24": 0.25, "48": 0.05},
+            evidence_count=24,
+            confidence=0.8,
+            reason="mixed subdivisions",
+        ),
+    )
+
+    report = build_quality_report(chart_bars, features, plan)
+
+    assert report.structure_density_correlation > 0
+    assert report.build_up_slope_agreement == pytest.approx(1.0)
+    assert report.peak_contrast > 0
+    assert report.highlight_note_contrast > 0
+    assert report.fill_candidate_precision == 1.0
+    assert report.base_resolution == 48
+    assert report.resolution_change_count == 0
+    assert report.resolution_changes_per_100_bars == 0.0
+    assert report.high_resolution_bar_ratio == 1.0
+    assert report.resolution_quantization_error == 0.05
+    assert report.avoided_resolution_changes == 1
 
 
 def test_quality_report_records_time_normalized_load():
@@ -307,6 +438,12 @@ def _feature(
     peak_rms_dbfs: float | None = None,
     relative_rms_db: float | None = None,
     sustained_activity_ratio: float | None = None,
+    energy_percentile: float = 0.0,
+    phrase_id: int | None = None,
+    phrase_progress: float = 0.0,
+    transition_role: str = "stable",
+    section_id: str | None = None,
+    fill_candidate: bool = False,
 ) -> BarFeature:
     return BarFeature(
         index=index,
@@ -317,12 +454,25 @@ def _feature(
         peak_rms_dbfs=peak_rms_dbfs,
         relative_rms_db=relative_rms_db,
         sustained_activity_ratio=sustained_activity_ratio,
-        time_signature="4/4" if grids == 16 else "3/4",
+        time_signature="4/4" if grids in {16, 24, 48} else "3/4",
         grids_per_bar=grids,
         onset_16=list(range(min(onset_count, grids))),
         section="unknown",
+        energy_percentile=energy_percentile,
+        phrase_id=phrase_id,
+        phrase_progress=phrase_progress,
+        transition_role=transition_role,
+        section_id=section_id,
+        fill_candidate=fill_candidate,
     )
 
 
 def _chart_bar(index: int, notes: str, *, time_signature: str = "4/4") -> ChartBar:
     return ChartBar(index=index, notes=notes, time_signature=time_signature)
+
+
+def _notes_with_hits(hit_count: int, resolution: int = 16) -> str:
+    notes = ["0"] * resolution
+    for index in range(hit_count):
+        notes[index] = "1" if index % 2 == 0 else "2"
+    return "".join(notes)

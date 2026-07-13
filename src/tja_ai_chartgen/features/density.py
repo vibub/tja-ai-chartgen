@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from math import ceil
 
 from tja_ai_chartgen.features.silence import edge_silence_indexes, is_silent_bar
 from tja_ai_chartgen.tja.model import BarFeature
@@ -12,11 +13,15 @@ class BarDensityHint:
     allow_empty: bool
     count_in_quality_average: bool
     reason: str
+    target_scale: float = 1.0
 
 
 def build_density_hints(bars: list[BarFeature]) -> list[BarDensityHint]:
     silent_indexes = edge_silence_indexes(bars)
-    return [_density_hint_for_bar(index, bar, silent_indexes) for index, bar in enumerate(bars)]
+    return [
+        _apply_structure_scale(_density_hint_for_bar(index, bar, silent_indexes), bar)
+        for index, bar in enumerate(bars)
+    ]
 
 
 def density_hint_payload(bars: list[BarFeature]) -> list[dict[str, object]]:
@@ -29,6 +34,7 @@ def density_hint_payload(bars: list[BarFeature]) -> list[dict[str, object]]:
             "max_hits": hint.max_hits,
             "allow_empty": hint.allow_empty,
             "count_in_quality_average": hint.count_in_quality_average,
+            "target_scale": hint.target_scale,
             "reason": hint.reason,
         }
         for index, hint in enumerate(hints)
@@ -40,7 +46,7 @@ def _density_hint_for_bar(
     bar: BarFeature,
     silent_indexes: set[int],
 ) -> BarDensityHint:
-    onset_count = len(bar.onset_16)
+    onset_count = len(bar.onset_grids)
     activity_level = _activity_level(bar)
 
     if index in silent_indexes:
@@ -84,6 +90,16 @@ def _density_hint_for_bar(
             reason="low-energy sparse passage",
         )
 
+    if bar.fill_candidate:
+        return BarDensityHint(
+            kind="fill",
+            min_hits=3,
+            max_hits=14,
+            allow_empty=False,
+            count_in_quality_average=True,
+            reason="high-confidence structural fill candidate",
+        )
+
     if bar.energy >= 0.45 or onset_count >= max(6, bar.grids_per_bar // 2):
         return BarDensityHint(
             kind="dense",
@@ -94,14 +110,14 @@ def _density_hint_for_bar(
             reason="high-energy or onset-rich bar",
         )
 
-    if bar.fill_candidate or bar.phrase_position in {"phrase_end", "song_end"}:
+    if bar.phrase_position in {"phrase_end", "song_end"}:
         return BarDensityHint(
-            kind="fill",
-            min_hits=3,
-            max_hits=14,
+            kind="normal",
+            min_hits=2,
+            max_hits=12,
             allow_empty=False,
             count_in_quality_average=True,
-            reason="phrase ending or fill candidate",
+            reason="phrase ending without enough fill evidence",
         )
 
     return BarDensityHint(
@@ -114,10 +130,37 @@ def _density_hint_for_bar(
     )
 
 
+def _apply_structure_scale(hint: BarDensityHint, bar: BarFeature) -> BarDensityHint:
+    if hint.kind in {"silent", "rest"}:
+        return hint
+
+    role = bar.transition_role
+    if role == "build_up":
+        scale = 0.9 + 0.2 * bar.phrase_progress
+    elif role == "peak":
+        scale = 1.12
+    elif role == "breakdown":
+        scale = 0.72
+    elif role == "drop":
+        scale = 0.95
+    elif role == "cadence":
+        scale = 1.05 if bar.fill_candidate else 0.92
+    else:
+        scale = 1.0
+    scale = round(min(1.15, max(0.65, scale)), 3)
+    if role == "stable" and scale == 1.0:
+        return hint
+    return replace(
+        hint,
+        target_scale=scale,
+        reason=f"{hint.reason}; structure role={role}",
+    )
+
+
 def _activity_level(bar: BarFeature) -> float:
-    if not bar.activity_16:
+    if not bar.activity_grids:
         return 0.0
-    return max(bar.activity_16)
+    return max(bar.activity_grids)
 
 
 def _is_musical_rest(bar: BarFeature, onset_count: int, activity_level: float) -> bool:
@@ -133,8 +176,13 @@ def _is_musical_rest(bar: BarFeature, onset_count: int, activity_level: float) -
 
 
 def _is_sustained_musical_bar(bar: BarFeature, onset_count: int, activity_level: float) -> bool:
-    active_grid_count = sum(value >= 0.18 for value in bar.activity_16)
-    return activity_level >= 0.25 and active_grid_count >= 3 and onset_count <= 3
+    active_grid_count = sum(value >= 0.18 for value in bar.activity_grids)
+    minimum_active_grids = max(3, ceil(bar.grids_per_bar * 3 / 16))
+    return (
+        activity_level >= 0.25
+        and active_grid_count >= minimum_active_grids
+        and onset_count <= 3
+    )
 
 
 def _is_sparse_musical_bar(bar: BarFeature, onset_count: int, activity_level: float) -> bool:

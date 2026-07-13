@@ -433,6 +433,8 @@ def test_analyze_audio_keeps_librosa_baseline_when_onset_grid_is_rejected(tmp_pa
     assert raw.offset == 0.1
     assert raw.beat_times == [0.1, 0.7]
     assert raw.analyzer == "librosa"
+    assert raw.spectral.status == "complete"
+    assert raw.spectral.feature_version == "spectral-v1"
     assert raw.tempo_analysis is not None
     assert raw.tempo_analysis.accepted is False
     assert raw.tempo_analysis.reason == "insufficient_onsets"
@@ -546,7 +548,7 @@ def test_six_eight_beatnet_analysis_builds_one_full_length_tja_bar():
     assert len(bars) == 1
     assert bars[0].start_time == 0.25
     assert bars[0].end_time == 1.75
-    assert bars[0].beat_grids == [0, 6]
+    assert bars[0].beat_grids == [0, 18]
     assert "BPM:120" in tja
     assert "#MEASURE 3/4\n100000100000," in tja
 

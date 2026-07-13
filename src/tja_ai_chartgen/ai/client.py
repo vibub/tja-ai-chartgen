@@ -16,8 +16,21 @@ from openai import OpenAIError
 
 from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
+from tja_ai_chartgen.features.resolution import (
+    output_resolution_for_analysis_bar,
+    output_resolution_for_bar,
+)
 from tja_ai_chartgen.features.silence import edge_silence_indexes
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
+from tja_ai_chartgen.tja.event_encoder import EventEncodingError, encode_chart_bar_events
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    ChartBar,
+    ChartBarEvents,
+    ChartHitEvent,
+    ChartLongNoteEvent,
+    ResolutionPlan,
+    SongAnalysis,
+)
 from tja_ai_chartgen.tja.quality import (
     chart_activity_count,
     density_hit_count,
@@ -28,7 +41,6 @@ from tja_ai_chartgen.tja.quality import (
 )
 
 ALLOWED_AI_NOTES = set("01234578")
-FALLBACK_AI_PATTERN = "1000100010001000"
 DEFAULT_AI_REPAIR_RETRIES = 2
 DEFAULT_AI_REQUEST_TIMEOUT = 300.0
 DEFAULT_AI_TRANSPORT_RETRIES = 1
@@ -285,34 +297,65 @@ def sanitize_ai_bars(
     bars: list[ChartBar],
     expected_count: int,
     expected_bars: list[BarFeature] | None = None,
+    resolution_plan: ResolutionPlan | None = None,
 ) -> list[ChartBar]:
+    if len(bars) != expected_count:
+        raise ValueError(
+            f"AI output must contain exactly {expected_count} bars, got {len(bars)}"
+        )
+
     sanitized: list[ChartBar] = []
+    issues: list[str] = []
     silent_indexes = edge_silence_indexes(expected_bars or [])
 
-    for index in range(expected_count):
-        expected_length = expected_bars[index].grids_per_bar if expected_bars and index < len(expected_bars) else 16
-        expected_time_signature = (
-            expected_bars[index].time_signature if expected_bars and index < len(expected_bars) else "4/4"
+    for index, bar in enumerate(bars):
+        expected_length = (
+            output_resolution_for_bar(
+                expected_bars[index],
+                plan=resolution_plan,
+                position=index,
+            )
+            if expected_bars and index < len(expected_bars)
+            else 16
         )
-        if index < len(bars):
-            notes = bars[index].notes
-            time_signature = bars[index].time_signature
-            balloon_counts = bars[index].balloon_counts
-        else:
-            notes = FALLBACK_AI_PATTERN
-            time_signature = expected_time_signature
-            balloon_counts = []
+        expected_time_signature = (
+            expected_bars[index].time_signature
+            if expected_bars and index < len(expected_bars)
+            else bar.time_signature
+        )
+        if len(bar.notes) != expected_length:
+            issues.append(
+                f"bar {index + 1} expected resolution {expected_length}, got {len(bar.notes)}"
+            )
+        illegal_characters = sorted(set(bar.notes) - ALLOWED_AI_NOTES)
+        if illegal_characters:
+            issues.append(
+                f"bar {index + 1} contains unsupported character(s): "
+                f"{''.join(illegal_characters)}"
+            )
+        if len(bar.balloon_counts) != bar.notes.count("7"):
+            issues.append(
+                f"bar {index + 1} must provide exactly {bar.notes.count('7')} balloon count(s)"
+            )
+        if any(
+            not isinstance(count, int) or isinstance(count, bool) or count < 1
+            for count in bar.balloon_counts
+        ):
+            issues.append(f"bar {index + 1} balloon counts must be positive integers")
 
-        cleaned_notes = "0" * expected_length if index in silent_indexes else _sanitize_notes(notes, expected_length)
+        notes = "0" * expected_length if index in silent_indexes else bar.notes
+        balloon_counts = [] if index in silent_indexes else bar.balloon_counts
         sanitized.append(
             ChartBar(
                 index=index,
-                notes=cleaned_notes,
-                time_signature=time_signature,
-                balloon_counts=balloon_counts[: cleaned_notes.count("7")],
+                notes=notes,
+                time_signature=expected_time_signature,
+                balloon_counts=balloon_counts,
             )
         )
 
+    if issues:
+        raise ValueError("AI chart failed defensive validation: " + "; ".join(issues))
     return sanitized
 
 
@@ -430,54 +473,30 @@ def _validate_ai_data(
 
     bars: list[ChartBar] = []
     for index, item in enumerate(raw_bars):
+        if index >= expected_count:
+            issues.append(f"bars[{index}] has no matching input bar")
+            continue
         if not isinstance(item, dict):
             issues.append(f"bars[{index}] must be an object")
             continue
+        if item.get("bar", index + 1) != index + 1:
+            issues.append(f"bars[{index}].bar must be {index + 1}")
 
-        notes = item.get("notes")
-        if not isinstance(notes, str):
-            issues.append(f"bars[{index}].notes must be a string")
-            continue
-
-        expected_length = _expected_note_length(analysis, index)
-        if len(notes) != expected_length:
+        if "notes" in item or "balloon_counts" in item:
             issues.append(
-                f"bars[{index}].notes must be exactly {expected_length} characters, got {len(notes)}"
+                f"bars[{index}] uses the legacy notes schema; output hits and long_notes instead"
             )
-
-        allowed_notes = _allowed_ai_notes(special_notes)
-        illegal_characters = sorted(set(notes) - allowed_notes)
-        if illegal_characters:
-            joined = "".join(illegal_characters)
-            issues.append(f"bars[{index}].notes contains illegal character(s): {joined}")
-
-        balloon_count = notes.count("7")
-        raw_balloon_counts = item.get("balloon_counts", [])
-        if raw_balloon_counts is None:
-            raw_balloon_counts = []
-        if not isinstance(raw_balloon_counts, list):
-            issues.append(f"bars[{index}].balloon_counts must be a list")
-            raw_balloon_counts = []
-        parsed_balloon_counts: list[int] = []
-        for count_index, raw_count in enumerate(raw_balloon_counts):
-            if not isinstance(raw_count, int) or raw_count < 1:
-                issues.append(f"bars[{index}].balloon_counts[{count_index}] must be a positive integer")
-                continue
-            parsed_balloon_counts.append(raw_count)
-        if balloon_count and len(parsed_balloon_counts) != balloon_count:
-            issues.append(
-                f"bars[{index}].balloon_counts must contain exactly {balloon_count} item(s)"
-            )
-
-        time_signature = _bar_time_signature(analysis, index)
-        bars.append(
-            ChartBar(
+            chart_bar = None
+        else:
+            chart_bar = _parse_event_bar(
+                item,
                 index=index,
-                notes=notes,
-                time_signature=time_signature,
-                balloon_counts=parsed_balloon_counts,
+                analysis=analysis,
+                special_notes=special_notes,
+                issues=issues,
             )
-        )
+        if chart_bar is not None:
+            bars.append(chart_bar)
 
     if not issues:
         issues.extend(_validate_edge_silence(bars, analysis.bars))
@@ -496,6 +515,97 @@ def _validate_ai_data(
         raise _AiOutputValidationError(issues)
 
     return bars
+
+
+def _parse_event_bar(
+    item: dict[str, Any],
+    *,
+    index: int,
+    analysis: SongAnalysis,
+    special_notes: bool,
+    issues: list[str],
+) -> ChartBar | None:
+    issue_count = len(issues)
+    raw_hits = item.get("hits", [])
+    raw_long_notes = item.get("long_notes", [])
+    if not isinstance(raw_hits, list):
+        issues.append(f"bars[{index}].hits must be a list")
+        return None
+    if not isinstance(raw_long_notes, list):
+        issues.append(f"bars[{index}].long_notes must be a list")
+        return None
+
+    hits: list[ChartHitEvent] = []
+    for hit_index, raw_hit in enumerate(raw_hits):
+        if not isinstance(raw_hit, list) or len(raw_hit) != 2:
+            issues.append(f"bars[{index}].hits[{hit_index}] must be [tick, note]")
+            continue
+        tick, note = raw_hit
+        if not isinstance(tick, int) or isinstance(tick, bool):
+            issues.append(f"bars[{index}].hits[{hit_index}][0] must be an integer")
+            continue
+        if not isinstance(note, str):
+            issues.append(f"bars[{index}].hits[{hit_index}][1] must be a string")
+            continue
+        hits.append(ChartHitEvent(tick=tick, note=note))
+
+    long_notes: list[ChartLongNoteEvent] = []
+    for note_index, raw_note in enumerate(raw_long_notes):
+        if not isinstance(raw_note, dict):
+            issues.append(f"bars[{index}].long_notes[{note_index}] must be an object")
+            continue
+        start_tick = raw_note.get("start_tick")
+        end_tick = raw_note.get("end_tick")
+        kind = raw_note.get("kind")
+        balloon_count = raw_note.get("balloon_count")
+        if not isinstance(start_tick, int) or isinstance(start_tick, bool):
+            issues.append(
+                f"bars[{index}].long_notes[{note_index}].start_tick must be an integer"
+            )
+            continue
+        if not isinstance(end_tick, int) or isinstance(end_tick, bool):
+            issues.append(
+                f"bars[{index}].long_notes[{note_index}].end_tick must be an integer"
+            )
+            continue
+        if not isinstance(kind, str):
+            issues.append(f"bars[{index}].long_notes[{note_index}].kind must be a string")
+            continue
+        if balloon_count is not None and (
+            not isinstance(balloon_count, int) or isinstance(balloon_count, bool)
+        ):
+            issues.append(
+                f"bars[{index}].long_notes[{note_index}].balloon_count must be an integer"
+            )
+            continue
+        long_notes.append(
+            ChartLongNoteEvent(
+                start_tick=start_tick,
+                end_tick=end_tick,
+                kind=kind,
+                balloon_count=balloon_count,
+            )
+        )
+
+    if long_notes and not special_notes:
+        issues.append(f"bars[{index}].long_notes must be empty when special_notes is false")
+        return None
+    if len(issues) > issue_count:
+        return None
+
+    feature_bar = analysis.bars[index]
+    try:
+        return encode_chart_bar_events(
+            ChartBarEvents(index=index, hits=hits, long_notes=long_notes),
+            canonical_grids_per_bar=feature_bar.grids_per_bar,
+            output_resolution=output_resolution_for_analysis_bar(analysis, index),
+            time_signature=feature_bar.time_signature,
+        )
+    except EventEncodingError as error:
+        issues.extend(
+            f"bars[{index}].{issue.code}: {issue.message}" for issue in error.issues
+        )
+        return None
 
 
 def _validate_edge_silence(bars: list[ChartBar], expected_bars: list[BarFeature]) -> list[str]:
@@ -676,8 +786,20 @@ def _build_repair_prompt(
     density: str,
     special_notes: bool,
 ) -> str:
-    lengths = [_expected_note_length(analysis, index) for index in range(len(analysis.bars))]
-    allowed = ", ".join(sorted(_allowed_ai_notes(special_notes)))
+    resolutions = [
+        {
+            "bar": index + 1,
+            "canonical_grids": bar.grids_per_bar,
+            "output_resolution": _expected_note_length(analysis, index),
+            "allowed_tick_step": bar.grids_per_bar // _expected_note_length(analysis, index),
+            "phrase_id": bar.phrase_id,
+            "phrase_progress": bar.phrase_progress,
+            "transition_role": bar.transition_role,
+            "section_id": bar.section_id,
+            "fill_candidate_score": bar.fill_candidate_score,
+        }
+        for index, bar in enumerate(analysis.bars)
+    ]
     forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
     return f"""
 Your previous output was invalid and cannot be used as a TJA chart draft.
@@ -690,20 +812,22 @@ Validation errors:
 Required schema:
 {{
   "bars": [
-    {{"bar": 1, "notes": "1000100010001000"}}
+    {{"bar":1,"hits":[[0,"1"],[12,"2"]],"long_notes":[]}}
   ]
 }}
 
 Rules:
 - bars must contain exactly {len(analysis.bars)} item(s).
-- Notes length per bar must match the input bar grids: {lengths}.
-- Allowed notes characters: {allowed}.
-- If using balloon note 7, include one positive integer in balloon_counts for each 7 in that bar.
+- Use canonical ticks and do not output a resolution. Per-bar timing rules: {json.dumps(resolutions, ensure_ascii=False, separators=(",", ":"))}.
+- Use only hits and long_notes; never return legacy notes or balloon_counts fields.
+- Normal hit notes are 1, 2, 3, or 4.
+- long_notes must be empty unless special_notes is true. Balloons require a positive balloon_count.
 - Course/difficulty request: {course} level {level}, density {density}.
-- Forced silent bars: {forced_silent_bars}. These song-start/song-end silence bars must be all 0 for their full notes length.
+- Forced silent bars: {forced_silent_bars}. These song-start/song-end silence bars must have empty hits and long_notes.
 - Respect bar_density_hints from the original input: keep each bar inside its min_hits/max_hits range and aim near target_hits when present; rest bars may stay empty, sparse bars may stay light, normal bars should be moderate, and dense/fill bars should be busier without sudden full-density spikes unless the hint allows it.
 - If a bar has high activity/strength but sparse onset markers, treat it as sustained music rather than silence; add a simple beat/downbeat skeleton instead of leaving it empty.
-- If validation errors mention low chart quality, increase 1/2 note density on normal/dense/fill bars toward target_hits, keep real rest bars empty or sparse, add more 2/4 ka notes for offbeat/answer/fill hits, and vary repeated or all-don patterns without changing bar count or note lengths.
+- Preserve the original phrase_id, transition_role, section_id, fill score, and resolution. Build-ups should rise across phrase_progress; breakdowns keep a light skeleton; low fill scores must not create mechanical 4/8-bar fills.
+- If validation errors mention low chart quality, increase 1/2 note density on normal/dense/fill bars toward target_hits, keep real rest bars empty or sparse, add more 2/4 ka notes for offbeat/answer/fill hits, and vary repeated or all-don patterns without changing bar count or analyzed timing/structure.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()
 
@@ -793,27 +917,8 @@ def _redact_sensitive_value(value: Any, api_key: str | None) -> Any:
 
 
 
-def _sanitize_notes(notes: str, expected_length: int) -> str:
-    cleaned = "".join(character if character in ALLOWED_AI_NOTES else "0" for character in notes)
-    return cleaned[:expected_length].ljust(expected_length, "0")
-
-
-def _allowed_ai_notes(special_notes: bool) -> set[str]:
-    if special_notes:
-        return ALLOWED_AI_NOTES
-    return set("01234")
-
-
 def _expected_note_length(analysis: SongAnalysis, index: int) -> int:
-    if index < len(analysis.bars):
-        return analysis.bars[index].grids_per_bar
-    return 16
-
-
-def _bar_time_signature(analysis: SongAnalysis, index: int) -> str:
-    if index < len(analysis.bars):
-        return analysis.bars[index].time_signature
-    return analysis.time_signature
+    return output_resolution_for_analysis_bar(analysis, index)
 
 
 def _extract_response_content(response: Any) -> str:

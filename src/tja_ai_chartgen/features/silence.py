@@ -1,5 +1,6 @@
 from math import isfinite
 
+from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.tja.model import BarFeature
 
 SILENT_EDGE_ENERGY_THRESHOLD = 0.015
@@ -12,13 +13,13 @@ TRANSIENT_EDGE_SUSTAINED_RATIO_THRESHOLD = 0.15
 
 
 def _average_activity(bar: BarFeature) -> float:
-    if not bar.activity_16:
+    if not bar.activity_grids:
         return 0.0
-    return sum(bar.activity_16) / len(bar.activity_16)
+    return sum(bar.activity_grids) / len(bar.activity_grids)
 
 
 def is_silent_bar(bar: BarFeature) -> bool:
-    if bar.onset_16:
+    if bar.onset_grids:
         return False
     if bar.energy <= SILENT_EDGE_ENERGY_THRESHOLD:
         return True
@@ -35,13 +36,14 @@ def _is_transient_edge_noise(bar: BarFeature) -> bool:
     if any(value is None or not isfinite(value) for value in metrics):
         return False
 
-    onset_limit = max(1, bar.grids_per_bar // 4)
+    meter = get_meter_spec(bar.time_signature)
+    onset_limit = max(1, meter.legacy_grids_per_bar // 4)
     return (
         bar.rms_dbfs <= TRANSIENT_EDGE_RMS_DBFS_THRESHOLD
         and bar.relative_rms_db <= TRANSIENT_EDGE_RELATIVE_RMS_DB_THRESHOLD
         and bar.peak_rms_dbfs <= TRANSIENT_EDGE_PEAK_RMS_DBFS_THRESHOLD
         and bar.sustained_activity_ratio <= TRANSIENT_EDGE_SUSTAINED_RATIO_THRESHOLD
-        and len(bar.onset_16) <= onset_limit
+        and len(bar.onset_grids) <= onset_limit
     )
 
 

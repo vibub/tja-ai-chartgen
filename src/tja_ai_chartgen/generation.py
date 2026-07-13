@@ -9,9 +9,10 @@ from tja_ai_chartgen.audio.analyze import analyze_audio, apply_analysis_override
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.meter import validate_time_signature
-from tja_ai_chartgen.features.sections import assign_sections
+from tja_ai_chartgen.features.resolution import build_resolution_plan, output_resolution_for_bar
+from tja_ai_chartgen.features.structure import STRUCTURE_FEATURE_VERSION, analyze_song_structure
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
+from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ResolutionPlan, SongAnalysis
 from tja_ai_chartgen.tja.quality import QualityReport, build_quality_report
 from tja_ai_chartgen.utils.paths import write_json
 
@@ -56,11 +57,21 @@ class GenerationConfig(BaseModel):
         return self
 
 
+class GenerationNotice(BaseModel):
+    code: str
+    level: Literal["info", "warning", "error"]
+    stage: Literal["analysis", "generation", "render"]
+    message: str
+    detail: str | None = None
+    scope: str | None = None
+
+
 class ChartGenerationResult(BaseModel):
     chart_bars: list[ChartBar]
     quality_report: QualityReport
     ai_failure: str | None = None
     used_fallback: bool
+    notices: list[GenerationNotice] = Field(default_factory=list)
 
 
 def load_generation_config(path: Path) -> GenerationConfig:
@@ -109,8 +120,30 @@ def build_song_analysis(
         raw = raw.model_copy(update={"time_signature": time_signature_override})
 
     _report_stage(stage_callback, "features")
-    bars = assign_sections(build_bar_features(raw, max_bars=max_bars))
+    structure = analyze_song_structure(build_bar_features(raw, max_bars=max_bars))
+    bars = structure.bars
+    resolution_plan = build_resolution_plan(raw, bars)
+    phrase_plan = [
+        phrase.model_copy(
+            update={
+                "resolution": resolution_plan.bar_resolutions[phrase.start_bar]
+                if phrase.start_bar < len(resolution_plan.bar_resolutions)
+                else resolution_plan.base_resolution
+            }
+        )
+        for phrase in structure.phrases
+    ]
     return SongAnalysis(
+        analysis_schema_version=4,
+        spectral_feature_version=raw.spectral.feature_version,
+        spectral_analysis_status=raw.spectral.status,
+        spectral_analysis_reason=raw.spectral.reason,
+        structure_feature_version=STRUCTURE_FEATURE_VERSION,
+        structure_confidence=structure.confidence,
+        bar_structures=structure.bar_structures,
+        phrase_plan=phrase_plan,
+        resolution_policy_version=resolution_plan.policy_version,
+        resolution_plan=resolution_plan,
         title=title,
         artist=artist,
         audio_file=str(input_audio),
@@ -122,6 +155,79 @@ def build_song_analysis(
         tempo_analysis=raw.tempo_analysis,
         bars=bars,
     )
+
+
+def build_analysis_notices(
+    analysis: SongAnalysis,
+    *,
+    requested_beatnet: bool = False,
+) -> list[GenerationNotice]:
+    notices: list[GenerationNotice] = []
+    analyzer = analysis.analyzer.lower()
+    if requested_beatnet and "beatnet" not in analyzer:
+        notices.append(
+            GenerationNotice(
+                code="beatnet-fallback",
+                level="warning",
+                stage="analysis",
+                message="BeatNet 增强未生效，已保留 librosa 分析结果。",
+            )
+        )
+
+    if analysis.spectral_analysis_status == "fallback":
+        notices.append(
+            GenerationNotice(
+                code="spectral-analysis-fallback",
+                level="warning",
+                stage="analysis",
+                message="频谱语义增强未生效，已继续使用 onset、RMS 与节拍特征。",
+                detail=f"reason={analysis.spectral_analysis_reason or 'unknown'}",
+            )
+        )
+
+    tempo = analysis.tempo_analysis
+    if tempo is not None and not tempo.accepted and "manual-override" not in analyzer:
+        source = "BeatNet" if tempo.fallback_source == "beatnet" else "librosa"
+        notices.append(
+            GenerationNotice(
+                code="tempo-refinement-fallback",
+                level="warning",
+                stage="analysis",
+                message=f"onset-grid 节拍校正置信度不足，已保留 {source} 基线。",
+                detail=(
+                    f"reason={tempo.reason}; support={tempo.normalized_support:.3f}; "
+                    f"onsets={tempo.onset_count}; coverage={tempo.time_coverage:.3f}"
+                ),
+            )
+        )
+
+    if (
+        analysis.structure_confidence is not None
+        and len(analysis.bars) >= 4
+        and analysis.structure_confidence < 0.35
+    ):
+        notices.append(
+            GenerationNotice(
+                code="structure-low-confidence",
+                level="warning",
+                stage="analysis",
+                message="乐句与段落边界置信度较低，建议在游玩预览中重点检查结构变化。",
+                detail=f"structure_confidence={analysis.structure_confidence:.3f}",
+            )
+        )
+
+    decision = analysis.resolution_plan.decision if analysis.resolution_plan is not None else None
+    if decision is not None and decision.evidence_count == 0:
+        notices.append(
+            GenerationNotice(
+                code="resolution-evidence-fallback",
+                level="warning",
+                stage="analysis",
+                message="缺少可靠细分节奏证据，已使用稳定基础分辨率。",
+                detail=decision.reason,
+            )
+        )
+    return notices
 
 
 def generate_chart_bars(
@@ -181,14 +287,77 @@ def generate_chart_bars(
             special_notes=special_notes,
             course=course,
             level=level,
+            resolution_plan=analysis.resolution_plan,
         )
+
+    _validate_generated_resolutions(
+        chart_bars,
+        selected_bars,
+        analysis.resolution_plan,
+    )
+    notices: list[GenerationNotice] = []
+    if use_ai:
+        if ai_failure:
+            notices.append(
+                GenerationNotice(
+                    code="ai-fallback",
+                    level="warning",
+                    stage="generation",
+                    scope=course,
+                    message="AI 增强失败，已自动回退到规则生成。",
+                    detail=ai_failure,
+                )
+            )
+        else:
+            notices.append(
+                GenerationNotice(
+                    code="ai-generation-succeeded",
+                    level="info",
+                    stage="generation",
+                    scope=course,
+                    message="AI 增强已完成，本次谱面来自 AI 输出校验后的结果。",
+                )
+            )
 
     return ChartGenerationResult(
         chart_bars=chart_bars,
-        quality_report=build_quality_report(chart_bars, selected_bars),
+        quality_report=build_quality_report(
+            chart_bars,
+            selected_bars,
+            analysis.resolution_plan,
+        ),
         ai_failure=ai_failure,
         used_fallback=used_fallback,
+        notices=notices,
     )
+
+
+def _validate_generated_resolutions(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+    resolution_plan: ResolutionPlan | None,
+) -> None:
+    if len(chart_bars) != len(feature_bars):
+        raise ValueError(
+            f"Generated chart bar count {len(chart_bars)} does not match feature bar count "
+            f"{len(feature_bars)}"
+        )
+    issues: list[str] = []
+    for position, (chart_bar, feature_bar) in enumerate(
+        zip(chart_bars, feature_bars, strict=True)
+    ):
+        expected = output_resolution_for_bar(
+            feature_bar,
+            plan=resolution_plan,
+            position=position,
+        )
+        if len(chart_bar.notes) != expected:
+            issues.append(
+                f"bar {feature_bar.index + 1} expected resolution {expected}, "
+                f"got {len(chart_bar.notes)}"
+            )
+    if issues:
+        raise ValueError("Generated chart does not match ResolutionPlan: " + "; ".join(issues))
 
 
 def _generate_ai_bars(
@@ -213,7 +382,25 @@ def _generate_ai_bars(
     from tja_ai_chartgen.ai.client import generate_chart_bars_with_ai, sanitize_ai_bars
     from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
 
-    selected_analysis = analysis.model_copy(update={"bars": selected_bars})
+    selected_indexes = {bar.index for bar in selected_bars}
+    selected_analysis = analysis.model_copy(
+        update={
+            "bars": selected_bars,
+            "bar_structures": [
+                structure
+                for structure in analysis.bar_structures
+                if structure.index in selected_indexes
+            ],
+            "phrase_plan": [
+                phrase
+                for phrase in analysis.phrase_plan
+                if any(
+                    phrase.start_bar <= index <= phrase.end_bar
+                    for index in selected_indexes
+                )
+            ],
+        }
+    )
     if ai_input_path is not None:
         write_json(
             ai_input_path,
@@ -248,6 +435,7 @@ def _generate_ai_bars(
         ai_bars,
         expected_count=len(selected_bars),
         expected_bars=selected_bars,
+        resolution_plan=analysis.resolution_plan,
     )
     return _reindex_chart_bars(sanitized, selected_bars)
 
