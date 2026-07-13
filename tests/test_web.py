@@ -1,6 +1,7 @@
 import json
 import time
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fastapi import UploadFile
@@ -8,11 +9,12 @@ from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
-from tja_ai_chartgen.tja.model import ChartBar, TempoAnalysisDecision
+from tja_ai_chartgen.tja.model import ChartBar, SongAnalysis, TempoAnalysisDecision
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
 from tja_ai_chartgen.web import (
     WEB_UPLOAD_MAX_BYTES,
     UploadTooLargeError,
+    _export_chart_files,
     _read_progress,
     _save_upload,
     create_app,
@@ -184,6 +186,194 @@ def test_web_export_chart_saves_ogg_and_tja_with_matching_names(tmp_path, monkey
     assert "WAVE:song.ogg" in (export_dir / "song.tja").read_text(encoding=TJA_FILE_ENCODING)
 
 
+def test_web_export_conflict_shows_four_actions_and_suggested_name(tmp_path, monkeypatch):
+    client, job_id = _create_export_job(tmp_path, monkeypatch)
+    export_dir = tmp_path / "exported"
+    export_dir.mkdir()
+    (export_dir / "song.ogg").write_bytes(b"old ogg")
+    (export_dir / "song.tja").write_bytes(b"old tja")
+
+    response = client.post(
+        "/export-chart",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+        },
+    )
+
+    assert response.status_code == 409
+    assert "覆盖原文件" in response.text
+    assert "重新命名保存" in response.text
+    assert "重命名原文件并保存" in response.text
+    assert "打开文件所在目录" in response.text
+    assert 'name="output_stem" value="song (1)"' in response.text
+    assert (export_dir / "song.ogg").read_bytes() == b"old ogg"
+    assert (export_dir / "song.tja").read_bytes() == b"old tja"
+
+
+def test_web_export_chart_can_overwrite_existing_pair(tmp_path, monkeypatch):
+    client, job_id = _create_export_job(tmp_path, monkeypatch)
+    export_dir = tmp_path / "exported"
+    export_dir.mkdir()
+    (export_dir / "song.ogg").write_bytes(b"old ogg")
+    (export_dir / "song.tja").write_bytes(b"old tja")
+
+    response = client.post(
+        "/export-chart",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+            "conflict_action": "overwrite",
+        },
+    )
+
+    assert response.status_code == 200
+    assert (export_dir / "song.ogg").read_bytes() == b"fake ogg"
+    assert "WAVE:song.ogg" in (export_dir / "song.tja").read_text(
+        encoding=TJA_FILE_ENCODING
+    )
+
+
+def test_web_export_chart_can_save_with_new_name_and_updates_wave(tmp_path, monkeypatch):
+    client, job_id = _create_export_job(tmp_path, monkeypatch)
+    export_dir = tmp_path / "exported"
+    export_dir.mkdir()
+    (export_dir / "song.ogg").write_bytes(b"old ogg")
+    (export_dir / "song.tja").write_bytes(b"old tja")
+
+    response = client.post(
+        "/export-chart",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+            "conflict_action": "rename",
+            "output_stem": "song remix.tja",
+        },
+    )
+
+    assert response.status_code == 200
+    assert (export_dir / "song remix.ogg").read_bytes() == b"fake ogg"
+    renamed_tja = (export_dir / "song remix.tja").read_text(encoding=TJA_FILE_ENCODING)
+    assert "WAVE:song remix.ogg" in renamed_tja
+    assert "WAVE:song.ogg" not in renamed_tja
+    assert (export_dir / "song.ogg").read_bytes() == b"old ogg"
+    assert (export_dir / "song.tja").read_bytes() == b"old tja"
+
+
+def test_web_export_chart_rejects_invalid_renamed_stem(tmp_path, monkeypatch):
+    client, job_id = _create_export_job(tmp_path, monkeypatch)
+    export_dir = tmp_path / "exported"
+    export_dir.mkdir()
+
+    response = client.post(
+        "/export-chart",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+            "conflict_action": "rename",
+            "output_stem": "../outside",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "重新命名保存" in response.text
+    assert "invalid characters" in response.text
+    assert not (tmp_path / "outside.ogg").exists()
+    assert not (tmp_path / "outside.tja").exists()
+
+
+def test_web_export_chart_can_backup_existing_pair_before_saving(tmp_path, monkeypatch):
+    client, job_id = _create_export_job(tmp_path, monkeypatch)
+    export_dir = tmp_path / "exported"
+    export_dir.mkdir()
+    (export_dir / "song.ogg").write_bytes(b"old ogg")
+    (export_dir / "song.tja").write_bytes(b"old tja")
+    (export_dir / "song.ogg.bak").write_bytes(b"older ogg")
+    (export_dir / "song.tja.bak").write_bytes(b"older tja")
+
+    response = client.post(
+        "/export-chart",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+            "conflict_action": "backup",
+        },
+    )
+
+    assert response.status_code == 200
+    assert (export_dir / "song.ogg.bak.1").read_bytes() == b"old ogg"
+    assert (export_dir / "song.tja.bak.1").read_bytes() == b"old tja"
+    assert (export_dir / "song.ogg").read_bytes() == b"fake ogg"
+    assert "WAVE:song.ogg" in (export_dir / "song.tja").read_text(
+        encoding=TJA_FILE_ENCODING
+    )
+
+
+def test_export_backup_restores_original_pair_when_install_fails(tmp_path, monkeypatch):
+    _client, job_id = _create_export_job(tmp_path, monkeypatch)
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / job_id
+    analysis = SongAnalysis.model_validate_json(
+        (job_dir / "analysis.json").read_text(encoding="utf-8")
+    )
+    export_dir = tmp_path / "exported"
+    export_dir.mkdir()
+    old_ogg = export_dir / "song.ogg"
+    old_tja = export_dir / "song.tja"
+    old_ogg.write_bytes(b"old ogg")
+    old_tja.write_bytes(b"old tja")
+    real_replace = Path.replace
+
+    def fail_installing_tja(path, target):
+        target = Path(target)
+        if path.name.startswith(".song.tja.") and target == old_tja:
+            raise OSError("simulated TJA install failure")
+        return real_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", fail_installing_tja)
+
+    with pytest.raises(OSError, match="simulated TJA install failure"):
+        _export_chart_files(
+            tja_path=job_dir / "preview.tja",
+            analysis=analysis,
+            output_dir=export_dir,
+            conflict_action="backup",
+        )
+
+    assert old_ogg.read_bytes() == b"old ogg"
+    assert old_tja.read_bytes() == b"old tja"
+    assert not (export_dir / "song.ogg.bak").exists()
+    assert not (export_dir / "song.tja.bak").exists()
+    assert not list(export_dir.glob(".*.tmp"))
+
+
+def test_web_export_conflict_can_open_output_directory(tmp_path, monkeypatch):
+    client, job_id = _create_export_job(tmp_path, monkeypatch)
+    export_dir = tmp_path / "exported"
+    export_dir.mkdir()
+    opened = []
+    monkeypatch.setattr("tja_ai_chartgen.web._open_directory", opened.append)
+
+    response = client.post(
+        "/open-export-directory",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+        },
+    )
+
+    assert response.status_code == 200
+    assert opened == [export_dir]
+    assert "已打开文件所在目录" in response.text
+    assert "重新命名保存" in response.text
+
+
 def test_web_remote_mode_rejects_server_side_export(tmp_path, monkeypatch):
     _patch_web_audio_pipeline(monkeypatch)
     jobs_dir = tmp_path / "jobs"
@@ -208,6 +398,15 @@ def test_web_remote_mode_rejects_server_side_export(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 403
+    open_response = client.post(
+        "/open-export-directory",
+        data={
+            "job_id": job_id,
+            "tja_filename": "preview.tja",
+            "output_dir": str(export_dir),
+        },
+    )
+    assert open_response.status_code == 403
     assert not export_dir.exists()
 
 
@@ -1035,6 +1234,21 @@ def test_read_progress_retries_when_progress_file_is_temporarily_locked(tmp_path
 
     assert _read_progress(tmp_path)["status"] == "done"
     assert attempts["count"] == 1
+
+
+def _create_export_job(tmp_path, monkeypatch, *, remote_mode=False):
+    _patch_web_audio_pipeline(monkeypatch)
+    jobs_dir = tmp_path / "jobs"
+    client = TestClient(create_app(output_dir=jobs_dir, remote_mode=remote_mode))
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+    assert response.status_code == 200
+    job_id = next(jobs_dir.iterdir()).name
+    _wait_for_job_done(client, job_id)
+    return client, job_id
 
 
 def _wait_for_job_done(client, job_id, *, final_status="done"):

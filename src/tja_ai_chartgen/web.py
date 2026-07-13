@@ -482,6 +482,18 @@ form[data-loading="true"] button[type="submit"]::after {
   font-size: 0.92rem;
 }
 
+.conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.conflict-actions form {
+  margin: 0;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -2026,6 +2038,8 @@ def create_app(
         job_id: Annotated[str, Form()],
         tja_filename: Annotated[str, Form()],
         output_dir: Annotated[str, Form()],
+        conflict_action: Annotated[str, Form()] = "error",
+        output_stem: Annotated[str, Form()] = "",
     ) -> HTMLResponse:
         if app.state.remote_mode:
             return HTMLResponse(
@@ -2036,13 +2050,34 @@ def create_app(
                 status_code=403,
             )
         try:
-            job_dir = _job_dir(app.state.output_dir, job_id)
-            analysis = SongAnalysis.model_validate_json(
-                (job_dir / "analysis.json").read_text(encoding="utf-8")
+            job_dir, analysis, tja_path = _load_export_context(
+                app.state.output_dir, job_id, tja_filename
             )
-            tja_path = _job_file_path(job_dir, tja_filename)
+            target_dir = _parse_export_output_dir(output_dir)
             tja_text = read_tja_text(tja_path)
-            _export_chart_files(tja_path=tja_path, analysis=analysis, output_dir=Path(output_dir))
+            try:
+                export_ogg_path, export_tja_path = _export_chart_files(
+                    tja_path=tja_path,
+                    analysis=analysis,
+                    output_dir=target_dir,
+                    conflict_action=conflict_action,
+                    output_stem=output_stem,
+                )
+            except (FileExistsError, ValueError) as error:
+                if isinstance(error, FileExistsError) or conflict_action == "rename":
+                    body = _export_conflict_panel(
+                        job_id=job_id,
+                        tja_filename=tja_filename,
+                        analysis=analysis,
+                        output_dir=target_dir,
+                        message=str(error),
+                        requested_stem=output_stem,
+                    )
+                    return HTMLResponse(
+                        _page("Export target exists", body),
+                        status_code=409 if isinstance(error, FileExistsError) else 400,
+                    )
+                raise
             _parsed_analysis, chart_bars, course, level = _parse_tja_preview(
                 tja_text,
                 audio_file=Path(analysis.audio_file),
@@ -2050,7 +2085,7 @@ def create_app(
             )
             body = "".join(
                 [
-                    _export_success_notice(Path(output_dir), Path(analysis.ogg_file).stem),
+                    _export_success_notice(export_ogg_path, export_tja_path),
                     _result_panel(
                         job_id=job_id,
                         output_path=tja_path,
@@ -2064,9 +2099,44 @@ def create_app(
                 ]
             )
             return HTMLResponse(_page("Exported chart", body))
-        except (FileExistsError, FileNotFoundError, ValidationError, ValueError) as error:
+        except (OSError, ValidationError, ValueError) as error:
             return HTMLResponse(
                 _page("Export failed", _error_notice(str(error))),
+                status_code=400,
+            )
+
+    @app.post("/open-export-directory", response_class=HTMLResponse)
+    async def open_export_directory(
+        job_id: Annotated[str, Form()],
+        tja_filename: Annotated[str, Form()],
+        output_dir: Annotated[str, Form()],
+    ) -> HTMLResponse:
+        if app.state.remote_mode:
+            return HTMLResponse(
+                _page(
+                    "Open directory forbidden",
+                    _error_notice("Opening server directories is disabled in remote mode."),
+                ),
+                status_code=403,
+            )
+        try:
+            _job_dir, analysis, _tja_path = _load_export_context(
+                app.state.output_dir, job_id, tja_filename
+            )
+            target_dir = _parse_export_output_dir(output_dir)
+            _open_directory(target_dir)
+            body = _export_conflict_panel(
+                job_id=job_id,
+                tja_filename=tja_filename,
+                analysis=analysis,
+                output_dir=target_dir,
+                message="目标目录中已有同名文件，请选择处理方式。",
+                notice="已打开文件所在目录。",
+            )
+            return HTMLResponse(_page("Export target exists", body))
+        except (FileNotFoundError, OSError, ValidationError, ValueError) as error:
+            return HTMLResponse(
+                _page("Open directory failed", _error_notice(str(error))),
                 status_code=400,
             )
 
@@ -2468,9 +2538,35 @@ def _job_file_path(job_dir: Path, filename: str) -> Path:
     return path
 
 
-def _export_chart_files(*, tja_path: Path, analysis: SongAnalysis, output_dir: Path) -> tuple[Path, Path]:
+def _parse_export_output_dir(value: str) -> Path:
+    if not value.strip():
+        raise ValueError("Output directory is required")
+    return Path(value)
+
+
+def _load_export_context(
+    jobs_dir: Path, job_id: str, tja_filename: str
+) -> tuple[Path, SongAnalysis, Path]:
+    job_dir = _job_dir(jobs_dir, job_id)
+    analysis = SongAnalysis.model_validate_json(
+        (job_dir / "analysis.json").read_text(encoding="utf-8")
+    )
+    return job_dir, analysis, _job_file_path(job_dir, tja_filename)
+
+
+def _export_chart_files(
+    *,
+    tja_path: Path,
+    analysis: SongAnalysis,
+    output_dir: Path,
+    conflict_action: str = "error",
+    output_stem: str = "",
+) -> tuple[Path, Path]:
     if not str(output_dir).strip():
         raise ValueError("Output directory is required")
+    if conflict_action not in {"error", "overwrite", "rename", "backup"}:
+        raise ValueError(f"Unsupported export conflict action: {conflict_action}")
+
     ogg_path = Path(analysis.ogg_file)
     if not ogg_path.is_file():
         raise FileNotFoundError(f"OGG file not found: {ogg_path}")
@@ -2478,17 +2574,126 @@ def _export_chart_files(*, tja_path: Path, analysis: SongAnalysis, output_dir: P
         raise ValueError("Only .tja files can be exported")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_stem = ogg_path.stem
-    export_ogg_path = output_dir / f"{output_stem}.ogg"
-    export_tja_path = output_dir / f"{output_stem}.tja"
-    existing_paths = [path for path in (export_ogg_path, export_tja_path) if path.exists()]
-    if existing_paths:
+    stem = (
+        _validate_export_stem(output_stem)
+        if conflict_action == "rename"
+        else ogg_path.stem
+    )
+    export_ogg_path, export_tja_path = _export_target_paths(output_dir, stem)
+    existing_paths = _existing_export_paths(export_ogg_path, export_tja_path)
+    if existing_paths and conflict_action in {"error", "rename"}:
         existing = ", ".join(str(path) for path in existing_paths)
         raise FileExistsError(f"Export target already exists: {existing}")
 
-    copy2(ogg_path, export_ogg_path)
-    copy2(tja_path, export_tja_path)
-    return export_ogg_path, export_tja_path
+    temp_ogg_path = output_dir / f".{export_ogg_path.name}.{uuid4().hex}.tmp"
+    temp_tja_path = output_dir / f".{export_tja_path.name}.{uuid4().hex}.tmp"
+    backups: list[tuple[Path, Path]] = []
+    installed: list[Path] = []
+    try:
+        copy2(ogg_path, temp_ogg_path)
+        tja_text = _set_tja_wave(read_tja_text(tja_path), export_ogg_path.name)
+        write_tja_text(temp_tja_path, tja_text)
+
+        if conflict_action == "backup":
+            for target_path in existing_paths:
+                backup_path = _next_backup_path(target_path)
+                target_path.replace(backup_path)
+                backups.append((target_path, backup_path))
+
+        temp_ogg_path.replace(export_ogg_path)
+        installed.append(export_ogg_path)
+        temp_tja_path.replace(export_tja_path)
+        installed.append(export_tja_path)
+        return export_ogg_path, export_tja_path
+    except Exception:
+        if conflict_action == "backup":
+            for installed_path in reversed(installed):
+                installed_path.unlink(missing_ok=True)
+            for target_path, backup_path in reversed(backups):
+                if backup_path.exists():
+                    backup_path.replace(target_path)
+        elif conflict_action != "overwrite":
+            for installed_path in reversed(installed):
+                installed_path.unlink(missing_ok=True)
+        raise
+    finally:
+        temp_ogg_path.unlink(missing_ok=True)
+        temp_tja_path.unlink(missing_ok=True)
+
+
+def _export_target_paths(output_dir: Path, stem: str) -> tuple[Path, Path]:
+    return output_dir / f"{stem}.ogg", output_dir / f"{stem}.tja"
+
+
+def _existing_export_paths(ogg_path: Path, tja_path: Path) -> list[Path]:
+    return [path for path in (ogg_path, tja_path) if path.exists()]
+
+
+def _validate_export_stem(value: str) -> str:
+    stem = value.strip()
+    for suffix in (".ogg", ".tja"):
+        if stem.lower().endswith(suffix):
+            stem = stem[: -len(suffix)].rstrip()
+            break
+    if not stem or stem in {".", ".."}:
+        raise ValueError("New export filename is required")
+    if any(character in stem for character in '<>:"/\\|?*') or any(
+        ord(character) < 32 for character in stem
+    ):
+        raise ValueError("New export filename contains invalid characters")
+    if stem.endswith((".", " ")):
+        raise ValueError("New export filename cannot end with a dot or space")
+    return stem
+
+
+def _suggest_export_stem(output_dir: Path, base_stem: str) -> str:
+    base_stem = _validate_export_stem(base_stem)
+    index = 1
+    while True:
+        candidate = f"{base_stem} ({index})"
+        paths = _export_target_paths(output_dir, candidate)
+        if not _existing_export_paths(*paths):
+            return candidate
+        index += 1
+
+
+def _next_backup_path(path: Path) -> Path:
+    candidate = path.with_name(f"{path.name}.bak")
+    index = 1
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}.bak.{index}")
+        index += 1
+    return candidate
+
+
+def _set_tja_wave(tja_text: str, wave_filename: str) -> str:
+    lines = tja_text.splitlines()
+    wave_line = f"WAVE:{wave_filename}"
+    for index, line in enumerate(lines):
+        if line.upper().startswith("WAVE:"):
+            lines[index] = wave_line
+            break
+    else:
+        insert_at = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if line.upper().startswith(("OFFSET:", "COURSE:", "#START"))
+            ),
+            len(lines),
+        )
+        lines.insert(insert_at, wave_line)
+    return "\n".join(lines) + "\n"
+
+
+def _open_directory(path: Path) -> None:
+    resolved = path.resolve(strict=True)
+    if not resolved.is_dir():
+        raise NotADirectoryError(f"Export directory is not a directory: {resolved}")
+    startfile = getattr(os, "startfile", None)
+    if startfile is None:
+        raise OSError("Opening the export directory is only supported on Windows")
+    startfile(str(resolved))
 
 
 def _select_bars(analysis: SongAnalysis, start_bar: int, end_bar: int):
@@ -3278,11 +3483,91 @@ def _export_form(job_id: str, output_path: Path, analysis: SongAnalysis) -> str:
 """
 
 
-def _export_success_notice(output_dir: Path, output_stem: str) -> str:
+def _export_conflict_panel(
+    *,
+    job_id: str,
+    tja_filename: str,
+    analysis: SongAnalysis,
+    output_dir: Path,
+    message: str,
+    requested_stem: str = "",
+    notice: str = "",
+) -> str:
+    original_stem = Path(analysis.ogg_file).stem
+    candidate_base = requested_stem.strip() or original_stem
+    try:
+        candidate_base = _validate_export_stem(candidate_base)
+    except ValueError:
+        candidate_base = original_stem
+    suggestion = _suggest_export_stem(output_dir, candidate_base)
+    rename_value = requested_stem.strip() or suggestion
+    hidden_fields = f"""
+      <input name="job_id" type="hidden" value="{_escape(job_id)}">
+      <input name="tja_filename" type="hidden" value="{_escape(tja_filename)}">
+      <input name="output_dir" type="hidden" value="{_escape(str(output_dir))}">
+    """
+    notice_html = f'<p class="notice">{_escape(notice)}</p>' if notice else ""
+    return f"""
+<section class="stack" aria-labelledby="export-conflict-heading">
+  <section class="panel">
+    <p class="eyebrow">发现同名文件</p>
+    <h1 id="export-conflict-heading">请选择保存方式</h1>
+    {notice_html}
+    <p class="notice error">{_escape(message)}</p>
+    <p class="lede">默认不会覆盖现有文件。下面的操作只处理 <code>{_escape(original_stem)}.ogg</code> 和 <code>{_escape(original_stem)}.tja</code> 这一对导出文件。</p>
+  </section>
+  <section class="panel" aria-labelledby="rename-export-heading">
+    <p class="eyebrow">保留现有文件</p>
+    <h2 id="rename-export-heading">使用新名称保存</h2>
+    <form action="/export-chart" method="post">
+      {hidden_fields}
+      <input name="conflict_action" type="hidden" value="rename">
+      <div class="form-grid">
+        <label class="field field-wide">
+          新文件名
+          <input name="output_stem" value="{_escape(rename_value)}" required>
+          <span class="field-hint">OGG、TJA 和 TJA 内的 WAVE 将统一使用该名称。下一个可用名称：<code>{_escape(suggestion)}</code></span>
+        </label>
+      </div>
+      <div class="helper-strip">
+        <button type="submit" data-loading-text="保存中">重新命名保存</button>
+      </div>
+    </form>
+  </section>
+  <section class="panel" aria-labelledby="existing-export-heading">
+    <p class="eyebrow">处理现有文件</p>
+    <h2 id="existing-export-heading">覆盖或备份后保存</h2>
+    <div class="conflict-actions">
+      <form action="/export-chart" method="post">
+        {hidden_fields}
+        <input name="conflict_action" type="hidden" value="overwrite">
+        <button type="submit" data-loading-text="覆盖中">覆盖原文件</button>
+      </form>
+      <form action="/export-chart" method="post">
+        {hidden_fields}
+        <input name="conflict_action" type="hidden" value="backup">
+        <button type="submit" data-loading-text="备份中">重命名原文件并保存</button>
+      </form>
+      <form action="/open-export-directory" method="post">
+        {hidden_fields}
+        <button type="submit" data-loading-text="打开中">打开文件所在目录</button>
+      </form>
+    </div>
+    <p class="field-hint">“重命名原文件并保存”会把旧文件改为 <code>.bak</code>；已有备份时使用 <code>.bak.1</code>、<code>.bak.2</code>。</p>
+  </section>
+  <div class="helper-strip">
+    <a class="button-link" href="/jobs/{_escape(job_id)}/result">返回当前预览</a>
+    <a class="button-link" href="/">返回上传页面</a>
+  </div>
+</section>
+"""
+
+
+def _export_success_notice(export_ogg_path: Path, export_tja_path: Path) -> str:
     return (
         '<p class="notice">已保存：'
-        f'<code>{_escape(str(output_dir / f"{output_stem}.ogg"))}</code> 和 '
-        f'<code>{_escape(str(output_dir / f"{output_stem}.tja"))}</code></p>'
+        f'<code>{_escape(str(export_ogg_path))}</code> 和 '
+        f'<code>{_escape(str(export_tja_path))}</code></p>'
     )
 
 
