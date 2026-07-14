@@ -357,6 +357,16 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 - 同一环境重复运行结果稳定；
 - 不需要真实歌曲标题、路径、原始音频或人工标签进入仓库。
 
+## Phase 0 任务划分列表
+
+- [ ] 6.1 盘点并复用现有 fixture
+- [ ] 6.2 建立 ground truth schema，并让 fixture 同步生成事件 JSON
+- [ ] 6.4 建立基础 onset、beat 与 downbeat benchmark
+- [ ] 6.3 扩展切分、弱起、频带攻击、fill、3/4 和 6/8 fixture
+- [ ] 6.4 完善全部 fixture 的自动 benchmark 与基线报告
+- [ ] 6.5 建立谱面对齐 baseline
+- [ ] 6.6 执行 Phase 0 阶段验收
+
 ---
 
 # Phase 1：建立统一节奏显著性
@@ -492,6 +502,16 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 - 消费者不再各自重复实现相同的 onset/spectral 融合；
 - AI payload 增量保持紧凑。
 
+## Phase 1 任务划分列表
+
+- [ ] 7.1 定义 `RhythmicSalience` 数据模型与版本
+- [ ] 7.2 统一 onset、activity、spectral、beat 的 canonical 时间轴
+- [ ] 7.3 定义并实现 hit salience
+- [ ] 7.4 定义并实现 accent salience
+- [ ] 7.5 定义并实现 don/ka 软倾向
+- [ ] 7.6 增加绝对门控、置信度和稳定 reason
+- [ ] 7.7 执行 Phase 1 阶段验收
+
 ---
 
 # Phase 2：让普通 note 跟随节奏显著性
@@ -584,6 +604,15 @@ AI payload 建议发送：
 - 16/24/48 和 12/18/36 的等价节奏保持一致；
 - 规则与 AI 结果使用同一对齐指标。
 
+## Phase 2 任务划分列表
+
+- [ ] 8.1 建立 salience 候选排序与可表达性过滤
+- [ ] 8.2 让规则普通 note 优先跟随可靠 salience
+- [ ] 8.3 限制无证据补点和连续弱证据铺点
+- [ ] 8.4 全程验证 course、density、NPS、occupancy 与静音约束
+- [ ] 8.5 将紧凑 salience 输入接入 AI prompt 与校验
+- [ ] 8.6 执行 Phase 2 阶段验收
+
 ---
 
 # Phase 3：改进重音、咚咔和 fill 响应
@@ -657,6 +686,14 @@ AI payload 建议发送：
 - fill burst fixture 能命中合理后半小节；
 - 无 burst 的 phrase end 不机械生成 fill；
 - 特殊音符数量和持续时间保持可解释。
+
+## Phase 3 任务划分列表
+
+- [ ] 9.1 将 downbeat、强 onset 和结构变化统一为重音候选
+- [ ] 9.2 使用频带与 percussive 证据校准 don/ka 软倾向
+- [ ] 9.3 建立纯节奏 fill burst 检测
+- [ ] 9.4 让滚奏和气球响应可靠 burst salience
+- [ ] 9.5 执行 Phase 3 阶段验收
 
 ---
 
@@ -760,6 +797,15 @@ class TempoMeterCandidate(BaseModel):
 - `analysis.json` 能解释最终决策；
 - 缺少 BeatNet 依赖不影响默认分析；
 - fixture benchmark 覆盖 3/4、4/4、6/8、弱起和半速/倍速模式。
+
+## Phase 4 任务划分列表
+
+- [ ] 10.1 将 librosa、onset-grid 和 BeatNet 统一为节拍候选模型
+- [ ] 10.2 定义 onset、downbeat、meter、稳定性和速度别名证据
+- [ ] 10.3 实现候选评分、拒绝、择优和 ambiguity 决策
+- [ ] 10.4 支持保留原 BPM、仅采用 BeatNet meter/downbeat
+- [ ] 10.5 增加固定 BPM 拟合误差与疑似变速诊断
+- [ ] 10.6 执行 Phase 4 阶段验收
 
 ---
 
@@ -880,6 +926,15 @@ stem-role-v1
 - AI payload 不再依赖具体乐器 taxonomy；
 - 远程 Web 仍需管理员显式允许重型分析。
 
+## Phase 5 任务划分列表
+
+- [x] 11.1 复用现有 vocals、drums、bass、other activity/onset
+- [ ] 11.2 定义只需要 `htdemucs` 的 stem-role 轻量模式
+- [ ] 11.3 将 stem activity/onset 接入 `RhythmicSalience`
+- [ ] 11.4 调整 complete、partial、fallback 与旧 instrument-v1 兼容语义
+- [ ] 11.5 验证模型准备、离线加载、设备和性能成本
+- [ ] 11.6 执行 Phase 5 阶段验收
+
 ---
 
 # Phase 6：建立谱面对齐质量报告与门控
@@ -983,6 +1038,16 @@ stem-role-v1
 - 至少完成一次修改前后 A/B 报告；
 - 只有经过校准的少量指标进入 AI repair；
 - QualityReport 不引入难以解释的统一总分。
+
+## Phase 6 任务划分列表
+
+- [ ] 12.1 实现 `note_onset_alignment`
+- [ ] 12.2 实现强 onset 与 downbeat 响应指标
+- [ ] 12.3 实现 `unsupported_note_rate` 与静音违规指标
+- [ ] 12.4 实现 fill burst 对齐和节奏量化误差指标
+- [ ] 12.5 使用全部 fixture 校准 report-only 指标
+- [ ] 12.6 评审并选择少量指标进入 AI repair
+- [ ] 12.7 执行 Phase 6 阶段验收
 
 ---
 
@@ -1092,6 +1157,16 @@ fallback 使用：
 - AI payload 比 instrument-v1 路线更紧凑；
 - 旧 analysis/config/sidecar 继续兼容读取；
 - CLI/Web notice 与实际启用能力一致。
+
+## Phase 7 任务划分列表
+
+- [ ] 13.5 先锁定旧 instrument-v1、analysis、config 和 sidecar 兼容行为
+- [ ] 13.1 让 structure 消费统一 salience 与可选 stem-role
+- [ ] 13.2 让 fallback 使用 hit、accent、don/ka 和 burst salience
+- [ ] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
+- [ ] 13.4 将 QualityReport 主线收敛到节奏对齐指标
+- [ ] 13.6 调整 CLI/Web 开关、进度、notice 和文档
+- [ ] 13.7 执行 Phase 7 阶段验收
 
 ---
 
