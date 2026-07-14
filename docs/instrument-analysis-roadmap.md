@@ -246,15 +246,15 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
 | 6.1 盘点并复用现有 fixture | 已完成 | 已盘点 9 个由标准库脚本确定性生成的 WAV，明确其节拍、密度、resolution、结构和边缘静音复用范围，并记录后续缺口。 | 2026-07-15：`pytest tests/test_audio_pipeline_integration.py -v`，10 passed。 |
-| 6.2 新增节奏事件 ground truth | 已完成 | 已建立 schema version 1，为 9 个 WAV 同步生成事件 JSON，持久化 BPM、拍号、时长、onset、强 onset、beat、downbeat、静音区、频带事件、fill 区间和结构段落。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`，2 passed；确定性重建后的 WAV、schema 和事件 JSON 与仓库文件逐字节一致。 |
-| 6.3 扩展合成节奏类型 | 未开始 | 尚未加入切分、弱起、频带攻击和明确 fill burst fixture。 | 尚未执行。 |
-| 6.4 建立音频分析 benchmark | 部分完成 | 已建立 `audio-alignment-v1` 基础 benchmark，统一输出 onset、强 onset、beat、downbeat、BPM、拍号、first downbeat 和静音误检指标，并持久化 9 个现有 fixture 的修改前 baseline；resolution 与 6.3 新增 fixture 尚待接入。 | 2026-07-15：`python tools/benchmark_audio_fixtures.py`；`pytest tests/test_audio_benchmark.py -v`，5 passed。 |
+| 6.2 新增节奏事件 ground truth | 已完成 | 已建立 schema version 1，为当前 17 个 WAV 同步生成事件 JSON，持久化 BPM、拍号、时长、onset、强 onset、beat、downbeat、静音区、频带事件、fill 区间和结构段落。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`；确定性重建后的 WAV、schema 和事件 JSON 与仓库文件逐字节一致。 |
+| 6.3 扩展合成节奏类型 | 已完成 | 新增 8 个 WAV，覆盖切分、真正弱起、低频主拍/高频反拍、持续 harmonic 背景、短 fill burst、3/4、6/8 和半速/倍速歧义；fixture 总数增至 17。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`，4 passed；完整重建逐字节一致。 |
+| 6.4 建立音频分析 benchmark | 部分完成 | 已建立 `audio-alignment-v1` 基础 benchmark，统一输出 onset、强 onset、beat、downbeat、BPM、拍号、first downbeat 和静音误检指标，并将 baseline 刷新到全部 17 个 fixture；resolution 指标与完整报告仍待 6.4b 完成。 | 2026-07-15：`python tools/benchmark_audio_fixtures.py`；`pytest tests/test_audio_benchmark.py -v`，5 passed。 |
 | 6.5 建立谱面对齐 baseline | 部分完成 | 已有部分 drum、bass、accent、structure 和 resolution 指标；尚缺统一 note alignment 指标。 | 现有 QualityReport 测试可复用。 |
 | 6.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
 ## 6.1 现有 fixture 盘点与复用结论
 
-现有 9 个 WAV 全部由 `tests/fixtures/audio/rebuild_click_fixtures.py` 仅使用 Python 标准库确定性生成，可继续作为 Phase 0 基线，不需要引入真实歌曲或第三方录音。
+6.1 盘点时已有的 9 个 WAV 全部由 `tests/fixtures/audio/rebuild_click_fixtures.py` 仅使用 Python 标准库确定性生成，可继续作为 Phase 0 基线，不需要引入真实歌曲或第三方录音。
 
 | Fixture | 已知模式 | 当前覆盖 | Phase 0 复用方向 |
 | --- | --- | --- | --- |
@@ -270,7 +270,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 现有复用入口集中在 `tests/test_audio_pipeline_integration.py`：基础点击轨覆盖完整真实音频流水线，sparse/dense 覆盖四难度规则生成与 QualityReport，straight/triplet/mixed 覆盖 ResolutionPlan，structure fixture 覆盖结构角色，transient fixture 覆盖首部静音保护。`tests/test_resolution.py` 中的内存事件 fixture 继续补充 3/4、6/8 和 phrase-stable resolution 单元测试，但它们不是可用于真实音频 benchmark 的 WAV。
 
-本次盘点确认的音频覆盖缺口为：切分、真正的弱起、低频主拍/高频反拍、持续 harmonic 背景、明确 fill burst、3/4 WAV、6/8 WAV 和半速/倍速歧义模式。这些缺口留给 6.3，不在 6.1 重复扩展音频集；持久化 ground truth JSON 已由 6.2 补齐。
+6.1 盘点确认的持久化 ground truth 缺口已由 6.2 补齐；切分、真正弱起、低频主拍/高频反拍、持续 harmonic 背景、明确 fill burst、3/4 WAV、6/8 WAV 和半速/倍速歧义模式已由 6.3 补齐。当前共有 17 个可确定性重建的 WAV。
 
 ## 6.2 Fixture ground truth 格式
 
@@ -296,29 +296,28 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 }
 ```
 
-时间字段统一使用相对 WAV 起点的秒数。`onsets` 表示实际合成瞬态，`beats` 和 `downbeats` 表示理论节拍网格，二者不得因某一拍没有声音而混用；`strong_onsets` 当前记录合成器明确加重的 downbeat。尚无对应证据的频带事件和 fill 区间必须写为空数组，不使用推测值。`transient_noise_intro_120` 的低电平毛刺仍位于语义静音区内，供误检指标使用；`structure_build_up_120` 额外记录 stable、build_up、peak 和 drop 段落。
+时间字段统一使用相对 WAV 起点的秒数。`onsets` 表示实际合成瞬态，`beats` 和 `downbeats` 表示理论节拍网格，二者不得因某一拍没有声音而混用；`strong_onsets` 记录合成器明确加重的事件，通常包含 downbeat，也可包含 6/8 的第二个复拍或半速/倍速歧义 fixture 的半小节重音。尚无对应证据的频带事件和 fill 区间必须写为空数组，不使用推测值。`transient_noise_intro_120` 的低电平毛刺仍位于语义静音区内，供误检指标使用；`structure_build_up_120` 额外记录 stable、build_up、peak 和 drop 段落。
 
-`rebuild_click_fixtures.py` 现在从同一组 `FixtureSpec` 同时生成 WAV 和事件 JSON，默认完整重建；`--ground-truth-only` 只刷新 schema 与事件文件，`--output-dir` 可在临时目录执行无副作用的确定性校验。`tests/test_audio_fixture_ground_truth.py` 检查字段契约、时间范围、事件包含关系、音频引用，并在临时目录完整重建后逐字节比较全部 WAV、schema 和事件 JSON，防止音频与标注漂移。
+`rebuild_click_fixtures.py` 现在从同一组 `FixtureSpec` 同时生成 WAV 和事件 JSON，默认完整重建；`--ground-truth-only` 只刷新 schema 与事件文件，`--output-dir` 可在临时目录执行无副作用的确定性校验，重复使用 `--fixture <name.wav>` 可只生成指定 fixture。`tests/test_audio_fixture_ground_truth.py` 检查字段契约、时间范围、事件包含关系、音频引用，并在临时目录完整重建后逐字节比较全部 WAV、schema 和事件 JSON，防止音频与标注漂移。
 
 ## 6.3 新增 fixture 类型
 
-至少覆盖：
+已覆盖：
 
-- 主拍四分音符；
-- 八分音符；
-- 十六分音符；
-- 三连音；
-- 直拍与三连音混合；
-- 切分音；
-- 弱起；
-- 低频主拍与高频反拍；
-- 持续 harmonic 背景加稀疏 percussive onset；
-- 短 fill burst；
-- 静音和低电平毛刺；
-- build-up → peak → drop；
-- 3/4；
-- 6/8；
-- 半速/倍速容易混淆的模式。
+- [x] 主拍四分音符、八分音符和十六分音符；
+- [x] 三连音，以及直拍与三连音混合；
+- [x] 切分音：`syncopated_120.wav`；
+- [x] 真正弱起：`pickup_120.wav` 的首个 onset 早于 first downbeat；
+- [x] 低频主拍与高频反拍：`band_attacks_120.wav`，ground truth 分别写入 `low_band_onsets` 和 `high_band_onsets`；
+- [x] 持续 harmonic 背景加稀疏 percussive onset：`harmonic_sparse_120.wav`；
+- [x] 短 fill burst：`fill_burst_120.wav`，两个末拍 burst 写入 `fill_ranges`；
+- [x] 静音和低电平毛刺：`transient_noise_intro_120.wav`；
+- [x] build-up → peak → drop：`structure_build_up_120.wav`；
+- [x] 3/4：`meter_3_4_120.wav`；
+- [x] 6/8：`meter_6_8_120.wav`，每小节 6 个八分 onset、3 个四分音符 BPM 基准 beat，并标记两个复拍重音；
+- [x] 半速/倍速容易混淆的模式：`tempo_ambiguity_120.wav`，半小节重音明显、四分音符间拍较弱。
+
+频带 fixture 使用可配置频率和振幅的短衰减点击；harmonic fixture 在不改变已知 percussive onset 的前提下叠加带淡入淡出的 220 Hz/330 Hz 持续音。旧 fixture 继续按原参数生成，完整重建测试同时比较 17 个 WAV 和事件 JSON，确认扩展生成器没有改变既有音频字节。
 
 ## 6.4 自动指标
 
@@ -326,7 +325,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 报告写入 `tests/fixtures/audio/audio_benchmark_baseline.json`，包含每个 fixture 的 analyzer、BPM/拍号判断、事件计数、precision、recall、F1、平均/最大绝对时间误差，以及全体 fixture 的 micro aggregate。默认分析没有独立 downbeat 输出时，benchmark 按估计 offset、四分音符 BPM 和拍号推导 downbeat，并把来源记录为 `derived-offset-meter`；BeatNet 提供 downbeat 时记录为 `analyzer`，避免把两类结果混为一谈。
 
-首份 9-fixture baseline 的 onset F1 为 0.993789、beat F1 为 0.780952、downbeat F1 为 0.381818，平均 BPM 绝对误差为 10.495444，静音区 onset 误检为 2。该结果只用于修改前后 A/B 和回归趋势，不作为跨 librosa/平台版本必须逐值相等的 CI 阈值；CI 只校验报告 schema、fixture 完整性和指标范围。
+扩展后的 17-fixture baseline 的 onset F1 为 0.996421、beat F1 为 0.805740、downbeat F1 为 0.418033，平均 BPM 绝对误差为 8.008412，meter accuracy 为 0.882353，静音区 onset 误检为 2。该结果只用于修改前后 A/B 和回归趋势，不作为跨 librosa/平台版本必须逐值相等的 CI 阈值；CI 只校验报告 schema、fixture 完整性和指标范围。
 
 ### Onset
 
@@ -389,7 +388,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 - [x] 6.1 盘点并复用现有 fixture
 - [x] 6.2 建立 ground truth schema，并让 fixture 同步生成事件 JSON
 - [x] 6.4a 建立基础 onset、beat 与 downbeat benchmark
-- [ ] 6.3 扩展切分、弱起、频带攻击、fill、3/4 和 6/8 fixture
+- [x] 6.3 扩展切分、弱起、频带攻击、fill、3/4 和 6/8 fixture
 - [ ] 6.4b 完善全部 fixture 的自动 benchmark 与基线报告
 - [ ] 6.5 建立谱面对齐 baseline
 - [ ] 6.6 执行 Phase 0 阶段验收

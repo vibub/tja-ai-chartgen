@@ -132,7 +132,7 @@ def test_committed_audio_benchmark_baseline_covers_all_ground_truth_files():
     assert baseline["benchmark_version"] == "audio-alignment-v1"
     assert baseline["fixture_ground_truth_schema_version"] == 1
     assert baseline["settings"]["use_beatnet"] is False
-    assert baseline["fixture_count"] == len(event_files) == 9
+    assert baseline["fixture_count"] == len(event_files) == 17
     assert {item["audio"] for item in baseline["fixtures"]} == {
         path.name.removesuffix(".events.json") + ".wav" for path in event_files
     }
