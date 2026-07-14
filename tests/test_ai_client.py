@@ -24,6 +24,7 @@ from tja_ai_chartgen.tja.model import (
     BarFeature,
     BarStructureFeature,
     ChartBar,
+    GridFeature,
     InstrumentBarFeature,
     InstrumentGridFeature,
     PhraseFeature,
@@ -137,22 +138,59 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density_policy"]["quality_average_min_per_16_grid_bar"] == 6.5
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
-    assert payload["schema"] == "tja-ai-chartgen-compact-v2"
+    assert payload["schema"] == "tja-ai-chartgen-compact-v3"
     assert len(payload["reference_windows"]) == 3
     assert "reference_window_bar_columns" in payload["legend"]
-    assert payload["bars"][0]["canonical_grids_per_bar"] == 48
-    assert payload["bars"][0]["output_resolution"] == 16
-    assert payload["bars"][0]["allowed_tick_step"] == 3
-    assert "grid_features" in payload["bars"][0]
-    assert payload["legend"]["grid_feature_columns"] == [
-        "grid",
-        "onset",
-        "accent",
-        "beat",
-        "downbeat",
-        "strength",
-        "activity",
+    bar_columns = payload["legend"]["bar_columns"]
+    bar = payload["bars"][0]
+    assert bar[bar_columns.index("canonical_grids_per_bar")] == 48
+    assert bar[bar_columns.index("output_resolution")] == 16
+    assert bar[bar_columns.index("allowed_tick_step")] == 3
+    assert bar[bar_columns.index("onset_events")] == [
+        [0, None],
+        [12, None],
+        [24, None],
+        [36, None],
     ]
+    assert bar[bar_columns.index("activity_grids")] == []
+    assert bar[bar_columns.index("beat_events")] == [[0, 1], [12, 2], [24, 3], [36, 4]]
+    assert payload["legend"]["onset_event_columns"] == ["grid", "strength"]
+    assert payload["legend"]["beat_event_columns"] == ["grid", "beat"]
+
+
+def test_compact_bar_preserves_grid_audio_detail_without_dense_feature_rows():
+    grid_features = [
+        GridFeature(
+            grid=grid,
+            onset=grid in {0, 18},
+            accent=grid == 0,
+            beat={0: 1, 12: 2, 24: 3, 36: 4}.get(grid),
+            downbeat=grid == 0,
+            strength=0.875 if grid == 18 else (0.625 if grid == 0 else grid / 100),
+            activity=grid / 100,
+        )
+        for grid in range(48)
+    ]
+    bar = _analysis().bars[0].model_copy(
+        update={
+            "onset_grids": [0, 18],
+            "accent_grids": [0],
+            "activity_grids": [grid / 100 for grid in range(48)],
+            "grid_features": grid_features,
+        }
+    )
+    analysis = _analysis().model_copy(update={"bars": [bar]})
+
+    payload = build_chart_generation_payload(analysis, "Oni", 10, "technical")
+
+    columns = payload["legend"]["bar_columns"]
+    compact_bar = payload["bars"][0]
+    assert compact_bar[columns.index("onset_events")] == [[0, 0.625], [18, 0.875]]
+    assert compact_bar[columns.index("accent_grids")] == [0]
+    assert compact_bar[columns.index("activity_grids")] == [grid / 100 for grid in range(48)]
+    assert compact_bar[columns.index("beat_events")] == [[0, 1], [12, 2], [24, 3], [36, 4]]
+    assert compact_bar[columns.index("downbeat_grid")] == 0
+    assert "grid_feature_columns" not in payload["legend"]
 
 
 def test_build_chart_generation_payload_includes_compact_structure_plan():
@@ -265,7 +303,10 @@ def test_build_chart_generation_payload_includes_compact_spectral_semantics():
         "high_onset",
         "spectral_flux",
     ]
-    assert payload["bars"][0]["spectral_events"] == [[12, 0.8, 0.0, 0.2, 0.9]]
+    bar_columns = payload["legend"]["bar_columns"]
+    assert payload["bars"][0][bar_columns.index("spectral_events")] == [
+        [12, 0.8, 0.0, 0.2, 0.9]
+    ]
 
 
 def test_build_chart_generation_payload_includes_compact_instrument_semantics():
@@ -320,7 +361,10 @@ def test_build_chart_generation_payload_includes_compact_instrument_semantics():
         "bass_onset",
         "accompaniment_onset",
     ]
-    assert payload["bars"][0]["instrument_events"] == [[12, 0.3, 0.9, 0.6, 0.4]]
+    bar_columns = payload["legend"]["bar_columns"]
+    assert payload["bars"][0][bar_columns.index("instrument_events")] == [
+        [12, 0.3, 0.9, 0.6, 0.4]
+    ]
 
 
 def test_build_chart_generation_payload_can_include_static_reference_prompt():

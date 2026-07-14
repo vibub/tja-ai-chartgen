@@ -7,7 +7,7 @@ from tja_ai_chartgen.features.density import density_hint_payload
 from tja_ai_chartgen.features.resolution import output_resolution_for_analysis_bar
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.rules.styles import get_style_template
-from tja_ai_chartgen.tja.model import BarFeature, GridFeature, SongAnalysis
+from tja_ai_chartgen.tja.model import BarFeature, SongAnalysis
 
 
 DENSITY_TARGETS = {
@@ -33,7 +33,28 @@ DENSITY_TARGETS = {
     },
 }
 
-GRID_FEATURE_COLUMNS = ["grid", "onset", "accent", "beat", "downbeat", "strength", "activity"]
+BAR_COLUMNS = [
+    "index",
+    "start_time",
+    "end_time",
+    "energy",
+    "time_signature",
+    "canonical_grids_per_bar",
+    "output_resolution",
+    "allowed_tick_step",
+    "onset_events",
+    "accent_grids",
+    "activity_grids",
+    "spectral_events",
+    "instrument_events",
+    "beat_events",
+    "downbeat_grid",
+    "phrase_position",
+    "fill_candidate",
+    "section",
+]
+ONSET_EVENT_COLUMNS = ["grid", "strength"]
+BEAT_EVENT_COLUMNS = ["grid", "beat"]
 SPECTRAL_GRID_COLUMNS = ["grid", "low_onset", "mid_onset", "high_onset", "spectral_flux"]
 INSTRUMENT_GRID_COLUMNS = [
     "grid",
@@ -138,10 +159,12 @@ def build_chart_generation_payload(
     forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
 
     payload = {
-        "schema": "tja-ai-chartgen-compact-v2",
+        "schema": "tja-ai-chartgen-compact-v3",
         "legend": {
             "bool": "0=false, 1=true",
-            "grid_feature_columns": GRID_FEATURE_COLUMNS,
+            "bar_columns": BAR_COLUMNS,
+            "onset_event_columns": ONSET_EVENT_COLUMNS,
+            "beat_event_columns": BEAT_EVENT_COLUMNS,
             "spectral_grid_columns": SPECTRAL_GRID_COLUMNS,
             "instrument_grid_columns": INSTRUMENT_GRID_COLUMNS,
             "instrument_bar_columns": INSTRUMENT_BAR_COLUMNS,
@@ -238,7 +261,7 @@ Rules:
 3. Output exactly one event object per input bar.
 4. Use only hits and long_notes in each bar object. Never output the legacy notes or balloon_counts fields.
 5. Normal hits use [canonical_tick, note] pairs in hits. note must be 1, 2, 3, or 4.
-6. Do not output a resolution. Use each bar's canonical_grids_per_bar, output_resolution, and allowed_tick_step. Every tick must be in 0..canonical_grids_per_bar-1 and divisible by allowed_tick_step.
+6. Decode each bars row with legend.bar_columns. Do not output a resolution. Use canonical_grids_per_bar, output_resolution, and allowed_tick_step. Every tick must be in 0..canonical_grids_per_bar-1 and divisible by allowed_tick_step.
 7. When special_notes is true, long_notes may contain {{"start_tick":N,"end_tick":N,"kind":"drumroll"}} or {{"start_tick":N,"end_tick":N,"kind":"balloon","balloon_count":N}}. Otherwise long_notes must be empty.
 8. Do not use branches, BPM changes, delays, or scroll changes.
 9. Bars listed in forced_silent_bars are song-start/song-end silence and must have empty hits and long_notes, regardless of density, course, level, or grid 0 preference.
@@ -254,13 +277,13 @@ Rules:
 19. Let the chart's style and music decide the don/ka mix, but avoid outputs where nearly all normal 1/2 notes are 1. Use some 2 notes for offbeat responses, back-half answers, syncopated hits, or phrase-end fills.
 20. When translated to four equal positions, useful rhythmic cells include 1020, 1200, 1012, 1210, 1122, 1221, 1022, and 2012, but do not force a fixed ratio.
 21. Avoid long all-don streams such as 1010101010101010 unless the input clearly describes a very plain stamina passage; even then, vary later bars with occasional 2 notes.
-22. Use each bar's grid_features to align notes. Decode each row with legend.grid_feature_columns: onset=1 marks likely playable hits, activity/strength mark sustained musical sound such as vocals, guitar, strings, piano, or pads even when onset=0. If activity is high but onset is sparse, this is not a rest; place a simple beat/downbeat skeleton rather than leaving the bar empty.
+22. Use onset_events and activity_grids to align notes. Decode onset_events with legend.onset_event_columns; each row preserves an onset's canonical grid and strength, with null strength only for legacy analysis that did not record it. activity_grids has one value per canonical grid and preserves sustained musical sound such as vocals, guitar, strings, piano, or pads even without an onset. If activity is high but onsets are sparse, this is not a rest; place a simple beat/downbeat skeleton rather than leaving the bar empty.
 23. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=0, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
 24. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density or sustained activity asks for more.
 25. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
 26. Do not place big notes 3/4 inside dense streams. If a passage has 3 or more consecutive playable hits, use normal 1/2 notes in the stream instead of 3/4.
 27. Avoid multiple big notes in one bar unless the bar is intentionally sparse; high/max density should increase 1/2 stream density, not big-note frequency.
-28. Use beat_grids, downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
+28. Decode beat_events with legend.beat_event_columns, and use it with downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
 29. If special_notes is true, use long_notes only for occasional phrase-end/fill highlights. Balloon events require one positive balloon_count.
 30. If reference_windows, reference_examples, or reference_examples_prompt is present, use it as style and audio-alignment guidance only. Source events may use a different resolution; convert their musical phase into canonical ticks and never copy source resolution or exact sequences.
 31. Decode bar_structure with legend.bar_structure_columns and phrase_plan with legend.phrase_columns. These fields and resolution are read-only analysis; do not return modified structure data.
@@ -271,8 +294,8 @@ Rules:
 36. Breakdown lowers load but is not silence when activity remains present; keep a simple beat/downbeat skeleton.
 37. Repeated section_id values should retain a recognizable base motif, with controlled later-song variation rather than exact copying.
 38. Do not create a fill merely because a bar number is divisible by 4 or 8; require fill_candidate_score and the musical context.
-39. Decode spectral_events with legend.spectral_grid_columns. Treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence; onset, accents, playability, and motif design remain authoritative. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes, build-ups, peaks, breakdowns, and fills without forcing a note on every spectral change.
-40. Decode bar_instruments with legend.instrument_bar_columns and instrument_events with legend.instrument_grid_columns. Drum attacks are strong soft evidence for placements and accents; bass attacks are weaker downbeat/don evidence. Use vocals for phrase entrances, breaths, call-and-response, and cadences, but never map every syllable to a hit. Use reliable guitar, piano/keyboard, strings, brass, woodwind, synth, and organ labels for motifs and section contrast. Ignore low-confidence labels, and never let instrument semantics override silence, density, speed, occupancy, resolution, or playability constraints.
+39. Decode each bar's spectral_events with legend.spectral_grid_columns. Treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence; onset, accents, playability, and motif design remain authoritative. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes, build-ups, peaks, breakdowns, and fills without forcing a note on every spectral change.
+40. Decode bar_instruments with legend.instrument_bar_columns and each bar's instrument_events with legend.instrument_grid_columns. Drum attacks are strong soft evidence for placements and accents; bass attacks are weaker downbeat/don evidence. Use vocals for phrase entrances, breaths, call-and-response, and cadences, but never map every syllable to a hit. Use reliable guitar, piano/keyboard, strings, brass, woodwind, synth, and organ labels for motifs and section contrast. Ignore low-confidence labels, and never let instrument semantics override silence, density, speed, occupancy, resolution, or playability constraints.
 
 Input:
 {json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}
@@ -372,21 +395,20 @@ def _compact_phrase_plan(analysis: SongAnalysis) -> list[list[Any]]:
     ]
 
 
-def _compact_bar(bar: BarFeature, *, output_resolution: int) -> dict[str, Any]:
-    return {
-        "index": bar.index,
-        "start_time": _compact_number(bar.start_time),
-        "end_time": _compact_number(bar.end_time),
-        "energy": _compact_number(bar.energy),
-        "time_signature": bar.time_signature,
-        "canonical_grids_per_bar": bar.grids_per_bar,
-        "output_resolution": output_resolution,
-        "allowed_tick_step": bar.grids_per_bar // output_resolution,
-        "onset_grids": bar.onset_grids,
-        "accent_grids": bar.accent_grids,
-        "activity_grids": [_compact_number(value) for value in bar.activity_grids],
-        "grid_features": [_compact_grid_feature(feature) for feature in bar.grid_features],
-        "spectral_events": [
+def _compact_bar(bar: BarFeature, *, output_resolution: int) -> list[Any]:
+    return [
+        bar.index,
+        _compact_number(bar.start_time),
+        _compact_number(bar.end_time),
+        _compact_number(bar.energy),
+        bar.time_signature,
+        bar.grids_per_bar,
+        output_resolution,
+        bar.grids_per_bar // output_resolution,
+        _compact_onset_events(bar),
+        bar.accent_grids,
+        [_compact_number(value) for value in bar.activity_grids],
+        [
             [
                 feature.grid,
                 _compact_number(feature.low_onset_strength),
@@ -396,7 +418,7 @@ def _compact_bar(bar: BarFeature, *, output_resolution: int) -> dict[str, Any]:
             ]
             for feature in bar.spectral_grid_features
         ],
-        "instrument_events": [
+        [
             [
                 feature.grid,
                 _compact_number(feature.vocal_onset),
@@ -406,24 +428,33 @@ def _compact_bar(bar: BarFeature, *, output_resolution: int) -> dict[str, Any]:
             ]
             for feature in bar.instrument_grid_features
         ],
-        "beat_grids": bar.beat_grids,
-        "downbeat_grid": bar.downbeat_grid,
-        "phrase_position": bar.phrase_position,
-        "fill_candidate": bar.fill_candidate,
-        "section": bar.section,
-    }
-
-
-def _compact_grid_feature(feature: GridFeature) -> list[Any]:
-    return [
-        feature.grid,
-        int(feature.onset),
-        int(feature.accent),
-        feature.beat,
-        int(feature.downbeat),
-        _compact_number(feature.strength),
-        _compact_number(feature.activity),
+        _compact_beat_events(bar),
+        bar.downbeat_grid,
+        bar.phrase_position,
+        int(bar.fill_candidate),
+        bar.section,
     ]
+
+
+def _compact_onset_events(bar: BarFeature) -> list[list[Any]]:
+    strengths = {
+        feature.grid: _compact_number(feature.strength)
+        for feature in bar.grid_features
+        if feature.onset
+    }
+    grids = sorted(set(bar.onset_grids) | set(strengths))
+    return [[grid, strengths.get(grid)] for grid in grids]
+
+
+def _compact_beat_events(bar: BarFeature) -> list[list[int]]:
+    beats = {
+        feature.grid: feature.beat
+        for feature in bar.grid_features
+        if feature.beat is not None
+    }
+    if beats:
+        return [[grid, beat] for grid, beat in sorted(beats.items())]
+    return [[grid, number] for number, grid in enumerate(bar.beat_grids, start=1)]
 
 
 def _compact_density_hints(bars: list[BarFeature], *, quality_density: str) -> list[list[Any]]:
