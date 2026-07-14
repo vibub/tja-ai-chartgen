@@ -21,7 +21,7 @@ from tja_ai_chartgen.tja.quality import QualityReport, build_quality_report
 from tja_ai_chartgen.utils.paths import write_json
 
 DEFAULT_AI_REQUEST_TIMEOUT = 300.0
-DEFAULT_AI_TRANSPORT_RETRIES = 1
+DEFAULT_AI_TRANSPORT_RETRIES = 3
 MAX_AI_TRANSPORT_RETRIES = 5
 GenerationStageCallback = Callable[[str], None]
 

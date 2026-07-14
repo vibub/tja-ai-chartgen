@@ -107,7 +107,7 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "model": None,
         "ai_repair_retries": 2,
         "ai_request_timeout": 300.0,
-        "ai_transport_retries": 1,
+        "ai_transport_retries": 3,
     }
     assert f"Generation config: {output_dir / 'generation_config.json'}" in (
         output_dir / "report.txt"
@@ -315,7 +315,7 @@ def test_generate_from_config_replays_saved_parameters(tmp_path, monkeypatch):
     assert "ai_base_url" not in saved_config
     assert saved_config["ai_repair_retries"] == 1
     assert saved_config["ai_request_timeout"] == 300.0
-    assert saved_config["ai_transport_retries"] == 1
+    assert saved_config["ai_transport_retries"] == 3
 
 
 def test_generate_from_config_reports_missing_file(tmp_path):

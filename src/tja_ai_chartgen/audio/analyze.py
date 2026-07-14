@@ -1,5 +1,10 @@
 from dataclasses import dataclass
+import importlib.metadata
+import importlib.util
 from pathlib import Path
+import sys
+from threading import Lock
+from types import ModuleType
 from typing import Any
 
 import librosa
@@ -28,6 +33,7 @@ FULL_ONSET_GRID_EVIDENCE_COVERAGE = 0.9
 MAX_ONSET_GRID_RUNNER_UP_RATIO = 0.9
 MIN_DISTINCT_BPM_DISTANCE = 3.0
 MIN_DISTINCT_BPM_RATIO = 0.03
+_BEATNET_IMPORT_LOCK = Lock()
 
 
 @dataclass(frozen=True)
@@ -651,12 +657,67 @@ def _ensure_beatnet_numpy_compatibility() -> None:
         setattr(np, "int", np.int_)
 
 
+def _install_beatnet_import_stubs() -> list[str]:
+    installed: list[str] = []
+    if importlib.util.find_spec("madmom") is None:
+        madmom = ModuleType("madmom")
+        madmom.__path__ = []
+        features = ModuleType("madmom.features")
+
+        class UnavailableDbnProcessor:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                raise RuntimeError("madmom is unavailable; use BeatNet particle filtering")
+
+        features.DBNDownBeatTrackingProcessor = UnavailableDbnProcessor
+        madmom.features = features
+        sys.modules["madmom"] = madmom
+        sys.modules["madmom.features"] = features
+        installed.extend(["madmom.features", "madmom"])
+
+    if importlib.util.find_spec("pyaudio") is None:
+        pyaudio = ModuleType("pyaudio")
+
+        class UnavailablePyAudio:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                raise RuntimeError("pyaudio is unavailable; BeatNet stream mode cannot be used")
+
+        pyaudio.PyAudio = UnavailablePyAudio
+        pyaudio.paFloat32 = 0
+        sys.modules["pyaudio"] = pyaudio
+        installed.append("pyaudio")
+    return installed
+
+
+def _import_beatnet_class() -> Any:
+    with _BEATNET_IMPORT_LOCK:
+        installed_stubs = _install_beatnet_import_stubs()
+        original_distribution = importlib.metadata.distribution
+
+        def compatible_distribution(name: str) -> importlib.metadata.Distribution:
+            try:
+                return original_distribution(name)
+            except importlib.metadata.PackageNotFoundError:
+                if name != "madmom":
+                    raise
+                return original_distribution("madmom-prebuilt")
+
+        importlib.metadata.distribution = compatible_distribution
+        try:
+            from BeatNet.BeatNet import BeatNet
+
+            return BeatNet
+        finally:
+            importlib.metadata.distribution = original_distribution
+            for module_name in installed_stubs:
+                sys.modules.pop(module_name, None)
+
+
 def enhance_with_beatnet(input_path: Path, raw: AudioAnalysisRaw) -> AudioAnalysisRaw:
     try:
         _ensure_beatnet_numpy_compatibility()
-        from BeatNet.BeatNet import BeatNet
+        beatnet_class = _import_beatnet_class()
 
-        estimator = BeatNet(
+        estimator = beatnet_class(
             model=1,
             mode="offline",
             inference_model="DBN",
@@ -757,11 +818,16 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
 
     beat_numbers = _regular_beat_numbers(len(beat_times), time_signature)
     beat_interval = 60.0 / bpm
-    beatnet_downbeats = [
-        _nearest_regular_time(time, offset, beat_interval)
-        for time, number in zip(beatnet_beat_times, beatnet_beat_numbers, strict=True)
-        if number == 1
-    ]
+    expected_meter_size = {"3/4": 3, "4/4": 4, "6/8": 6}[time_signature]
+    beatnet_downbeats = (
+        [
+            _nearest_regular_time(time, offset, beat_interval)
+            for time, number in zip(beatnet_beat_times, beatnet_beat_numbers, strict=True)
+            if number == 1
+        ]
+        if max(beatnet_beat_numbers) == expected_meter_size
+        else []
+    )
     beat_time_set = set(beat_times)
     downbeat_times = sorted({time for time in beatnet_downbeats if time in beat_time_set})
     if not downbeat_times:

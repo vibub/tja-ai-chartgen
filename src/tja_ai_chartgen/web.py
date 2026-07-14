@@ -41,7 +41,7 @@ WEB_SOUND_FILES = {
 ALLOWED_WEB_NOTES = set("01234578")
 DEFAULT_WEB_BALLOON_COUNT = 8
 DEFAULT_AI_REQUEST_TIMEOUT = 300.0
-DEFAULT_AI_TRANSPORT_RETRIES = 1
+DEFAULT_AI_TRANSPORT_RETRIES = 3
 WEB_COURSE_OPTIONS = (
     ("Easy", "简单（Easy）"),
     ("Normal", "普通（Normal）"),
@@ -3310,7 +3310,7 @@ def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
             </label>
             <label class="field">
               网络重试
-              <input name="ai_transport_retries" type="number" min="0" max="{MAX_AI_TRANSPORT_RETRIES}" value="3">
+              <input name="ai_transport_retries" type="number" min="0" max="{MAX_AI_TRANSPORT_RETRIES}" value="{DEFAULT_AI_TRANSPORT_RETRIES}">
             </label>
           </div>
         </details>

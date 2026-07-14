@@ -495,6 +495,26 @@ def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
     assert updated.tempo_analysis.selected_source == "beatnet"
 
 
+def test_merge_beatnet_output_uses_four_four_grid_when_two_beat_meter_is_unsupported():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0.25, 0.75],
+        onset_times=[],
+        onset_strengths=[],
+        duration=4.0,
+        offset=0.25,
+    )
+
+    updated = merge_beatnet_output(
+        raw,
+        [[0.25 + index * 0.5, (index % 2) + 1] for index in range(8)],
+    )
+
+    assert updated.time_signature == "4/4"
+    assert updated.beat_numbers[:8] == [1, 2, 3, 4, 1, 2, 3, 4]
+    assert updated.downbeat_times == [0.25, 2.25, 4.25]
+
+
 def test_merge_beatnet_output_converts_six_eight_pulses_to_quarter_note_bpm():
     raw = AudioAnalysisRaw(
         bpm=120,

@@ -38,6 +38,8 @@ dependencies = [
     "rich>=13.0.0",
     "pydantic>=2.0.0",
     "librosa>=0.10.0",
+    "BeatNet==1.1.1",
+    "madmom-prebuilt==0.17.post1; platform_machine == 'AMD64' or platform_machine == 'x86_64' or (platform_system == 'Darwin' and platform_machine == 'arm64')",
     "numpy>=1.24.0",
     "soundfile>=0.12.0",
     "pydub>=0.25.0",
