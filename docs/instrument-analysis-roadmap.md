@@ -248,7 +248,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 | 6.1 盘点并复用现有 fixture | 已完成 | 已盘点 9 个由标准库脚本确定性生成的 WAV，明确其节拍、密度、resolution、结构和边缘静音复用范围，并记录后续缺口。 | 2026-07-15：`pytest tests/test_audio_pipeline_integration.py -v`，10 passed。 |
 | 6.2 新增节奏事件 ground truth | 已完成 | 已建立 schema version 1，为 9 个 WAV 同步生成事件 JSON，持久化 BPM、拍号、时长、onset、强 onset、beat、downbeat、静音区、频带事件、fill 区间和结构段落。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`，2 passed；确定性重建后的 WAV、schema 和事件 JSON 与仓库文件逐字节一致。 |
 | 6.3 扩展合成节奏类型 | 未开始 | 尚未加入切分、弱起、频带攻击和明确 fill burst fixture。 | 尚未执行。 |
-| 6.4 建立音频分析 benchmark | 未开始 | 尚未统一输出 onset、beat、downbeat 和量化误差指标。 | 尚未执行。 |
+| 6.4 建立音频分析 benchmark | 部分完成 | 已建立 `audio-alignment-v1` 基础 benchmark，统一输出 onset、强 onset、beat、downbeat、BPM、拍号、first downbeat 和静音误检指标，并持久化 9 个现有 fixture 的修改前 baseline；resolution 与 6.3 新增 fixture 尚待接入。 | 2026-07-15：`python tools/benchmark_audio_fixtures.py`；`pytest tests/test_audio_benchmark.py -v`，5 passed。 |
 | 6.5 建立谱面对齐 baseline | 部分完成 | 已有部分 drum、bass、accent、structure 和 resolution 指标；尚缺统一 note alignment 指标。 | 现有 QualityReport 测试可复用。 |
 | 6.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -322,6 +322,12 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 ## 6.4 自动指标
 
+基础实现为 `audio-alignment-v1`：`tools/benchmark_audio_fixtures.py` 离线读取 `<stem>.events.json`，调用默认 `analyze_audio()`，再由 `evaluation/audio_benchmark.py` 做一对一事件匹配与聚合。默认容差为 onset 50 ms、beat 70 ms、downbeat 70 ms；可通过 CLI 参数覆盖，并可显式启用 `--use-beatnet`。默认路径不访问网络。
+
+报告写入 `tests/fixtures/audio/audio_benchmark_baseline.json`，包含每个 fixture 的 analyzer、BPM/拍号判断、事件计数、precision、recall、F1、平均/最大绝对时间误差，以及全体 fixture 的 micro aggregate。默认分析没有独立 downbeat 输出时，benchmark 按估计 offset、四分音符 BPM 和拍号推导 downbeat，并把来源记录为 `derived-offset-meter`；BeatNet 提供 downbeat 时记录为 `analyzer`，避免把两类结果混为一谈。
+
+首份 9-fixture baseline 的 onset F1 为 0.993789、beat F1 为 0.780952、downbeat F1 为 0.381818，平均 BPM 绝对误差为 10.495444，静音区 onset 误检为 2。该结果只用于修改前后 A/B 和回归趋势，不作为跨 librosa/平台版本必须逐值相等的 CI 阈值；CI 只校验报告 schema、fixture 完整性和指标范围。
+
 ### Onset
 
 - precision；
@@ -382,9 +388,9 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 - [x] 6.1 盘点并复用现有 fixture
 - [x] 6.2 建立 ground truth schema，并让 fixture 同步生成事件 JSON
-- [ ] 6.4 建立基础 onset、beat 与 downbeat benchmark
+- [x] 6.4a 建立基础 onset、beat 与 downbeat benchmark
 - [ ] 6.3 扩展切分、弱起、频带攻击、fill、3/4 和 6/8 fixture
-- [ ] 6.4 完善全部 fixture 的自动 benchmark 与基线报告
+- [ ] 6.4b 完善全部 fixture 的自动 benchmark 与基线报告
 - [ ] 6.5 建立谱面对齐 baseline
 - [ ] 6.6 执行 Phase 0 阶段验收
 
