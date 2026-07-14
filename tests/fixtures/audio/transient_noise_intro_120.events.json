@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "audio": "transient_noise_intro_120.wav",
+  "bpm": 120.0,
+  "time_signature": "4/4",
+  "duration": 6.75,
+  "first_downbeat": 2.25,
+  "onsets": [
+    2.25,
+    2.75,
+    3.25,
+    3.75,
+    4.25,
+    4.75,
+    5.25,
+    5.75
+  ],
+  "strong_onsets": [
+    2.25,
+    4.25
+  ],
+  "beats": [
+    2.25,
+    2.75,
+    3.25,
+    3.75,
+    4.25,
+    4.75,
+    5.25,
+    5.75
+  ],
+  "downbeats": [
+    2.25,
+    4.25
+  ],
+  "low_band_onsets": [],
+  "high_band_onsets": [],
+  "silent_ranges": [
+    [
+      0.0,
+      2.25
+    ]
+  ],
+  "fill_ranges": [],
+  "sections": []
+}
