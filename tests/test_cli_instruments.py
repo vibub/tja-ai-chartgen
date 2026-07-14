@@ -26,7 +26,8 @@ def test_prepare_instrument_models_uses_resolved_default_directory(tmp_path, mon
     assert result.exit_code == 0, result.output
     assert calls == [target]
     assert "Preparing instrument models" in result.output
-    assert "instrument-v1" in result.output
+    compact_output = "".join(result.output.split())
+    assert str(target) in compact_output
     assert "htdemucs" in result.output
 
 
