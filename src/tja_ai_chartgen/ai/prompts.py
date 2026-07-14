@@ -35,6 +35,34 @@ DENSITY_TARGETS = {
 
 GRID_FEATURE_COLUMNS = ["grid", "onset", "accent", "beat", "downbeat", "strength", "activity"]
 SPECTRAL_GRID_COLUMNS = ["grid", "low_onset", "mid_onset", "high_onset", "spectral_flux"]
+INSTRUMENT_GRID_COLUMNS = [
+    "grid",
+    "vocal_onset",
+    "drum_onset",
+    "bass_onset",
+    "accompaniment_onset",
+]
+INSTRUMENT_BAR_COLUMNS = [
+    "vocal_activity",
+    "vocal_presence_ratio",
+    "drum_activity",
+    "bass_activity",
+    "other_activity",
+    "dominant_source",
+    "dominant_instrument",
+    "confidence",
+    "active_instruments",
+]
+INSTRUMENT_LABELS = (
+    "guitar",
+    "piano_keyboard",
+    "strings",
+    "brass",
+    "woodwind",
+    "synth",
+    "organ",
+    "other_instrument",
+)
 BAR_DENSITY_HINT_COLUMNS = [
     "bar",
     "kind",
@@ -115,6 +143,8 @@ def build_chart_generation_payload(
             "bool": "0=false, 1=true",
             "grid_feature_columns": GRID_FEATURE_COLUMNS,
             "spectral_grid_columns": SPECTRAL_GRID_COLUMNS,
+            "instrument_grid_columns": INSTRUMENT_GRID_COLUMNS,
+            "instrument_bar_columns": INSTRUMENT_BAR_COLUMNS,
             "bar_density_hint_columns": BAR_DENSITY_HINT_COLUMNS,
             "bar_structure_columns": BAR_STRUCTURE_COLUMNS,
             "phrase_columns": PHRASE_COLUMNS,
@@ -143,6 +173,9 @@ def build_chart_generation_payload(
         "special_notes": special_notes,
         "spectral_feature_version": analysis.spectral_feature_version,
         "spectral_analysis_status": analysis.spectral_analysis_status,
+        "instrument_feature_version": analysis.instrument_feature_version,
+        "instrument_analysis_status": analysis.instrument_analysis_status,
+        "bar_instruments": [_compact_bar_instrument(bar) for bar in analysis.bars],
         "structure_feature_version": analysis.structure_feature_version,
         "structure_confidence": _compact_number(analysis.structure_confidence or 0.0),
         "bar_structure": _compact_bar_structures(analysis),
@@ -239,6 +272,7 @@ Rules:
 37. Repeated section_id values should retain a recognizable base motif, with controlled later-song variation rather than exact copying.
 38. Do not create a fill merely because a bar number is divisible by 4 or 8; require fill_candidate_score and the musical context.
 39. Decode spectral_events with legend.spectral_grid_columns. Treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence; onset, accents, playability, and motif design remain authoritative. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes, build-ups, peaks, breakdowns, and fills without forcing a note on every spectral change.
+40. Decode bar_instruments with legend.instrument_bar_columns and instrument_events with legend.instrument_grid_columns. Drum attacks are strong soft evidence for placements and accents; bass attacks are weaker downbeat/don evidence. Use vocals for phrase entrances, breaths, call-and-response, and cadences, but never map every syllable to a hit. Use reliable guitar, piano/keyboard, strings, brass, woodwind, synth, and organ labels for motifs and section contrast. Ignore low-confidence labels, and never let instrument semantics override silence, density, speed, occupancy, resolution, or playability constraints.
 
 Input:
 {json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}
@@ -300,6 +334,26 @@ def _compact_bar_structures(analysis: SongAnalysis) -> list[list[Any]]:
     ]
 
 
+def _compact_bar_instrument(bar: BarFeature) -> list[Any]:
+    instrument = bar.instrument
+    active_instruments = [
+        [label, _compact_number(value)]
+        for label in INSTRUMENT_LABELS
+        if (value := float(getattr(instrument, label))) >= 0.05
+    ]
+    return [
+        _compact_number(instrument.vocal_activity),
+        _compact_number(instrument.vocal_presence_ratio),
+        _compact_number(instrument.drum_activity),
+        _compact_number(instrument.bass_activity),
+        _compact_number(instrument.other_activity),
+        instrument.dominant_source,
+        instrument.dominant_instrument,
+        _compact_number(instrument.confidence),
+        active_instruments,
+    ]
+
+
 def _compact_phrase_plan(analysis: SongAnalysis) -> list[list[Any]]:
     return [
         [
@@ -341,6 +395,16 @@ def _compact_bar(bar: BarFeature, *, output_resolution: int) -> dict[str, Any]:
                 _compact_number(feature.spectral_flux),
             ]
             for feature in bar.spectral_grid_features
+        ],
+        "instrument_events": [
+            [
+                feature.grid,
+                _compact_number(feature.vocal_onset),
+                _compact_number(feature.drum_onset),
+                _compact_number(feature.bass_onset),
+                _compact_number(feature.accompaniment_onset),
+            ]
+            for feature in bar.instrument_grid_features
         ],
         "beat_grids": bar.beat_grids,
         "downbeat_grid": bar.downbeat_grid,

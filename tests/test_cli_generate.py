@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
+from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw
 from tja_ai_chartgen.cli import app
 from tja_ai_chartgen.tja.model import ChartBar, TempoAnalysisDecision
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
@@ -98,6 +99,9 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "offset_override": 0.25,
         "time_signature": None,
         "use_beatnet": False,
+        "use_instrument_analysis": False,
+        "instrument_device": "auto",
+        "instrument_model_dir": None,
         "special_notes": False,
         "use_ai": False,
         "model": None,
@@ -170,6 +174,59 @@ def test_generate_with_beatnet_passes_flag_and_records_config(tmp_path, monkeypa
     assert analysis["tempo_analysis"]["accepted"] is False
     assert analysis["tempo_analysis"]["fallback_source"] == "beatnet"
     assert analysis["tempo_analysis"]["reason"] == "insufficient_onsets"
+
+
+def test_generate_with_instrument_analysis_records_config_and_analysis(tmp_path, monkeypatch):
+    input_audio = tmp_path / "song.mp3"
+    input_audio.write_bytes(b"fake audio")
+    output_dir = tmp_path / "output"
+    model_dir = tmp_path / "models" / "instrument-v1"
+    _patch_audio_pipeline(monkeypatch)
+    calls = []
+
+    def fake_instruments(path, **kwargs):
+        calls.append((path, kwargs))
+        return InstrumentAnalysisRaw(
+            feature_version="instrument-v1",
+            status="complete",
+            demucs_model="htdemucs",
+            classifier_model="ast",
+            device="cpu",
+        )
+
+    monkeypatch.setattr("tja_ai_chartgen.generation.analyze_instruments", fake_instruments)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            str(input_audio),
+            "--title",
+            "Song Title",
+            "--output-dir",
+            str(output_dir),
+            "--use-instrument-analysis",
+            "--instrument-device",
+            "cpu",
+            "--instrument-model-dir",
+            str(model_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
+    analysis = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
+    notices = json.loads(
+        (output_dir / "generation_notices.json").read_text(encoding="utf-8")
+    )
+    assert saved_config["use_instrument_analysis"] is True
+    assert saved_config["instrument_device"] == "cpu"
+    assert saved_config["instrument_model_dir"] == str(model_dir)
+    assert analysis["analysis_schema_version"] == 5
+    assert analysis["instrument_analysis_status"] == "complete"
+    assert calls and calls[0][1]["device"] == "cpu"
+    assert calls[0][1]["model_dir"] == model_dir
+    assert any(item["code"] == "instrument-analysis-succeeded" for item in notices)
 
 
 def test_generate_with_time_signature_outputs_measure_and_records_config(tmp_path, monkeypatch):

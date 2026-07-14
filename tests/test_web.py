@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
+from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw
 from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw
 from tja_ai_chartgen.tja.model import ChartBar, SongAnalysis, TempoAnalysisDecision
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
@@ -36,6 +37,9 @@ def test_web_index_shows_upload_form(tmp_path):
     assert 'accept="audio/*,video/mp4,.mp4,.m4s"' in response.text
     assert "m4s" in response.text
     assert 'name="use_beatnet" type="checkbox" value="true" checked' in response.text
+    assert 'name="use_instrument_analysis" type="checkbox" value="true"' in response.text
+    assert 'select name="instrument_device"' in response.text
+    assert "prepare-instrument-models" in response.text
     assert '<select name="course">' in response.text
     assert '魔王（Oni）' in response.text
     assert 'name="use_ai" type="checkbox" value="true" data-role="ai-toggle" checked' in response.text
@@ -43,6 +47,17 @@ def test_web_index_shows_upload_form(tmp_path):
     assert 'name="ai_model"' in response.text
     assert 'name="ai_request_timeout" type="number" min="1" max="600" value="300"' in response.text
     assert 'name="ai_transport_retries" type="number" min="0" max="1" value="1"' in response.text
+
+
+def test_web_remote_mode_disables_instrument_analysis_without_server_opt_in(tmp_path):
+    client = TestClient(create_app(output_dir=tmp_path, remote_mode=True))
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'name="use_instrument_analysis" type="checkbox" value="true" disabled' in response.text
+    assert 'select name="instrument_device" disabled' in response.text
+    assert "远程模式未由服务器管理员开放重型分析" in response.text
 
 
 def test_web_upload_limit_is_100_mib():
@@ -156,6 +171,97 @@ def test_web_spectral_fallback_notice_is_persisted_and_rendered(tmp_path, monkey
     assert "频谱语义增强未生效" in result.text
     notices = json.loads((job_dir / "generation_notices.json").read_text(encoding="utf-8"))
     assert notices[0]["detail"] == "reason=extractor-error:RuntimeError"
+
+
+def test_web_instrument_analysis_success_is_persisted_and_rendered(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch, instrument_status="complete")
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={
+            "title": "Song Title",
+            "max_bars": "1",
+            "bpm": "120",
+            "use_instrument_analysis": "true",
+            "instrument_device": "cpu",
+        },
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    assert any(
+        notice["code"] == "instrument-analysis-succeeded"
+        for notice in status["notices"]
+    )
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    assert "人声与乐器分析" in result.text
+    assert "状态：完整" in result.text
+    analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
+    options = json.loads((job_dir / "chart_options.json").read_text(encoding="utf-8"))
+    assert analysis["instrument_feature_version"] == "instrument-v1"
+    assert analysis["instrument_analysis_status"] == "complete"
+    assert options["use_instrument_analysis"] is True
+    assert options["instrument_device"] == "cpu"
+
+
+def test_web_instrument_model_fallback_notice_is_persisted_and_rendered(
+    tmp_path,
+    monkeypatch,
+):
+    _patch_web_audio_pipeline(
+        monkeypatch,
+        instrument_status="fallback",
+        instrument_reason="missing-model:ast",
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={
+            "title": "Song Title",
+            "max_bars": "1",
+            "bpm": "120",
+            "use_instrument_analysis": "true",
+        },
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    assert any(
+        notice["code"] == "instrument-models-missing"
+        for notice in status["notices"]
+    )
+    result = client.get(f"/jobs/{job_dir.name}/result")
+    assert "人声与乐器模型未准备完整" in result.text
+    assert "状态：已降级" in result.text
+    notices = json.loads((job_dir / "generation_notices.json").read_text(encoding="utf-8"))
+    instrument_notice = next(
+        item for item in notices if item["code"] == "instrument-models-missing"
+    )
+    assert instrument_notice["detail"] == "reason=missing-model:ast"
+
+
+def test_web_remote_mode_rejects_instrument_analysis_without_server_opt_in(
+    tmp_path,
+    monkeypatch,
+):
+    _patch_web_audio_pipeline(monkeypatch)
+    client = TestClient(create_app(output_dir=tmp_path, remote_mode=True))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "use_instrument_analysis": "true"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 400
+    assert "Remote instrument analysis is disabled" in response.text
+    assert not list(tmp_path.iterdir())
 
 
 def test_web_analyze_oversized_upload_returns_413_and_removes_job(tmp_path, monkeypatch):
@@ -1440,7 +1546,13 @@ def _patch_web_threads_to_run_synchronously(monkeypatch):
     monkeypatch.setattr("tja_ai_chartgen.web.Thread", SynchronousThread)
 
 
-def _patch_web_audio_pipeline(monkeypatch, duration=2.0, spectral_fallback=False):
+def _patch_web_audio_pipeline(
+    monkeypatch,
+    duration=2.0,
+    spectral_fallback=False,
+    instrument_status=None,
+    instrument_reason=None,
+):
     def fake_convert_to_ogg(input_path, output_path):
         output_path.write_bytes(b"fake ogg")
         return output_path
@@ -1476,5 +1588,19 @@ def _patch_web_audio_pipeline(monkeypatch, duration=2.0, spectral_fallback=False
             ),
         )
 
+    def fake_analyze_instruments(*_args, **_kwargs):
+        return InstrumentAnalysisRaw(
+            feature_version="instrument-v1",
+            status=instrument_status or "complete",
+            reason=instrument_reason,
+            demucs_model="htdemucs",
+            classifier_model="ast",
+            device="cpu",
+        )
+
     monkeypatch.setattr("tja_ai_chartgen.generation.convert_to_ogg", fake_convert_to_ogg)
     monkeypatch.setattr("tja_ai_chartgen.generation.analyze_audio", fake_analyze_audio)
+    monkeypatch.setattr(
+        "tja_ai_chartgen.generation.analyze_instruments",
+        fake_analyze_instruments,
+    )

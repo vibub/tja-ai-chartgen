@@ -4,6 +4,8 @@ from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bar
 from tja_ai_chartgen.tja.model import (
     BarFeature,
     GridFeature,
+    InstrumentBarFeature,
+    InstrumentGridFeature,
     ResolutionPlan,
     SpectralGridFeature,
 )
@@ -93,6 +95,32 @@ def test_spectral_attacks_prioritize_grids_and_inform_don_ka_coloring():
     assert _hit_grids(notes) == {3, 11}
     assert notes[3] == "1"
     assert notes[11] == "2"
+
+
+def test_instrument_attacks_prioritize_drums_and_bass_with_soft_don_bias():
+    bar = _feature(0, energy=0.3, downbeat=None).model_copy(
+        update={
+            "instrument": InstrumentBarFeature(
+                drum_activity=0.8,
+                bass_activity=0.6,
+                other_activity=0.4,
+                dominant_source="drums",
+                confidence=0.8,
+            ),
+            "instrument_grid_features": [
+                InstrumentGridFeature(grid=3, drum_onset=1.0),
+                InstrumentGridFeature(grid=11, bass_onset=1.0),
+                InstrumentGridFeature(grid=7, vocal_onset=1.0),
+            ],
+        }
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar], density="low", course="Easy", level=1
+    )[0].notes
+
+    assert _hit_grids(notes) == {3, 11}
+    assert notes[11] == "1"
 
 
 def test_missing_onsets_falls_back_to_downbeat_and_beats():

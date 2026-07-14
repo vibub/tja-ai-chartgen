@@ -54,6 +54,12 @@ class QualityReport(BaseModel):
     section_motif_consistency: float = Field(default=1.0, ge=0.0, le=1.0)
     section_return_variation: float = Field(default=0.0, ge=0.0, le=1.0)
     highlight_note_contrast: float = 0.0
+    drum_onset_hit_coverage: float = Field(default=1.0, ge=0.0, le=1.0)
+    bass_downbeat_alignment: float = Field(default=1.0, ge=0.0, le=1.0)
+    vocal_phrase_response: float = Field(default=1.0, ge=0.0, le=1.0)
+    instrument_transition_response: float = Field(default=1.0, ge=0.0, le=1.0)
+    instrument_confident_bar_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    instrument_fill_support: float = Field(default=1.0, ge=0.0, le=1.0)
     base_resolution: int = Field(default=0, ge=0)
     resolution_change_count: int = Field(default=0, ge=0)
     resolution_changes_per_100_bars: float = Field(default=0.0, ge=0.0)
@@ -141,6 +147,10 @@ def build_quality_report(
         paired_feature_bars,
         paired_notes_per_second,
     )
+    instrument_metrics = _instrument_quality_metrics(
+        paired_chart_bars,
+        paired_feature_bars,
+    )
     resolution_metrics = _resolution_quality_metrics(
         chart_bars,
         feature_bars,
@@ -198,6 +208,7 @@ def build_quality_report(
             balloon_required_hits / balloon_duration if balloon_duration else 0.0
         ),
         **structure_metrics,
+        **instrument_metrics,
         **resolution_metrics,
     )
 
@@ -387,6 +398,125 @@ def _rhythm_signature(notes: str) -> str:
         for index, note in enumerate(notes)
         if note in "1234"
     )
+
+
+def _instrument_quality_metrics(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+) -> dict[str, float]:
+    drum_candidates = 0
+    drum_hits = 0
+    bass_candidates = 0
+    bass_hits = 0
+    vocal_candidates = 0
+    vocal_hits = 0
+    evidence_bars = 0
+    confident_bars = 0
+    transition_candidates = 0
+    transition_responses = 0
+    fill_candidates = 0
+    fill_supported = 0
+
+    for position, (chart_bar, feature_bar) in enumerate(
+        zip(chart_bars, feature_bars, strict=True)
+    ):
+        source_values = (
+            feature_bar.instrument.vocal_activity,
+            feature_bar.instrument.drum_activity,
+            feature_bar.instrument.bass_activity,
+            feature_bar.instrument.other_activity,
+        )
+        if max(source_values) > 0.0:
+            evidence_bars += 1
+            if feature_bar.instrument.confidence >= 0.4:
+                confident_bars += 1
+
+        for event in feature_bar.instrument_grid_features:
+            if event.drum_onset >= 0.35:
+                drum_candidates += 1
+                drum_hits += _normal_hit_at(chart_bar, feature_bar, event.grid)
+            if event.bass_onset >= 0.35 and event.grid in {
+                *feature_bar.beat_grids,
+                feature_bar.downbeat_grid,
+            }:
+                bass_candidates += 1
+                bass_hits += _normal_hit_at(chart_bar, feature_bar, event.grid)
+            if event.vocal_onset >= 0.35 and (
+                feature_bar.phrase_position
+                in {"phrase_start", "phrase_end", "song_end"}
+                or feature_bar.transition_role == "cadence"
+            ):
+                vocal_candidates += 1
+                vocal_hits += _normal_hit_at(chart_bar, feature_bar, event.grid)
+
+        if position > 0:
+            previous_feature = feature_bars[position - 1]
+            previous_chart = chart_bars[position - 1]
+            current_key = (
+                feature_bar.instrument.dominant_source,
+                feature_bar.instrument.dominant_instrument,
+            )
+            previous_key = (
+                previous_feature.instrument.dominant_source,
+                previous_feature.instrument.dominant_instrument,
+            )
+            if (
+                feature_bar.instrument.confidence >= 0.4
+                and previous_feature.instrument.confidence >= 0.4
+                and current_key != previous_key
+            ):
+                transition_candidates += 1
+                transition_responses += (
+                    _rhythm_signature(chart_bar.notes)
+                    != _rhythm_signature(previous_chart.notes)
+                )
+
+        fill_evidence = max(
+            (
+                max(event.drum_onset, event.accompaniment_onset)
+                for event in feature_bar.instrument_grid_features
+            ),
+            default=0.0,
+        )
+        if feature_bar.fill_candidate and fill_evidence >= 0.35:
+            fill_candidates += 1
+            midpoint = len(chart_bar.notes) // 2
+            fill_supported += any(note in "123457" for note in chart_bar.notes[midpoint:])
+
+    return {
+        "drum_onset_hit_coverage": _rounded_metric(
+            drum_hits / drum_candidates if drum_candidates else 1.0
+        ),
+        "bass_downbeat_alignment": _rounded_metric(
+            bass_hits / bass_candidates if bass_candidates else 1.0
+        ),
+        "vocal_phrase_response": _rounded_metric(
+            vocal_hits / vocal_candidates if vocal_candidates else 1.0
+        ),
+        "instrument_transition_response": _rounded_metric(
+            transition_responses / transition_candidates if transition_candidates else 1.0
+        ),
+        "instrument_confident_bar_ratio": _rounded_metric(
+            confident_bars / evidence_bars if evidence_bars else 0.0
+        ),
+        "instrument_fill_support": _rounded_metric(
+            fill_supported / fill_candidates if fill_candidates else 1.0
+        ),
+    }
+
+
+def _normal_hit_at(
+    chart_bar: ChartBar,
+    feature_bar: BarFeature,
+    canonical_grid: int,
+) -> int:
+    if not chart_bar.notes or feature_bar.grids_per_bar <= 0:
+        return 0
+    projected = min(
+        len(chart_bar.notes) - 1,
+        round(canonical_grid / feature_bar.grids_per_bar * len(chart_bar.notes)),
+    )
+    return int(chart_bar.notes[projected] in "1234")
 
 
 def _resolution_quality_metrics(

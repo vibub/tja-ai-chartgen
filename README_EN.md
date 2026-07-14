@@ -10,12 +10,24 @@ License: MIT. See [LICENSE](LICENSE).
 
 - Python 3.11+
 - ffmpeg
+- Optional Stage C: PyTorch, Demucs, and Transformers builds supported by the current Python/platform
 
 ## Install
+
+Base development environment:
 
 ```bash
 pip install -e ".[dev]"
 ```
+
+Optional vocal and instrument analysis:
+
+```bash
+pip install -e ".[dev,instrument]"
+tja-ai-chartgen prepare-instrument-models
+```
+
+The preparation command downloads pinned Demucs `htdemucs` and AST AudioSet weights to `models/instrument-v1/` under the project root by default. `models/` is ignored by Git. Generation never downloads models implicitly and never writes separated stems into the output directory.
 
 ## Usage
 
@@ -79,6 +91,19 @@ Audio features are first quantized to a canonical grid of 12 ticks per quarter n
 `structure-v1` no longer cuts phrases on a fixed four-bar cycle. It combines energy percentiles, contextual changes, onset/activity density, 12-bin rhythm profiles, and `spectral-v1` semantics to produce variable-length `phrase_id` and `phrase_progress`, reusable `section_id` values, boundary confidence, `stable` / `build_up` / `peak` / `drop` / `cadence` / `breakdown` roles, and `fill_candidate_score`. These fields are persisted in `analysis.json` and sent to both the rule generator and the compact AI payload for gradual build-ups, peak contrast, breakdown skeletons, returning-section motifs, and evidence-based cadence fills.
 
 `spectral-v1` uses HPSS to separate harmonic and percussive components, then extracts low/mid/high-band onset strength, spectral flux, brightness, harmonic novelty, texture novelty, and percussive ratio. Frame-level values are summarized into bar structure fields, while reliable attack positions are sent to the AI as sparse `spectral_events`. The rule fallback treats them as additional placement evidence, with low-frequency attacks acting as soft don evidence and high-frequency attacks as soft ka evidence. Short audio or a failed librosa spectral step does not stop the existing onset/RMS pipeline: generation continues with a `spectral-analysis-fallback` notice.
+
+Optional `instrument-v1` uses local Demucs `htdemucs` separation for vocals, drums, bass, and other, then applies a pinned AST AudioSet classifier to the mix and other stem for stable guitar, piano/keyboard, strings, brass, woodwind, synth, and organ categories. Stem activity, vocal presence, dominant sources/instruments, and sparse vocal/drum/bass/accompaniment onsets are mapped to canonical bars and ticks. They strengthen phrase boundaries, build-ups, peaks, breakdowns, cadences, fills, AI motifs, and rule placements. These are always soft signals: vocals are not mapped syllable by syllable, and no label can override silence, difficulty, NPS, occupancy, resolution, or playability constraints.
+
+Enable it explicitly:
+
+```bash
+tja-ai-chartgen generate song.mp3 \
+  --title "Song Title" \
+  --use-instrument-analysis \
+  --instrument-device auto
+```
+
+`--instrument-device` accepts `auto`, `cpu`, `cuda`, or `mps`; `--instrument-model-dir` can point to a prepared local directory. Missing dependencies, models, devices, or model failures do not stop base generation. They produce structured partial/fallback notices instead.
 
 Try optional BeatNet analysis for downbeat, meter, and bar-start enhancement:
 
@@ -161,9 +186,10 @@ Start the local Web UI MVP:
 ```bash
 tja-ai-chartgen web
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote
+tja-ai-chartgen web --host 0.0.0.0 --allow-remote --allow-instrument-analysis
 ```
 
-The Web UI supports audio upload, BPM/OFFSET/time-signature override, analysis preview, and rule-based or AI-enhanced regeneration of a selected bar range. Completed jobs open a playable chart preview with OGG playback, automatic note performance, timeline seeking, and don/ka hit sounds. Low-confidence analysis, BeatNet fallback, `spectral-v1` fallback, base-resolution fallback, AI fallback, and final write errors are represented as structured `GenerationNotice` records, shown on both progress and result pages, and persisted to `generation_notices*.json`; the CLI writes the same class of sidecar and includes notices in `report.txt`. Its collapsed AI options expose the per-attempt request timeout and 0–1 transport retries. Full-chart generation saves these non-sensitive settings for the result page, and local regenerate calls run the synchronous AI helper in a thread pool so they do not block the FastAPI event loop. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`. Listening on a non-loopback address requires the explicit `--allow-remote` option. This option only acknowledges the exposure risk; it does not add authentication or multi-user data isolation, so public deployments still require authentication and access control in front of the app. Each uploaded file is limited to 100 MiB. Remote mode disables exports to request-selected server directories; job downloads expose only preview OGG files and generated TJA files, not AI sidecars or internal state files, and public progress/result responses hide server paths, connection URLs, and full provider response details.
+The Web UI supports audio upload, BPM/OFFSET/time-signature override, analysis preview, and rule-based or AI-enhanced regeneration of a selected bar range. Completed jobs open a playable chart preview with OGG playback, automatic note performance, timeline seeking, and don/ka hit sounds. Low-confidence analysis, BeatNet fallback, `spectral-v1` fallback, `instrument-v1` complete/partial/fallback state, base-resolution fallback, AI fallback, and final write errors are represented as structured `GenerationNotice` records, shown on both progress and result pages, and persisted to `generation_notices*.json`; the CLI writes the same class of sidecar and includes notices in `report.txt`. Its collapsed AI options expose the per-attempt request timeout and 0–1 transport retries. Full-chart generation saves these non-sensitive settings for the result page, and local regenerate calls run the synchronous AI helper in a thread pool so they do not block the FastAPI event loop. It listens on `127.0.0.1:8000` by default and writes job files under `output/web/`. Listening on a non-loopback address requires the explicit `--allow-remote` option. This option only acknowledges the exposure risk; it does not add authentication or multi-user data isolation, so public deployments still require authentication and access control in front of the app. Each uploaded file is limited to 100 MiB. Remote mode disables exports to request-selected server directories; job downloads expose only preview OGG files and generated TJA files, not AI sidecars or internal state files, and public progress/result responses hide server paths, connection URLs, and full provider response details. Remote mode disables Demucs/AST inference unless the server administrator also starts the app with `--allow-instrument-analysis`.
 
 ## Output
 
@@ -198,11 +224,11 @@ output/
 
 ## Reproducibility
 
-Each `generate` run writes `generation_config.json` next to the TJA output. It records input path, metadata, difficulty, all-course mode, style, density, `--max-bars`, BPM/OFFSET overrides, time-signature override, BeatNet flag, special-note flag, AI flag, final resolved model name, content repair count, request timeout, and transport retry count. Use `generate-from-config` to run the same generation parameters again. `ai_attempts*.json` records content-validation attempts separately from actual transport attempts and includes a stable fallback reason when generation ultimately fails. API keys and base URLs are not written to `generation_config.json`; provide connection settings again through `.env`, environment variables, or command options when rerunning AI generation.
+Each `generate` run writes `generation_config.json` next to the TJA output. It records input path, metadata, difficulty, all-course mode, style, density, `--max-bars`, BPM/OFFSET overrides, time-signature override, BeatNet flag, Stage C flag/device and optional model directory, special-note flag, AI flag, final resolved model name, content repair count, request timeout, and transport retry count. Use `generate-from-config` to run the same generation parameters again. `ai_attempts*.json` records content-validation attempts separately from actual transport attempts and includes a stable fallback reason when generation ultimately fails. API keys and base URLs are not written to `generation_config.json`; provide connection settings again through `.env`, environment variables, or command options when rerunning AI generation.
 
 ## Quality Evaluation
 
-The four rule-based course loads are initially calibrated against anonymous aggregate statistics from real four-course charts and are regression-tested through project-generated 120 BPM sparse, 180 BPM dense, adaptive 16/24/48-resolution, and stable→build-up→peak→drop structure WAV fixtures; the same pipeline also verifies `spectral-v1` envelope alignment, non-empty flux, bar/sparse-grid mapping, and graceful fallback. In addition to whole-chart average and peak-bar notes/sec, `quality_report*.json` records active-bar average notes/sec, longest note-stream count/duration, accent coverage, normalized pattern repetition, structure-density correlation, peak contrast, build-up slope agreement, cadence variation, fill-candidate precision, returning-section motif consistency, and resolution changes/quantization error. Ordinary hit count, NPS, streams, accents, and repetition are measured by real time or normalized bar position, so equivalent rhythms do not change when encoded at 16, 24, or 48 grids. Ordinary load counts only notes `1`–`4`; special-note load remains separate. New structure metrics are report-only and do not yet participate in a weighted score or AI repair gate.
+The four rule-based course loads are initially calibrated against anonymous aggregate statistics from real four-course charts and are regression-tested through project-generated 120 BPM sparse, 180 BPM dense, adaptive 16/24/48-resolution, and stable→build-up→peak→drop structure WAV fixtures; the same pipeline also verifies `spectral-v1` envelope alignment, non-empty flux, bar/sparse-grid mapping, and graceful fallback. In addition to whole-chart average and peak-bar notes/sec, `quality_report*.json` records active-bar average notes/sec, longest note-stream count/duration, accent coverage, normalized pattern repetition, structure-density correlation, peak contrast, build-up slope agreement, cadence variation, fill-candidate precision, returning-section motif consistency, drum-onset coverage, bass/downbeat alignment, vocal-phrase response, instrument-transition response, confident Stage C coverage, instrument-supported fills, and resolution changes/quantization error. Ordinary hit count, NPS, streams, accents, and repetition are measured by real time or normalized bar position, so equivalent rhythms do not change when encoded at 16, 24, or 48 grids. Ordinary load counts only notes `1`–`4`; special-note load remains separate. New structure metrics are report-only and do not yet participate in a weighted score or AI repair gate.
 
 Run `python tools/analyze_reference_dataset.py <reference-dir>` to analyze a user-provided directory of same-stem audio/TJA pairs offline. It emits anonymous aggregate metrics for multiple courses, BPM changes, measures, GOGO sections, and variable resolutions. Run `python tools/build_reference_windows.py <reference-dir> --output src/tja_ai_chartgen/ai/reference_windows.json` to rebuild continuous prompt windows offline. Runtime generation never reads that directory, and the repository does not store the reference audio, titles, raw notes, or absolute paths. Automated gates cover silence preservation, the four-course gradient, sparse-music restraint, high-BPM caps, dense Hard/Oni separation, structural roles, phrase-stable resolution, determinism, and structural preflight. Coloring, play feel, fill quality, and perceived star rating still require human playtesting and listening. See [docs/quality-evaluation.md](docs/quality-evaluation.md) for metric definitions, anonymous calibration ranges, reproduction steps, and the manual checklist.
 
@@ -219,6 +245,7 @@ Run `python tools/analyze_reference_dataset.py <reference-dir>` to analyze a use
 - `--style technical|stamina|hybrid|performance` selects rhythmic tendency, don/ka coloring, special-note candidate thresholds, and AI prompts; ordinary placements still prioritize analyzed music features.
 - `--special-notes` adds single-bar drumrolls and duration-scaled balloons only at active fill candidates confirmed by structure analysis; cross-bar rolls, complex drumroll performances, and branch syntax are still unsupported.
 - `--use-beatnet` requires separately installing `BeatNet`; if BeatNet is unavailable or analysis fails, the CLI keeps the default librosa result.
+- `--use-instrument-analysis` requires optional dependencies and prepared local weights. Demucs and AST add substantial analysis time, memory use, and model storage. Source separation leakage and classifier errors remain possible, so all labels require human review.
 - `--use-ai` can still fall back to the rule-based generator when the model is unavailable, output repair is exhausted, or credentials are misconfigured.
 - The Web UI is a local MVP. It does not provide accounts, persistent task management, or a full chart editor.
 - The MVP does not support BPM changes, branch charts, complex drumroll performances, or scroll gimmicks.
@@ -228,5 +255,5 @@ Run `python tools/analyze_reference_dataset.py <reference-dir>` to analyze a use
 The following areas are still not implemented and are suitable for later versions:
 
 - Support BPM changes, complex drumroll performances, branch charts, and scroll gimmicks for fuller TJA syntax coverage.
-- Calibrate `spectral-v1` and structural thresholds with more real songs and playtesting, then decide which spectral/structure metrics should enter AI repair or CI gates.
+- Calibrate `spectral-v1`, `instrument-v1`, and structural thresholds with more real songs and playtesting, then decide which spectral/source/instrument/structure metrics should enter AI repair or CI gates.
 - Expand the Web UI with task management, chart editing, and longer-term result storage.

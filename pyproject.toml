@@ -58,6 +58,12 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.6.0",
 ]
+instrument = [
+    "demucs>=4.0.1",
+    "huggingface-hub>=0.34.0",
+    "torch>=2.1.0",
+    "transformers>=4.57.0,<6.0",
+]
 
 [project.scripts]
 tja-ai-chartgen = "tja_ai_chartgen.cli:app"
@@ -67,3 +73,7 @@ line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["-m", "not instrument_model"]
+markers = [
+    "instrument_model: runs real local Demucs and AST model inference",
+]

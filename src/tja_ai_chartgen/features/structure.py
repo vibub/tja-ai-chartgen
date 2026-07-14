@@ -118,6 +118,7 @@ def _build_structure_vectors(bars: list[BarFeature]) -> list[BarStructureFeature
                 harmonic_novelty=_rounded(bar.harmonic_novelty),
                 texture_novelty=_rounded(bar.texture_novelty),
                 percussive_ratio=_rounded(bar.percussive_ratio),
+                instrument=bar.instrument,
                 rhythm_profile=_resample_profile(rhythm_values, use_max=True),
                 activity_profile=_resample_profile(activity_values, use_max=False),
                 edge_silent=position in edge_silent_indexes,
@@ -203,6 +204,28 @@ def _boundary_scores(structures: list[BarStructureFeature]) -> dict[int, float]:
             )
             spectral_boundary = min(1.0, timbre_difference * 0.65 + novelty * 0.35)
             score = max(score, score * 0.75 + spectral_boundary * 0.55)
+        if any(_has_instrument_evidence(item) for item in [*left, *right]):
+            instrument_difference = _profile_distance(
+                _mean_profile([_instrument_profile(item) for item in left]),
+                _mean_profile([_instrument_profile(item) for item in right]),
+            )
+            vocal_change = abs(
+                structures[position].instrument.vocal_activity
+                - structures[position - 1].instrument.vocal_activity
+            )
+            source_switch = _source_switch_confidence(
+                structures[position - 1],
+                structures[position],
+            )
+            instrument_boundary = min(
+                1.0,
+                instrument_difference * 0.55
+                + vocal_change * 0.25
+                + source_switch * 0.35,
+            )
+            score = max(score, score * 0.8 + instrument_boundary * 0.55)
+            if source_switch >= 0.55:
+                score = max(score, 0.5 + source_switch * 0.15)
         if structures[position - 1].edge_silent != structures[position].edge_silent:
             score = max(score, 0.9)
         scores[position] = _rounded(min(1.0, score))
@@ -219,19 +242,21 @@ def _combined_drive(structure: BarStructureFeature) -> float:
         + _onset_drive(structure) * 0.35
         + structure.activity_mean * 0.20
     )
-    if not _has_spectral_evidence(structure):
-        return base
-    spectral_drive = (
-        structure.spectral_flux * 0.45
-        + structure.percussive_ratio * 0.30
-        + max(
-            structure.low_onset_strength,
-            structure.mid_onset_strength,
-            structure.high_onset_strength,
+    spectral_bonus = 0.0
+    if _has_spectral_evidence(structure):
+        spectral_drive = (
+            structure.spectral_flux * 0.45
+            + structure.percussive_ratio * 0.30
+            + max(
+                structure.low_onset_strength,
+                structure.mid_onset_strength,
+                structure.high_onset_strength,
+            )
+            * 0.25
         )
-        * 0.25
-    )
-    return min(1.0, base + spectral_drive * 0.12)
+        spectral_bonus = spectral_drive * 0.12
+    instrument_bonus = _instrument_intensity(structure) * 0.10
+    return min(1.0, base + spectral_bonus + instrument_bonus)
 
 
 def _has_spectral_evidence(structure: BarStructureFeature) -> bool:
@@ -272,6 +297,101 @@ def _spectral_intensity(structure: BarStructureFeature) -> float:
             structure.high_onset_strength,
         )
         * 0.25,
+    )
+
+
+def _has_instrument_evidence(structure: BarStructureFeature) -> bool:
+    instrument = structure.instrument
+    return instrument.confidence > 0.0 or any(
+        value > 0.0
+        for value in (
+            instrument.vocal_activity,
+            instrument.drum_activity,
+            instrument.bass_activity,
+            instrument.other_activity,
+            instrument.guitar,
+            instrument.piano_keyboard,
+            instrument.strings,
+            instrument.brass,
+            instrument.woodwind,
+            instrument.synth,
+            instrument.organ,
+            instrument.other_instrument,
+        )
+    )
+
+
+def _instrument_profile(structure: BarStructureFeature) -> list[float]:
+    instrument = structure.instrument
+    return [
+        instrument.vocal_activity,
+        instrument.drum_activity,
+        instrument.bass_activity,
+        instrument.other_activity,
+        instrument.guitar,
+        instrument.piano_keyboard,
+        instrument.strings,
+        instrument.brass,
+        instrument.woodwind,
+        instrument.synth,
+        instrument.organ,
+        instrument.other_instrument,
+    ]
+
+
+def _instrument_intensity(structure: BarStructureFeature) -> float:
+    instrument = structure.instrument
+    accompaniment = max(
+        instrument.other_activity,
+        instrument.guitar,
+        instrument.piano_keyboard,
+        instrument.strings,
+        instrument.brass,
+        instrument.woodwind,
+        instrument.synth,
+        instrument.organ,
+    )
+    return min(
+        1.0,
+        instrument.drum_activity * 0.35
+        + instrument.bass_activity * 0.25
+        + accompaniment * 0.25
+        + instrument.vocal_activity * 0.15,
+    )
+
+
+def _source_switch_confidence(
+    previous: BarStructureFeature,
+    current: BarStructureFeature,
+) -> float:
+    previous_source = previous.instrument.dominant_source
+    current_source = current.instrument.dominant_source
+    if (
+        previous_source is None
+        or current_source is None
+        or previous_source == current_source
+    ):
+        return 0.0
+    return min(previous.instrument.confidence, current.instrument.confidence)
+
+
+def _instrument_cadence_cue(
+    structures: list[BarStructureFeature],
+    position: int,
+) -> float:
+    if position <= 0 or position >= len(structures):
+        return 0.0
+    previous = structures[position - 1].instrument
+    current = structures[position].instrument
+    vocal_drop = max(0.0, previous.vocal_activity - current.vocal_activity)
+    drum_burst = max(0.0, current.drum_activity - previous.drum_activity)
+    accompaniment_burst = max(0.0, current.other_activity - previous.other_activity)
+    return min(
+        1.0,
+        vocal_drop * 0.55
+        + drum_burst * 0.45
+        + accompaniment_burst * 0.30
+        + current.drum_activity * 0.15,
     )
 
 
@@ -417,15 +537,32 @@ def _phrase_role(structures: list[BarStructureFeature], energy_trend: float) -> 
         and mean_percussive <= 0.25
         and mean_flux <= 0.35
     )
+    has_instrument_evidence = any(_has_instrument_evidence(item) for item in structures)
+    instrument_trend = _linear_trend([_instrument_intensity(item) for item in structures])
+    mean_drums = mean(item.instrument.drum_activity for item in structures)
+    mean_bass = mean(item.instrument.bass_activity for item in structures)
+    mean_vocals = mean(item.instrument.vocal_activity for item in structures)
+    mean_other = mean(item.instrument.other_activity for item in structures)
+    instrument_breakdown = (
+        has_instrument_evidence
+        and max(mean_vocals, mean_other) >= 0.25
+        and mean_drums <= 0.22
+        and mean_bass <= 0.22
+    )
     if mean_activity >= 0.18 and (
         (mean_energy <= 0.4 and mean_onset <= 0.08)
         or (spectral_breakdown and mean_onset <= 0.12)
+        or instrument_breakdown
     ):
         return "breakdown"
     if energy_trend >= 0.055 or (
         has_spectral_evidence
         and energy_trend >= -0.02
         and spectral_trend >= 0.055
+    ) or (
+        has_instrument_evidence
+        and energy_trend >= -0.02
+        and instrument_trend >= 0.055
     ):
         return "build_up"
     if (
@@ -435,6 +572,12 @@ def _phrase_role(structures: list[BarStructureFeature], energy_trend: float) -> 
             has_spectral_evidence
             and mean_energy >= 0.6
             and mean(_spectral_intensity(item) for item in structures) >= 0.7
+        )
+        or (
+            has_instrument_evidence
+            and mean_drums >= 0.55
+            and mean_bass >= 0.35
+            and max(mean_vocals, mean_other) >= 0.45
         )
     ):
         return "peak"
@@ -446,6 +589,10 @@ def _phrase_signature(structures: list[BarStructureFeature]) -> list[float]:
         mean(item.energy_percentile for item in structures),
         mean(_onset_drive(item) for item in structures),
         mean(item.activity_mean for item in structures),
+        mean(item.instrument.vocal_activity for item in structures),
+        mean(item.instrument.drum_activity for item in structures),
+        mean(item.instrument.bass_activity for item in structures),
+        mean(item.instrument.other_activity for item in structures),
         *_mean_profile([item.rhythm_profile for item in structures]),
     ]
 
@@ -491,6 +638,15 @@ def _assign_transition_roles(
                     and structure.spectral_flux >= 0.75
                     and structure.percussive_ratio >= 0.55
                 )
+                or (
+                    structure.instrument.drum_activity >= 0.7
+                    and structure.instrument.bass_activity >= 0.45
+                    and max(
+                        structure.instrument.vocal_activity,
+                        structure.instrument.other_activity,
+                    )
+                    >= 0.5
+                )
             )
             and structure.energy_percentile
             >= max(
@@ -514,6 +670,16 @@ def _assign_transition_roles(
                         and structure.percussive_ratio <= 0.25
                         and structure.spectral_flux <= 0.35
                     )
+                    or (
+                        _has_instrument_evidence(structure)
+                        and max(
+                            structure.instrument.vocal_activity,
+                            structure.instrument.other_activity,
+                        )
+                        >= 0.25
+                        and structure.instrument.drum_activity <= 0.22
+                        and structure.instrument.bass_activity <= 0.22
+                    )
                 )
             )
         ):
@@ -522,9 +688,15 @@ def _assign_transition_roles(
         elif phrase.primary_role == "build_up" and structure.phrase_progress < 1.0:
             role = "build_up"
             confidence = min(1.0, 0.55 + max(0.0, phrase.energy_trend) * 4)
-        elif structure.phrase_position in {"end", "single"} and structure.boundary_confidence >= 0.46:
+        elif structure.phrase_position in {"end", "single"} and (
+            structure.boundary_confidence >= 0.46
+            or _instrument_cadence_cue(structures, position) >= 0.45
+        ):
             role = "cadence"
-            confidence = structure.boundary_confidence
+            confidence = max(
+                structure.boundary_confidence,
+                _instrument_cadence_cue(structures, position),
+            )
         else:
             role = "stable"
             confidence = max(0.35, 1.0 - abs(drive_delta))
@@ -575,7 +747,38 @@ def _assign_sections(
         group_phrases = [phrases[phrase_id] for phrase_id in phrase_ids]
         mean_energy = mean(phrase.mean_energy for phrase in group_phrases)
         mean_activity = mean(
-            mean(structures[position].activity_mean for position in range(phrase.start_bar, phrase.end_bar + 1))
+            mean(
+                structures[position].activity_mean
+                for position in range(phrase.start_bar, phrase.end_bar + 1)
+            )
+            for phrase in group_phrases
+        )
+        mean_vocals = mean(
+            mean(
+                structures[position].instrument.vocal_activity
+                for position in range(phrase.start_bar, phrase.end_bar + 1)
+            )
+            for phrase in group_phrases
+        )
+        mean_drums = mean(
+            mean(
+                structures[position].instrument.drum_activity
+                for position in range(phrase.start_bar, phrase.end_bar + 1)
+            )
+            for phrase in group_phrases
+        )
+        mean_bass = mean(
+            mean(
+                structures[position].instrument.bass_activity
+                for position in range(phrase.start_bar, phrase.end_bar + 1)
+            )
+            for phrase in group_phrases
+        )
+        mean_other = mean(
+            mean(
+                structures[position].instrument.other_activity
+                for position in range(phrase.start_bar, phrase.end_bar + 1)
+            )
             for phrase in group_phrases
         )
         repeated = len(group_phrases) > 1
@@ -583,9 +786,14 @@ def _assign_sections(
             section = "intro"
         elif not repeated and group_phrases[0].phrase_id == len(phrases) - 1:
             section = "outro"
-        elif mean_energy <= 0.35 and mean_activity < 0.35:
+        elif mean_energy <= 0.35 and mean_activity < 0.35 and mean_vocals < 0.15:
             section = "break"
-        elif mean_energy >= 0.65:
+        elif mean_energy >= 0.65 or (
+            mean_vocals >= 0.35
+            and mean_drums >= 0.45
+            and mean_bass >= 0.25
+            and mean_other >= 0.35
+        ):
             section = "chorus"
         else:
             section = "verse"
@@ -638,6 +846,15 @@ def _assign_fill_candidates(
                 + structure.texture_novelty * 0.05
                 + structure.high_onset_strength * 0.04,
             )
+        instrument_fill_cue = 0.0
+        if _has_instrument_evidence(structure):
+            cadence_cue = _instrument_cadence_cue(structures, position)
+            instrument_fill_cue = min(
+                0.15,
+                cadence_cue * 0.10
+                + structure.instrument.drum_activity * 0.03
+                + structure.instrument.other_activity * 0.02,
+            )
         score = (
             phrase.ending_boundary_confidence * 0.30
             + onset_richness * 0.15
@@ -645,6 +862,7 @@ def _assign_fill_candidates(
             + next_highlight * 0.15
             + song_end_bonus
             + spectral_fill_cue
+            + instrument_fill_cue
             + (0.10 if structure.transition_role in {"cadence", "peak"} else 0.0)
         )
         if structure.edge_silent:

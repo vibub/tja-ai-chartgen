@@ -32,7 +32,11 @@ def test_web_allows_loopback_hosts_without_remote_opt_in(monkeypatch, tmp_path, 
     )
 
     assert result.exit_code == 0, result.output
-    assert calls["create_app"] == {"output_dir": tmp_path, "remote_mode": False}
+    assert calls["create_app"] == {
+        "output_dir": tmp_path,
+        "remote_mode": False,
+        "allow_instrument_analysis": False,
+    }
     assert calls["uvicorn"]["host"] == host
 
 
@@ -66,4 +70,32 @@ def test_web_allows_non_loopback_host_with_remote_opt_in(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    assert calls["create_app"] == {"output_dir": tmp_path, "remote_mode": True}
+    assert calls["create_app"] == {
+        "output_dir": tmp_path,
+        "remote_mode": True,
+        "allow_instrument_analysis": False,
+    }
+
+
+def test_web_can_explicitly_allow_remote_instrument_analysis(monkeypatch, tmp_path):
+    calls = _capture_web_start(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "web",
+            "--host",
+            "0.0.0.0",
+            "--allow-remote",
+            "--allow-instrument-analysis",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls["create_app"] == {
+        "output_dir": tmp_path,
+        "remote_mode": True,
+        "allow_instrument_analysis": True,
+    }

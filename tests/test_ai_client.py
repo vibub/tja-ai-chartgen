@@ -21,6 +21,8 @@ from tja_ai_chartgen.tja.model import (
     BarFeature,
     BarStructureFeature,
     ChartBar,
+    InstrumentBarFeature,
+    InstrumentGridFeature,
     PhraseFeature,
     ResolutionPlan,
     SongAnalysis,
@@ -261,6 +263,61 @@ def test_build_chart_generation_payload_includes_compact_spectral_semantics():
         "spectral_flux",
     ]
     assert payload["bars"][0]["spectral_events"] == [[12, 0.8, 0.0, 0.2, 0.9]]
+
+
+def test_build_chart_generation_payload_includes_compact_instrument_semantics():
+    analysis = _analysis()
+    instrument_bar = analysis.bars[0].model_copy(
+        update={
+            "instrument": InstrumentBarFeature(
+                vocal_activity=0.7,
+                vocal_presence_ratio=0.8,
+                drum_activity=0.9,
+                bass_activity=0.6,
+                other_activity=0.5,
+                guitar=0.75,
+                synth=0.04,
+                dominant_source="drums",
+                dominant_instrument="guitar",
+                confidence=0.85,
+            ),
+            "instrument_grid_features": [
+                InstrumentGridFeature(
+                    grid=12,
+                    vocal_onset=0.3,
+                    drum_onset=0.9,
+                    bass_onset=0.6,
+                    accompaniment_onset=0.4,
+                )
+            ],
+        }
+    )
+    analysis = analysis.model_copy(
+        update={
+            "instrument_feature_version": "instrument-v1",
+            "instrument_analysis_status": "complete",
+            "bars": [instrument_bar],
+        }
+    )
+
+    payload = build_chart_generation_payload(analysis, "Oni", 10, "technical")
+
+    columns = payload["legend"]["instrument_bar_columns"]
+    assert payload["instrument_feature_version"] == "instrument-v1"
+    assert payload["instrument_analysis_status"] == "complete"
+    assert payload["bar_instruments"][0][columns.index("vocal_activity")] == 0.7
+    assert payload["bar_instruments"][0][columns.index("dominant_source")] == "drums"
+    assert payload["bar_instruments"][0][columns.index("active_instruments")] == [
+        ["guitar", 0.75]
+    ]
+    assert payload["legend"]["instrument_grid_columns"] == [
+        "grid",
+        "vocal_onset",
+        "drum_onset",
+        "bass_onset",
+        "accompaniment_onset",
+    ]
+    assert payload["bars"][0]["instrument_events"] == [[12, 0.3, 0.9, 0.6, 0.4]]
 
 
 def test_build_chart_generation_payload_can_include_static_reference_prompt():

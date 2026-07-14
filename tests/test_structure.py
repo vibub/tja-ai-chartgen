@@ -3,7 +3,7 @@ from math import ceil
 import pytest
 
 from tja_ai_chartgen.features.structure import analyze_song_structure
-from tja_ai_chartgen.tja.model import BarFeature
+from tja_ai_chartgen.tja.model import BarFeature, InstrumentBarFeature
 
 
 @pytest.mark.parametrize("phrase_length", [3, 4, 6, 8, 12])
@@ -137,6 +137,90 @@ def test_structure_uses_timbre_and_harmonic_novelty_for_phrase_boundaries():
     assert result.phrases[0].end_bar == 3
     assert result.phrases[1].start_bar == 4
     assert result.bar_structures[3].boundary_confidence >= 0.4
+
+
+def test_structure_uses_vocal_entry_and_source_switch_for_phrase_boundary():
+    bars = [_bar(index, energy=0.5, pattern="quarter", activity=0.45) for index in range(8)]
+    for index in range(4):
+        bars[index] = bars[index].model_copy(
+            update={
+                "instrument": InstrumentBarFeature(
+                    vocal_activity=0.8,
+                    vocal_presence_ratio=0.9,
+                    drum_activity=0.15,
+                    other_activity=0.25,
+                    dominant_source="vocals",
+                    confidence=0.8,
+                )
+            }
+        )
+    for index in range(4, 8):
+        bars[index] = bars[index].model_copy(
+            update={
+                "instrument": InstrumentBarFeature(
+                    vocal_activity=0.1,
+                    drum_activity=0.85,
+                    bass_activity=0.55,
+                    other_activity=0.65,
+                    guitar=0.75,
+                    dominant_source="drums",
+                    dominant_instrument="guitar",
+                    confidence=0.85,
+                )
+            }
+        )
+
+    result = analyze_song_structure(bars)
+
+    assert len(result.phrases) == 2
+    assert result.phrases[0].end_bar == 3
+    assert result.phrases[1].start_bar == 4
+    assert result.bar_structures[4].instrument.dominant_source == "drums"
+
+
+def test_structure_uses_instrument_growth_for_build_up_role():
+    bars = [_bar(index, energy=0.5, pattern="quarter", activity=0.45) for index in range(4)]
+    for index, value in enumerate([0.1, 0.35, 0.65, 0.95]):
+        bars[index] = bars[index].model_copy(
+            update={
+                "instrument": InstrumentBarFeature(
+                    drum_activity=value,
+                    bass_activity=value * 0.7,
+                    other_activity=value * 0.8,
+                    synth=value,
+                    dominant_source="drums",
+                    confidence=value,
+                )
+            }
+        )
+
+    result = analyze_song_structure(bars)
+
+    assert "build_up" in [item.transition_role for item in result.bar_structures[:3]]
+
+
+def test_structure_uses_vocal_only_texture_for_breakdown_role():
+    bars = [_bar(index, energy=0.5, pattern="quarter", activity=0.5) for index in range(4)]
+    bars = [
+        bar.model_copy(
+            update={
+                "instrument": InstrumentBarFeature(
+                    vocal_activity=0.7,
+                    vocal_presence_ratio=0.9,
+                    drum_activity=0.05,
+                    bass_activity=0.05,
+                    other_activity=0.2,
+                    dominant_source="vocals",
+                    confidence=0.8,
+                )
+            }
+        )
+        for bar in bars
+    ]
+
+    result = analyze_song_structure(bars)
+
+    assert "breakdown" in [item.transition_role for item in result.bar_structures]
 
 
 def test_structure_reuses_section_id_for_returning_phrase():

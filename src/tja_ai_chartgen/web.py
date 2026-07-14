@@ -1755,15 +1755,22 @@ def create_app(
     output_dir: Path = DEFAULT_WEB_OUTPUT_DIR,
     *,
     remote_mode: bool = False,
+    allow_instrument_analysis: bool = False,
 ) -> FastAPI:
     load_dotenv()
     app = FastAPI(title="tja-ai-chartgen Web UI")
     app.state.output_dir = output_dir
     app.state.remote_mode = remote_mode
+    app.state.allow_instrument_analysis = not remote_mode or allow_instrument_analysis
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
-        return _page("tja-ai-chartgen", _analysis_form())
+        return _page(
+            "tja-ai-chartgen",
+            _analysis_form(
+                allow_instrument_analysis=app.state.allow_instrument_analysis
+            ),
+        )
 
     @app.post("/analyze", response_class=HTMLResponse)
     async def analyze(
@@ -1775,6 +1782,8 @@ def create_app(
         offset: Annotated[float | None, Form()] = None,
         time_signature: Annotated[str, Form()] = "",
         use_beatnet: Annotated[bool, Form()] = False,
+        use_instrument_analysis: Annotated[bool, Form()] = False,
+        instrument_device: Annotated[str, Form()] = "auto",
         course: Annotated[str, Form()] = "Oni",
         level: Annotated[int, Form()] = 10,
         style: Annotated[str, Form()] = "technical",
@@ -1792,6 +1801,12 @@ def create_app(
         try:
             validate_density(density)
             validate_style(style)
+            if instrument_device not in {"auto", "cpu", "cuda", "mps"}:
+                raise ValueError("Instrument device must be auto, cpu, cuda, or mps")
+            if use_instrument_analysis and not app.state.allow_instrument_analysis:
+                raise ValueError(
+                    "Remote instrument analysis is disabled by the server administrator"
+                )
             if ai_repair_retries < 0:
                 raise ValueError("AI repair retries must be greater than or equal to 0")
             _validate_ai_transport_settings(ai_request_timeout, ai_transport_retries)
@@ -1820,6 +1835,8 @@ def create_app(
                     "offset": offset,
                     "time_signature": time_signature,
                     "use_beatnet": use_beatnet,
+                    "use_instrument_analysis": use_instrument_analysis,
+                    "instrument_device": instrument_device,
                     "course": course,
                     "level": level,
                     "style": style,
@@ -2266,6 +2283,8 @@ def _run_analyze_job(
     offset: float | None,
     time_signature: str,
     use_beatnet: bool,
+    use_instrument_analysis: bool,
+    instrument_device: str,
     course: str,
     level: int,
     style: str,
@@ -2298,6 +2317,13 @@ def _run_analyze_job(
                     step="analyze",
                     message="正在提取 BPM、OFFSET、拍号和小节能量。",
                 )
+            elif stage == "instruments":
+                _write_progress(
+                    job_dir,
+                    status=_PROGRESS_RUNNING,
+                    step="instruments",
+                    message="正在使用本地模型分析人声、鼓、贝斯和伴奏乐器。",
+                )
 
         analysis = build_song_analysis(
             input_audio=input_path,
@@ -2309,11 +2335,17 @@ def _run_analyze_job(
             offset_override=offset,
             time_signature_override=time_signature or None,
             use_beatnet=use_beatnet,
+            use_instrument_analysis=use_instrument_analysis,
+            instrument_device=instrument_device,
             stage_callback=report_analysis_stage,
         )
         bars = analysis.bars
         write_json(job_dir / "analysis.json", analysis)
-        notices = build_analysis_notices(analysis, requested_beatnet=use_beatnet)
+        notices = build_analysis_notices(
+            analysis,
+            requested_beatnet=use_beatnet,
+            requested_instrument_analysis=use_instrument_analysis,
+        )
         _write_job_notices(job_dir, notices)
 
         _write_progress(
@@ -2361,6 +2393,8 @@ def _run_analyze_job(
             {
                 "course": course,
                 "level": level,
+                "use_instrument_analysis": use_instrument_analysis,
+                "instrument_device": instrument_device,
                 "use_ai": use_ai,
                 "ai_failure": ai_failure if use_ai else None,
                 "ai_request_timeout": ai_request_timeout,
@@ -3025,7 +3059,13 @@ def _resolve_web_ai_credentials(ai_base_url: str, ai_api_key: str) -> tuple[str 
     return None, None
 
 
-def _analysis_form() -> str:
+def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
+    instrument_disabled = "" if allow_instrument_analysis else " disabled"
+    instrument_hint = (
+        "需要先运行 prepare-instrument-models；分析会增加耗时和内存占用。"
+        if allow_instrument_analysis
+        else "远程模式未由服务器管理员开放重型分析。"
+    )
     return f"""
 <section class="hero" aria-labelledby="page-title">
   <div class="hero-copy">
@@ -3087,6 +3127,16 @@ def _analysis_form() -> str:
         <label class="checkbox-card field-wide">
           <input name="use_beatnet" type="checkbox" value="true" checked>
           <span>使用 BeatNet <span class="field-hint">尝试增强强拍、拍号和 offset。</span></span>
+        </label>
+        <label class="checkbox-card field-wide">
+          <input name="use_instrument_analysis" type="checkbox" value="true"{instrument_disabled}>
+          <span>人声与乐器分析 <span class="field-hint">{_escape(instrument_hint)}</span></span>
+        </label>
+        <label class="field">
+          分析设备
+          <select name="instrument_device"{instrument_disabled}>
+            {_option_tags(("auto", "cpu", "cuda", "mps"), "auto")}
+          </select>
         </label>
         <label class="field">
           难度类型
@@ -3556,6 +3606,52 @@ def _timeline_note_class(note: str) -> str:
     return "end"
 
 
+def _instrument_analysis_summary(analysis: SongAnalysis) -> str:
+    if analysis.instrument_analysis_status == "unavailable":
+        return ""
+    status_text = {
+        "complete": "完整",
+        "partial": "部分生效",
+        "fallback": "已降级",
+    }.get(analysis.instrument_analysis_status, analysis.instrument_analysis_status)
+    source_counts = {
+        source: sum(bar.instrument.dominant_source == source for bar in analysis.bars)
+        for source in ("vocals", "drums", "bass", "other")
+    }
+    label_names = {
+        "guitar": "吉他",
+        "piano_keyboard": "钢琴/键盘",
+        "strings": "弦乐",
+        "brass": "铜管",
+        "woodwind": "木管",
+        "synth": "合成器",
+        "organ": "风琴",
+        "other_instrument": "其他乐器",
+    }
+    detected = [
+        display
+        for field, display in label_names.items()
+        if max((getattr(bar.instrument, field) for bar in analysis.bars), default=0.0)
+        >= 0.25
+    ]
+    detected_text = "、".join(detected) if detected else "未得到高置信细分类别"
+    device = analysis.instrument_analysis_device or "未记录"
+    return f"""
+  <section class="panel" aria-labelledby="instrument-summary-heading">
+    <p class="eyebrow">阶段 C</p>
+    <h2 id="instrument-summary-heading">人声与乐器分析</h2>
+    <p class="lede">状态：{_escape(status_text)}；设备：{_escape(device)}。</p>
+    <div class="helper-strip">
+      <span>人声主导 {source_counts['vocals']} 小节</span>
+      <span>鼓组主导 {source_counts['drums']} 小节</span>
+      <span>贝斯主导 {source_counts['bass']} 小节</span>
+      <span>伴奏主导 {source_counts['other']} 小节</span>
+    </div>
+    <p class="field-hint">主要乐器：{_escape(detected_text)}。识别结果只作为结构和谱面生成的软证据。</p>
+  </section>
+"""
+
+
 def _result_panel(
     *,
     job_id: str,
@@ -3574,6 +3670,7 @@ def _result_panel(
     <p class="result-path">谱面已生成：<code>{_escape(str(output_path))}</code></p>
     <p class="lede">生成完成后直接进入可视化预览。点击播放自动演奏，拖动进度条查看任意位置，不再把大段 TJA 数值直接丢给用户。</p>
   </section>
+  {_instrument_analysis_summary(analysis)}
   {_export_form(job_id, output_path, analysis)}
   {_game_preview(job_id, analysis, chart_bars, course, level)}
 </section>
@@ -3824,6 +3921,11 @@ _PROGRESS_STEPS = (
         "detail": "提取 BPM、OFFSET、拍号、小节和段落特征。",
     },
     {
+        "key": "instruments",
+        "label": "识别人声与乐器",
+        "detail": "显式启用时使用本地 Demucs 与 AST 模型提取语义。",
+    },
+    {
         "key": "generate",
         "label": "生成谱面",
         "detail": "按选择的难度、风格和密度生成 TJA 小节。",
@@ -3863,7 +3965,7 @@ def _notice_payloads(
 
 
 def _notice_stage_for_progress_step(step: str) -> str:
-    if step in {"upload", "convert", "analyze"}:
+    if step in {"upload", "convert", "analyze", "instruments"}:
         return "analysis"
     if step == "generate":
         return "generation"

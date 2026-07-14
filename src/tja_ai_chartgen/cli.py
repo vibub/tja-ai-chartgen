@@ -8,6 +8,11 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from tja_ai_chartgen import __version__
+from tja_ai_chartgen.audio.instrument_models import (
+    InstrumentModelError,
+    prepare_instrument_models as prepare_local_instrument_models,
+    resolve_instrument_model_dir,
+)
 from tja_ai_chartgen.features.meter import validate_time_signature
 from tja_ai_chartgen.generation import (
     GenerationConfig,
@@ -43,6 +48,28 @@ def version() -> None:
     console.print(f"tja-ai-chartgen {__version__}")
 
 
+@app.command("prepare-instrument-models")
+def prepare_instrument_models_command(
+    model_dir: Path | None = typer.Option(
+        None,
+        "--model-dir",
+        help="Local instrument model directory. Defaults to <project-root>/models/instrument-v1.",
+    ),
+) -> None:
+    target = resolve_instrument_model_dir(model_dir)
+    console.print(f"Preparing instrument models in: {target}")
+    try:
+        manifest = prepare_local_instrument_models(target)
+    except InstrumentModelError as error:
+        _fail(f"Instrument model preparation failed: {error.reason}")
+    except Exception as error:  # noqa: BLE001 - CLI boundary should hide tracebacks.
+        _fail(f"Instrument model preparation failed: {type(error).__name__}")
+    console.print(
+        "Instrument models prepared: "
+        f"{manifest.demucs_model}, {manifest.classifier_model}"
+    )
+
+
 @app.command()
 def generate(
     input_audio: Path,
@@ -73,6 +100,21 @@ def generate(
         False,
         "--use-beatnet",
         help="Try optional BeatNet analysis for downbeat, meter, and bar start detection.",
+    ),
+    use_instrument_analysis: bool = typer.Option(
+        False,
+        "--use-instrument-analysis",
+        help="Use optional local Demucs and AST models for vocal and instrument semantics.",
+    ),
+    instrument_device: str = typer.Option(
+        "auto",
+        "--instrument-device",
+        help="Instrument analysis device: auto, cpu, cuda, or mps.",
+    ),
+    instrument_model_dir: Path | None = typer.Option(
+        None,
+        "--instrument-model-dir",
+        help="Local instrument model directory. Defaults to <project-root>/models/instrument-v1.",
     ),
     special_notes: bool = typer.Option(
         False,
@@ -122,6 +164,9 @@ def generate(
         offset=offset,
         time_signature=time_signature,
         use_beatnet=use_beatnet,
+        use_instrument_analysis=use_instrument_analysis,
+        instrument_device=instrument_device,
+        instrument_model_dir=instrument_model_dir,
         special_notes=special_notes,
         use_ai=use_ai,
         model=model,
@@ -155,6 +200,9 @@ def generate_from_config(config_path: Path) -> None:
         offset=config.offset_override,
         time_signature=config.time_signature,
         use_beatnet=config.use_beatnet,
+        use_instrument_analysis=config.use_instrument_analysis,
+        instrument_device=config.instrument_device,
+        instrument_model_dir=config.instrument_model_dir,
         special_notes=config.special_notes,
         use_ai=config.use_ai,
         model=config.model,
@@ -186,6 +234,11 @@ def web(
         "--allow-remote",
         help="Allow the unauthenticated Web UI to listen on a non-loopback address.",
     ),
+    allow_instrument_analysis: bool = typer.Option(
+        False,
+        "--allow-instrument-analysis",
+        help="Allow remote Web requests to run local Demucs and AST inference.",
+    ),
 ) -> None:
     import asyncio
     import sys
@@ -202,7 +255,11 @@ def web(
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     uvicorn.run(
-        create_app(output_dir=output_dir, remote_mode=remote_mode),
+        create_app(
+            output_dir=output_dir,
+            remote_mode=remote_mode,
+            allow_instrument_analysis=allow_instrument_analysis,
+        ),
         host=host,
         port=port,
         timeout_keep_alive=1,
@@ -226,6 +283,9 @@ def run_generate(
     offset: float | None,
     time_signature: str | None,
     use_beatnet: bool,
+    use_instrument_analysis: bool,
+    instrument_device: str,
+    instrument_model_dir: Path | None,
     special_notes: bool,
     use_ai: bool,
     model: str | None,
@@ -247,6 +307,8 @@ def run_generate(
             validate_time_signature(time_signature)
         except ValueError as error:
             _fail(str(error))
+    if instrument_device not in {"auto", "cpu", "cuda", "mps"}:
+        _fail("--instrument-device must be auto, cpu, cuda, or mps.")
     if ai_repair_retries < 0:
         _fail("--ai-repair-retries must be greater than or equal to 0.")
     if not 1 <= ai_request_timeout <= 600:
@@ -287,6 +349,9 @@ def run_generate(
         offset_override=offset,
         time_signature=time_signature,
         use_beatnet=use_beatnet,
+        use_instrument_analysis=use_instrument_analysis,
+        instrument_device=instrument_device,
+        instrument_model_dir=instrument_model_dir,
         special_notes=special_notes,
         use_ai=use_ai,
         model=resolved_model,
@@ -308,8 +373,15 @@ def run_generate(
             offset_override=offset,
             time_signature_override=time_signature,
             use_beatnet=use_beatnet,
-            stage_callback=lambda stage: console.print("Analyzing audio...")
-            if stage == "analyze"
+            use_instrument_analysis=use_instrument_analysis,
+            instrument_device=instrument_device,
+            instrument_model_dir=instrument_model_dir,
+            stage_callback=lambda stage: console.print(
+                "Analyzing vocals and instruments..."
+                if stage == "instruments"
+                else "Analyzing audio..."
+            )
+            if stage in {"analyze", "instruments"}
             else None,
         )
     except Exception as error:  # noqa: BLE001 - CLI boundary should hide tracebacks.
@@ -323,7 +395,11 @@ def run_generate(
     tja_paths: list[Path] = []
     all_issues: list[ValidationIssue] = []
     ai_failures: list[str] = []
-    notices = build_analysis_notices(analysis, requested_beatnet=use_beatnet)
+    notices = build_analysis_notices(
+        analysis,
+        requested_beatnet=use_beatnet,
+        requested_instrument_analysis=use_instrument_analysis,
+    )
     for notice in notices:
         _print_notice(notice)
 

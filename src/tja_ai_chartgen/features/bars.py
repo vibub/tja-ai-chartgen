@@ -1,8 +1,15 @@
 from math import ceil, isfinite, log10, sqrt
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
+from tja_ai_chartgen.features.instruments import map_instrument_features
 from tja_ai_chartgen.features.meter import MeterSpec, get_meter_spec
-from tja_ai_chartgen.tja.model import BarFeature, GridFeature, SpectralGridFeature
+from tja_ai_chartgen.features.silence import edge_silence_indexes
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    GridFeature,
+    InstrumentBarFeature,
+    SpectralGridFeature,
+)
 
 
 BEATS_PER_BAR = 4
@@ -102,6 +109,14 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
                 rms_frames_by_bar[bar_index].append(float(rms))
 
     global_peak_rms = _global_peak_rms(raw.rms_envelope)
+    instrument_mapping = map_instrument_features(
+        raw.instruments,
+        analysis_start=analysis_start,
+        bar_length=bar_length,
+        grid_length=grid_length,
+        grids_per_bar=meter.grids_per_bar,
+        bar_count=bar_count,
+    )
     beat_numbers_by_bar, downbeat_grids_by_bar = _map_meter_beats_to_grids(
         meter=meter,
         bar_count=bar_count,
@@ -162,6 +177,8 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
                     downbeat_grids=downbeat_grids,
                 ),
                 spectral_grid_features=spectral_grid_features,
+                instrument_grid_features=instrument_mapping.grids[index],
+                instrument=instrument_mapping.bars[index],
                 low_onset_strength=spectral_summary["low_onset_strength"],
                 mid_onset_strength=spectral_summary["mid_onset_strength"],
                 high_onset_strength=spectral_summary["high_onset_strength"],
@@ -177,6 +194,13 @@ def build_bar_features(raw: AudioAnalysisRaw, max_bars: int | None = None) -> li
             )
         )
 
+    for index in edge_silence_indexes(bars):
+        bars[index] = bars[index].model_copy(
+            update={
+                "instrument": InstrumentBarFeature(),
+                "instrument_grid_features": [],
+            }
+        )
     return bars
 
 

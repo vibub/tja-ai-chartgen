@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
+from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw, StemActivityFrame
 from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw
 from tja_ai_chartgen.generation import (
     GenerationConfig,
@@ -131,9 +132,11 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.time_signature == "3/4"
     assert len(analysis.bars) == 2
     assert all(bar.time_signature == "3/4" for bar in analysis.bars)
-    assert analysis.analysis_schema_version == 4
+    assert analysis.analysis_schema_version == 5
     assert analysis.spectral_feature_version == "spectral-v1"
     assert analysis.spectral_analysis_status == "complete"
+    assert analysis.instrument_feature_version is None
+    assert analysis.instrument_analysis_status == "unavailable"
     assert analysis.structure_feature_version == "structure-v1"
     assert analysis.structure_confidence is not None
     assert len(analysis.bar_structures) == 2
@@ -143,6 +146,80 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.resolution_plan is not None
     assert analysis.resolution_plan.canonical_grids_per_bar == 36
     assert analysis.resolution_plan.bar_resolutions == [12, 12]
+
+
+def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
+    tmp_path,
+    monkeypatch,
+):
+    input_path = tmp_path / "song.mp3"
+    ogg_path = tmp_path / "song.ogg"
+    input_path.write_bytes(b"audio")
+    raw = AudioAnalysisRaw(
+        duration=8.0,
+        bpm=120.0,
+        offset=0.0,
+        time_signature="4/4",
+        beat_times=[],
+        onset_times=[],
+        onset_strengths=[],
+        sample_rate=22_050,
+    )
+    instrument_result = InstrumentAnalysisRaw(
+        feature_version="instrument-v1",
+        status="complete",
+        demucs_model="htdemucs",
+        classifier_model="ast",
+        device="cpu",
+        stem_frames=[StemActivityFrame(time=0.5, vocals=0.7)],
+    )
+    calls = []
+    stages = []
+    monkeypatch.setattr("tja_ai_chartgen.generation.convert_to_ogg", lambda *_args: None)
+    monkeypatch.setattr("tja_ai_chartgen.generation.analyze_audio", lambda *_args, **_kwargs: raw)
+    monkeypatch.setattr(
+        "tja_ai_chartgen.generation.resolve_instrument_model_dir",
+        lambda value: tmp_path / "models" if value is None else value,
+    )
+
+    def fake_analyze(path, **kwargs):
+        calls.append((path, kwargs))
+        return instrument_result
+
+    monkeypatch.setattr("tja_ai_chartgen.generation.analyze_instruments", fake_analyze)
+
+    analysis = build_song_analysis(
+        input_audio=input_path,
+        ogg_path=ogg_path,
+        title="Song",
+        max_bars=2,
+        bpm_override=240.0,
+        offset_override=0.25,
+        time_signature_override="3/4",
+        use_instrument_analysis=True,
+        instrument_device="cpu",
+        stage_callback=stages.append,
+    )
+
+    assert stages == ["convert", "analyze", "instruments", "features"]
+    assert calls == [
+        (
+            ogg_path,
+            {
+                "model_dir": tmp_path / "models",
+                "device": "cpu",
+                "analysis_sample_rate": 22_050,
+                "analysis_hop_length": 512,
+                "max_duration": 5.75,
+            },
+        )
+    ]
+    assert analysis.analysis_schema_version == 5
+    assert analysis.instrument_feature_version == "instrument-v1"
+    assert analysis.instrument_analysis_status == "complete"
+    assert analysis.instrument_demucs_model == "htdemucs"
+    assert analysis.instrument_classifier_model == "ast"
+    assert analysis.instrument_analysis_device == "cpu"
 
 
 def test_build_analysis_notices_reports_optional_analysis_fallbacks():
@@ -189,6 +266,48 @@ def test_build_analysis_notices_reports_optional_analysis_fallbacks():
     }
     assert all(notice.level == "warning" for notice in notices)
     assert all(notice.stage == "analysis" for notice in notices)
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "expected_code", "expected_level"),
+    [
+        ("complete", None, "instrument-analysis-succeeded", "info"),
+        ("partial", "classifier-error:ValueError", "instrument-analysis-partial", "warning"),
+        (
+            "fallback",
+            "missing-dependency:demucs",
+            "instrument-dependencies-unavailable",
+            "warning",
+        ),
+        ("fallback", "missing-model:ast", "instrument-models-missing", "warning"),
+        ("fallback", "device-unavailable:cuda", "instrument-device-unavailable", "warning"),
+        ("fallback", "cuda-out-of-memory", "instrument-analysis-fallback", "warning"),
+    ],
+)
+def test_build_analysis_notices_reports_instrument_analysis_status(
+    status,
+    reason,
+    expected_code,
+    expected_level,
+):
+    analysis = _analysis().model_copy(
+        update={
+            "instrument_feature_version": "instrument-v1",
+            "instrument_analysis_status": status,
+            "instrument_analysis_reason": reason,
+        }
+    )
+
+    notices = build_analysis_notices(
+        analysis,
+        requested_instrument_analysis=True,
+    )
+
+    instrument_notice = next(notice for notice in notices if notice.code == expected_code)
+    assert instrument_notice.level == expected_level
+    assert instrument_notice.stage == "analysis"
+    if reason is not None:
+        assert instrument_notice.detail == f"reason={reason}"
 
 
 def test_generate_chart_bars_falls_back_and_builds_quality_report(monkeypatch):

@@ -17,6 +17,7 @@ from tja_ai_chartgen.tja.model import (
     ChartHitEvent,
     ChartLongNoteEvent,
     GridFeature,
+    InstrumentGridFeature,
     ResolutionPlan,
     SpectralGridFeature,
 )
@@ -187,6 +188,10 @@ def _feature_driven_events(
         bar,
         output_resolution=output_resolution,
     )
+    instrument_features = _project_instrument_grid_features(
+        bar,
+        output_resolution=output_resolution,
+    )
     target_hits = _target_hit_count(
         bar,
         hint,
@@ -205,15 +210,22 @@ def _feature_driven_events(
         target_hits,
         template,
         spectral_features=spectral_features,
+        instrument_features=instrument_features,
     )
     colors = style_color_sequence(template, _effective_density(density, hint), bar.index)
     accent_grids = {
         feature.grid for feature in grid_features if feature.accent or feature.downbeat
     }
+    accent_grids.update(
+        grid
+        for grid, feature in instrument_features.items()
+        if feature.drum_onset >= 0.75
+    )
     hits: list[ChartHitEvent] = []
     for sequence_index, grid in enumerate(sorted(selected)):
         color = colors[sequence_index % len(colors)]
         color = _spectral_color(color, spectral_features.get(grid))
+        color = _instrument_color(color, instrument_features.get(grid))
         if template.name == "performance" and grid in accent_grids:
             color = "3" if color in {"1", "3"} else "4"
         hits.append(ChartHitEvent(tick=grid, note=color))
@@ -253,6 +265,14 @@ def _target_hit_count(
     onset_count = sum(feature.onset for feature in grid_features)
     richness = min(1.0, onset_count / max(1, meter.legacy_grids_per_bar / 2))
     musical_factor = 0.75 + min(1.0, max(0.0, (bar.energy + richness) / 2)) * 0.35
+    instrument_drive = min(
+        1.0,
+        bar.instrument.drum_activity * 0.4
+        + bar.instrument.bass_activity * 0.25
+        + bar.instrument.other_activity * 0.2
+        + bar.instrument.vocal_activity * 0.15,
+    )
+    musical_factor += instrument_drive * 0.08
     if hint.kind in {"dense", "fill"}:
         musical_factor = max(musical_factor, 1.0)
     elif hint.kind == "sparse":
@@ -406,6 +426,37 @@ def _project_spectral_grid_features(
     return projected
 
 
+def _project_instrument_grid_features(
+    bar: BarFeature,
+    *,
+    output_resolution: int,
+) -> dict[int, InstrumentGridFeature]:
+    if output_resolution <= 0 or bar.grids_per_bar % output_resolution:
+        raise ValueError(
+            f"Bar {bar.index} canonical grid {bar.grids_per_bar} is incompatible with "
+            f"resolution {output_resolution}"
+        )
+    step = bar.grids_per_bar // output_resolution
+    projected: dict[int, InstrumentGridFeature] = {}
+    for feature in bar.instrument_grid_features:
+        if feature.grid < 0 or feature.grid >= bar.grids_per_bar:
+            continue
+        target = round(feature.grid / step) * step
+        target = min(bar.grids_per_bar - step, max(0, target))
+        current = projected.get(target, InstrumentGridFeature(grid=target))
+        projected[target] = InstrumentGridFeature(
+            grid=target,
+            vocal_onset=max(current.vocal_onset, feature.vocal_onset),
+            drum_onset=max(current.drum_onset, feature.drum_onset),
+            bass_onset=max(current.bass_onset, feature.bass_onset),
+            accompaniment_onset=max(
+                current.accompaniment_onset,
+                feature.accompaniment_onset,
+            ),
+        )
+    return projected
+
+
 def _select_hit_grids(
     bar: BarFeature,
     grid_features: list[GridFeature],
@@ -413,6 +464,7 @@ def _select_hit_grids(
     template: StyleTemplate,
     *,
     spectral_features: dict[int, SpectralGridFeature],
+    instrument_features: dict[int, InstrumentGridFeature],
 ) -> set[int]:
     selected: set[int] = set()
     remaining = {feature.grid: feature for feature in grid_features}
@@ -426,6 +478,7 @@ def _select_hit_grids(
                     selected,
                     template,
                     spectral_feature=spectral_features.get(grid),
+                    instrument_feature=instrument_features.get(grid),
                 ),
                 -grid,
             ),
@@ -442,6 +495,7 @@ def _grid_score(
     template: StyleTemplate,
     *,
     spectral_feature: SpectralGridFeature | None,
+    instrument_feature: InstrumentGridFeature | None,
 ) -> float:
     score = 0.0
     if feature.onset:
@@ -461,6 +515,11 @@ def _grid_score(
             spectral_feature.mid_onset_strength,
             spectral_feature.high_onset_strength,
         ) * 2.0
+    if instrument_feature is not None:
+        score += instrument_feature.drum_onset * 5.0
+        score += instrument_feature.bass_onset * 2.0
+        score += instrument_feature.accompaniment_onset * 2.0
+        score += instrument_feature.vocal_onset * 0.8
     score += style_grid_bias(template, feature.grid, bar.grids_per_bar, bar.index)
 
     if selected:
@@ -487,6 +546,23 @@ def _spectral_color(
     if low_drive > high_drive:
         return "3" if color in {"3", "4"} else "1"
     return "4" if color in {"3", "4"} else "2"
+
+
+def _instrument_color(
+    color: str,
+    feature: InstrumentGridFeature | None,
+) -> str:
+    if feature is None:
+        return color
+    don_drive = feature.bass_onset
+    neutral_drive = max(
+        feature.drum_onset,
+        feature.vocal_onset,
+        feature.accompaniment_onset,
+    )
+    if don_drive < 0.35 or don_drive < neutral_drive - 0.1:
+        return color
+    return "3" if color in {"3", "4"} else "1"
 
 
 def _effective_density(density: str, hint: BarDensityHint) -> str:
@@ -516,7 +592,17 @@ def _special_bar_events(
     duration = bar.end_time - bar.start_time
     if not isfinite(duration) or duration <= 0 or output_resolution < 3:
         return None
-    has_activity = bool(bar.onset_grids) or any(value > 0 for value in bar.activity_grids)
+    has_activity = (
+        bool(bar.onset_grids)
+        or any(value > 0 for value in bar.activity_grids)
+        or max(
+            bar.instrument.vocal_activity,
+            bar.instrument.drum_activity,
+            bar.instrument.bass_activity,
+            bar.instrument.other_activity,
+        )
+        > 0.0
+    )
     meter = get_meter_spec(bar.time_signature)
     onset_richness = min(
         1.0,
@@ -526,6 +612,10 @@ def _special_bar_events(
         bar.energy,
         onset_richness,
         max(bar.activity_grids, default=0.0),
+        bar.instrument.drum_activity,
+        bar.instrument.bass_activity,
+        bar.instrument.other_activity,
+        bar.instrument.vocal_activity * 0.8,
     )
     if not has_activity or activity_score < template.special_min_energy:
         return None
@@ -579,6 +669,16 @@ def _special_note_span(bar: BarFeature, *, output_resolution: int) -> tuple[int,
         if earliest_start <= feature.grid <= latest_start
         and (feature.onset or feature.accent or feature.beat is not None)
     }
+    instrument_features = _project_instrument_grid_features(
+        bar,
+        output_resolution=output_resolution,
+    )
+    feature_grids.update(
+        grid
+        for grid, feature in instrument_features.items()
+        if earliest_start <= grid <= latest_start
+        and max(feature.drum_onset, feature.accompaniment_onset) >= 0.35
+    )
     start_grid = min(feature_grids) if feature_grids else earliest_start
 
     projected_beats = sorted(

@@ -1,6 +1,11 @@
 import pytest
 
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
+from tja_ai_chartgen.audio.instruments import (
+    InstrumentAnalysisRaw,
+    InstrumentClassificationWindow,
+    StemActivityFrame,
+)
 from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw
 from tja_ai_chartgen.features.bars import build_bar_features
 
@@ -338,6 +343,97 @@ def test_build_bar_features_maps_spectral_envelopes_to_bar_and_sparse_grids():
     assert bars[0].spectral_grid_features[0].low_onset_strength == 0.8
     assert bars[1].spectral_grid_features[0].grid == 12
     assert bars[1].spectral_grid_features[0].high_onset_strength == 0.9
+
+
+def test_build_bar_features_maps_instrument_activity_labels_and_sparse_grids():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[],
+        onset_times=[0.0, 2.0],
+        onset_strengths=[],
+        duration=4.0,
+        offset=0.0,
+        instruments=InstrumentAnalysisRaw(
+            feature_version="instrument-v1",
+            status="complete",
+            stem_frames=[
+                StemActivityFrame(
+                    time=0.5,
+                    vocals=0.7,
+                    drums=0.4,
+                    other=0.4,
+                    vocal_onset=0.8,
+                    drum_onset=0.5,
+                ),
+                StemActivityFrame(time=1.0, vocals=0.5, drums=0.2, other=0.4),
+                StemActivityFrame(
+                    time=2.5,
+                    drums=0.8,
+                    bass=0.6,
+                    other=0.5,
+                    drum_onset=0.9,
+                    bass_onset=0.75,
+                ),
+                StemActivityFrame(time=3.0, drums=0.7, bass=0.5, other=0.5),
+            ],
+            classification_windows=[
+                InstrumentClassificationWindow(
+                    start_time=0.0,
+                    end_time=2.0,
+                    mix_scores={"guitar": 0.4},
+                    other_scores={"guitar": 0.8},
+                ),
+                InstrumentClassificationWindow(
+                    start_time=2.0,
+                    end_time=4.0,
+                    mix_scores={"piano_keyboard": 0.3},
+                    other_scores={"piano_keyboard": 0.9},
+                ),
+            ],
+        ),
+    )
+
+    bars = build_bar_features(raw)
+
+    assert bars[0].instrument.vocal_activity == 0.6
+    assert bars[0].instrument.vocal_presence_ratio == 1.0
+    assert bars[0].instrument.guitar == 0.66
+    assert bars[0].instrument.dominant_source == "vocals"
+    assert bars[0].instrument.dominant_instrument == "guitar"
+    assert bars[0].instrument_grid_features[0].grid == 12
+    assert bars[0].instrument_grid_features[0].vocal_onset == 0.8
+    assert bars[1].instrument.drum_activity == 0.75
+    assert bars[1].instrument.piano_keyboard == 0.69
+    assert bars[1].instrument.dominant_source == "drums"
+    assert bars[1].instrument.dominant_instrument == "piano_keyboard"
+    assert bars[1].instrument_grid_features[0].grid == 12
+    assert bars[1].instrument_grid_features[0].bass_onset == 0.75
+
+
+def test_build_bar_features_clears_instrument_semantics_for_edge_silence():
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[],
+        onset_times=[2.0],
+        onset_strengths=[],
+        duration=4.0,
+        offset=0.0,
+        instruments=InstrumentAnalysisRaw(
+            feature_version="instrument-v1",
+            status="complete",
+            stem_frames=[
+                StemActivityFrame(time=0.5, vocals=0.9, vocal_onset=1.0),
+                StemActivityFrame(time=2.5, drums=0.8, drum_onset=0.9),
+            ],
+        ),
+    )
+
+    bars = build_bar_features(raw)
+
+    assert bars[0].instrument.vocal_activity == 0.0
+    assert bars[0].instrument_grid_features == []
+    assert bars[1].instrument.drum_activity == 0.8
+    assert bars[1].instrument_grid_features
 
 
 def test_build_bar_features_calculates_loudness_and_sustained_activity():

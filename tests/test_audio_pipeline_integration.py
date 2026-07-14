@@ -9,8 +9,19 @@ from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.density import build_density_hints
 from tja_ai_chartgen.features.resolution import build_resolution_plan
 from tja_ai_chartgen.features.structure import analyze_song_structure
+from tja_ai_chartgen.generation import (
+    build_analysis_notices,
+    build_song_analysis,
+    generate_chart_bars,
+)
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
-from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, SongAnalysis, TjaChart
+from tja_ai_chartgen.tja.model import (
+    ChartBar,
+    ChartMetadata,
+    InstrumentBarFeature,
+    SongAnalysis,
+    TjaChart,
+)
 from tja_ai_chartgen.tja.quality import build_quality_report, playable_hit_count
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING, render_tja, write_tja_text
 
@@ -64,6 +75,8 @@ def test_real_audio_pipeline(
     assert raw.spectral.feature_version == "spectral-v1"
     assert raw.spectral.frame_count == len(raw.spectral.spectral_flux_envelope)
     assert any(value > 0.0 for value in raw.spectral.spectral_flux_envelope)
+    assert raw.instruments.status == "unavailable"
+    assert raw.instruments.feature_version is None
 
     features = build_bar_features(raw)
 
@@ -92,6 +105,8 @@ def test_real_audio_pipeline(
     assert serialized_analysis["analyzer"] == "librosa+onset-grid"
     assert serialized_analysis["spectral_feature_version"] == "spectral-v1"
     assert serialized_analysis["spectral_analysis_status"] == "complete"
+    assert serialized_analysis["instrument_feature_version"] is None
+    assert serialized_analysis["instrument_analysis_status"] == "unavailable"
     assert serialized_analysis["tempo_analysis"]["accepted"] is True
     assert serialized_analysis["tempo_analysis"]["fallback_source"] == "librosa"
     assert serialized_analysis["bars"][0]["rms_dbfs"] is not None
@@ -103,6 +118,12 @@ def test_real_audio_pipeline(
     legacy_analysis.pop("spectral_feature_version")
     legacy_analysis.pop("spectral_analysis_status")
     legacy_analysis.pop("spectral_analysis_reason")
+    legacy_analysis.pop("instrument_feature_version")
+    legacy_analysis.pop("instrument_analysis_status")
+    legacy_analysis.pop("instrument_analysis_reason")
+    legacy_analysis.pop("instrument_demucs_model")
+    legacy_analysis.pop("instrument_classifier_model")
+    legacy_analysis.pop("instrument_analysis_device")
     for bar in legacy_analysis["bars"]:
         bar["onset_16"] = bar.pop("onset_grids")
         bar["accent_16"] = bar.pop("accent_grids")
@@ -120,14 +141,21 @@ def test_real_audio_pipeline(
         bar.pop("harmonic_novelty")
         bar.pop("texture_novelty")
         bar.pop("percussive_ratio")
+        bar.pop("instrument_grid_features")
+        bar.pop("instrument")
     restored_legacy = SongAnalysis.model_validate(legacy_analysis)
     assert restored_legacy.analyzer == "unknown"
     assert restored_legacy.tempo_analysis is None
     assert restored_legacy.spectral_feature_version is None
     assert restored_legacy.spectral_analysis_status == "unavailable"
+    assert restored_legacy.instrument_feature_version is None
+    assert restored_legacy.instrument_analysis_status == "unavailable"
+    assert restored_legacy.instrument_analysis_reason is None
     assert restored_legacy.bars[0].rms_dbfs is None
     assert restored_legacy.bars[0].spectral_grid_features == []
     assert restored_legacy.bars[0].spectral_flux == 0.0
+    assert restored_legacy.bars[0].instrument_grid_features == []
+    assert restored_legacy.bars[0].instrument == InstrumentBarFeature()
 
     chart = TjaChart(
         metadata=ChartMetadata(
@@ -159,6 +187,63 @@ def test_real_audio_pipeline(
     assert f"WAVE:{ogg_path.name}" in written_text
     assert "#START" in written_text
     assert "#END" in written_text
+
+
+def test_missing_instrument_models_fall_back_without_blocking_real_audio_generation(
+    tmp_path: Path,
+):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required for the real audio pipeline integration test")
+
+    fixture_path = FIXTURE_DIR / "click_4_4.wav"
+    analysis = build_song_analysis(
+        input_audio=fixture_path,
+        ogg_path=tmp_path / "click_4_4.ogg",
+        title="Instrument Fallback",
+        max_bars=2,
+        use_instrument_analysis=True,
+        instrument_model_dir=tmp_path / "missing-models",
+    )
+
+    assert analysis.analysis_schema_version == 5
+    assert analysis.instrument_feature_version == "instrument-v1"
+    assert analysis.instrument_analysis_status == "fallback"
+    assert analysis.instrument_analysis_reason == "missing-model:manifest"
+    assert analysis.bars
+    assert all(bar.instrument == InstrumentBarFeature() for bar in analysis.bars)
+    assert all(bar.instrument_grid_features == [] for bar in analysis.bars)
+
+    notices = build_analysis_notices(
+        analysis,
+        requested_instrument_analysis=True,
+    )
+    assert any(notice.code == "instrument-models-missing" for notice in notices)
+
+    generated = generate_chart_bars(
+        analysis=analysis,
+        selected_bars=analysis.bars,
+        course="Oni",
+        level=10,
+        style="hybrid",
+        density="auto",
+        special_notes=False,
+        use_ai=False,
+    )
+    chart = TjaChart(
+        metadata=ChartMetadata(
+            title=analysis.title,
+            wave=Path(analysis.ogg_file).name,
+            bpm=analysis.bpm,
+            offset=analysis.offset,
+            course="Oni",
+            level=10,
+        ),
+        bars=generated.chart_bars,
+    )
+
+    assert generated.used_fallback is True
+    assert generated.chart_bars
+    assert "#END" in render_tja(chart)
 
 
 @pytest.mark.parametrize(

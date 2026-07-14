@@ -21,6 +21,33 @@ class SpectralGridFeature(BaseModel):
     spectral_flux: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
+class InstrumentGridFeature(BaseModel):
+    grid: int = Field(ge=0)
+    vocal_onset: float = Field(default=0.0, ge=0.0, le=1.0)
+    drum_onset: float = Field(default=0.0, ge=0.0, le=1.0)
+    bass_onset: float = Field(default=0.0, ge=0.0, le=1.0)
+    accompaniment_onset: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class InstrumentBarFeature(BaseModel):
+    vocal_activity: float = Field(default=0.0, ge=0.0, le=1.0)
+    vocal_presence_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    drum_activity: float = Field(default=0.0, ge=0.0, le=1.0)
+    bass_activity: float = Field(default=0.0, ge=0.0, le=1.0)
+    other_activity: float = Field(default=0.0, ge=0.0, le=1.0)
+    guitar: float = Field(default=0.0, ge=0.0, le=1.0)
+    piano_keyboard: float = Field(default=0.0, ge=0.0, le=1.0)
+    strings: float = Field(default=0.0, ge=0.0, le=1.0)
+    brass: float = Field(default=0.0, ge=0.0, le=1.0)
+    woodwind: float = Field(default=0.0, ge=0.0, le=1.0)
+    synth: float = Field(default=0.0, ge=0.0, le=1.0)
+    organ: float = Field(default=0.0, ge=0.0, le=1.0)
+    other_instrument: float = Field(default=0.0, ge=0.0, le=1.0)
+    dominant_source: str | None = None
+    dominant_instrument: str | None = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class BarFeature(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -48,6 +75,8 @@ class BarFeature(BaseModel):
     )
     grid_features: list[GridFeature] = Field(default_factory=list)
     spectral_grid_features: list[SpectralGridFeature] = Field(default_factory=list)
+    instrument_grid_features: list[InstrumentGridFeature] = Field(default_factory=list)
+    instrument: InstrumentBarFeature = Field(default_factory=InstrumentBarFeature)
     low_onset_strength: float = Field(default=0.0, ge=0.0, le=1.0)
     mid_onset_strength: float = Field(default=0.0, ge=0.0, le=1.0)
     high_onset_strength: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -118,6 +147,7 @@ class BarStructureFeature(BaseModel):
     harmonic_novelty: float = Field(default=0.0, ge=0.0, le=1.0)
     texture_novelty: float = Field(default=0.0, ge=0.0, le=1.0)
     percussive_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    instrument: InstrumentBarFeature = Field(default_factory=InstrumentBarFeature)
     rhythm_profile: list[float] = Field(default_factory=list)
     activity_profile: list[float] = Field(default_factory=list)
     edge_silent: bool = False
@@ -154,6 +184,12 @@ class SongAnalysis(BaseModel):
     spectral_feature_version: str | None = None
     spectral_analysis_status: str = "unavailable"
     spectral_analysis_reason: str | None = None
+    instrument_feature_version: str | None = None
+    instrument_analysis_status: str = "unavailable"
+    instrument_analysis_reason: str | None = None
+    instrument_demucs_model: str | None = None
+    instrument_classifier_model: str | None = None
+    instrument_analysis_device: str | None = None
     structure_feature_version: str | None = None
     structure_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     bar_structures: list[BarStructureFeature] = Field(default_factory=list)

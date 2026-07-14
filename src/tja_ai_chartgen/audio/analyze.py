@@ -6,6 +6,7 @@ import librosa
 import numpy as np
 from pydantic import BaseModel, Field
 
+from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw
 from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw, extract_spectral_features
 from tja_ai_chartgen.tja.model import TempoAnalysisDecision
 
@@ -71,6 +72,7 @@ class AudioAnalysisRaw(BaseModel):
     analyzer: str = "librosa"
     tempo_analysis: TempoAnalysisDecision | None = None
     spectral: SpectralAnalysisRaw = Field(default_factory=SpectralAnalysisRaw)
+    instruments: InstrumentAnalysisRaw = Field(default_factory=InstrumentAnalysisRaw)
 
 
 def normalize_bpm(bpm: float) -> float:

@@ -4,6 +4,8 @@ from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bar
 from tja_ai_chartgen.tja.model import (
     BarFeature,
     ChartBar,
+    InstrumentBarFeature,
+    InstrumentGridFeature,
     ResolutionDecision,
     ResolutionPlan,
 )
@@ -424,6 +426,56 @@ def test_feature_driven_fallback_quality_avoids_silence_and_exact_repetition():
     assert report.silent_bar_note_count == 0
     assert report.repeated_bar_count == 0
     assert report.longest_monochrome_run <= 4
+
+
+def test_quality_report_records_instrument_alignment_metrics():
+    first = _feature(0, energy=0.5, phrase_id=0).model_copy(
+        update={
+            "phrase_position": "phrase_start",
+            "instrument": InstrumentBarFeature(
+                vocal_activity=0.8,
+                dominant_source="vocals",
+                confidence=0.8,
+            ),
+            "instrument_grid_features": [
+                InstrumentGridFeature(grid=0, vocal_onset=0.8),
+            ],
+            "beat_grids": [0, 4, 8, 12],
+            "downbeat_grid": 0,
+        }
+    )
+    second = _feature(1, energy=0.8, phrase_id=1, fill_candidate=True).model_copy(
+        update={
+            "instrument": InstrumentBarFeature(
+                drum_activity=0.9,
+                bass_activity=0.7,
+                other_activity=0.5,
+                dominant_source="drums",
+                dominant_instrument="guitar",
+                confidence=0.9,
+            ),
+            "instrument_grid_features": [
+                InstrumentGridFeature(grid=0, bass_onset=0.8),
+                InstrumentGridFeature(grid=4, drum_onset=0.9),
+                InstrumentGridFeature(grid=12, drum_onset=0.8, accompaniment_onset=0.7),
+            ],
+            "beat_grids": [0, 4, 8, 12],
+            "downbeat_grid": 0,
+        }
+    )
+    chart_bars = [
+        _chart_bar(0, "1000000000000000"),
+        _chart_bar(1, "1000100000001000"),
+    ]
+
+    report = build_quality_report(chart_bars, [first, second])
+
+    assert report.drum_onset_hit_coverage == 1.0
+    assert report.bass_downbeat_alignment == 1.0
+    assert report.vocal_phrase_response == 1.0
+    assert report.instrument_transition_response == 1.0
+    assert report.instrument_confident_bar_ratio == 1.0
+    assert report.instrument_fill_support == 1.0
 
 
 def _feature(
