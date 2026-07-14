@@ -245,14 +245,34 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
-| 6.1 盘点并复用现有 fixture | 部分完成 | 已有 sparse、dense、straight、triplet、mixed、边缘静音和 structure build-up fixture。 | 现有真实音频集成测试可作为基线。 |
+| 6.1 盘点并复用现有 fixture | 已完成 | 已盘点 9 个由标准库脚本确定性生成的 WAV，明确其节拍、密度、resolution、结构和边缘静音复用范围，并记录后续缺口。 | 2026-07-15：`pytest tests/test_audio_pipeline_integration.py -v`，10 passed。 |
 | 6.2 新增节奏事件 ground truth | 未开始 | 尚未为 fixture 持久化已知 onset、downbeat、静音和 fill 范围。 | 尚未执行。 |
 | 6.3 扩展合成节奏类型 | 未开始 | 尚未加入切分、弱起、频带攻击和明确 fill burst fixture。 | 尚未执行。 |
 | 6.4 建立音频分析 benchmark | 未开始 | 尚未统一输出 onset、beat、downbeat 和量化误差指标。 | 尚未执行。 |
 | 6.5 建立谱面对齐 baseline | 部分完成 | 已有部分 drum、bass、accent、structure 和 resolution 指标；尚缺统一 note alignment 指标。 | 现有 QualityReport 测试可复用。 |
 | 6.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
-## 6.1 Fixture ground truth 格式
+## 6.1 现有 fixture 盘点与复用结论
+
+现有 9 个 WAV 全部由 `tests/fixtures/audio/rebuild_click_fixtures.py` 仅使用 Python 标准库确定性生成，可继续作为 Phase 0 基线，不需要引入真实歌曲或第三方录音。
+
+| Fixture | 已知模式 | 当前覆盖 | Phase 0 复用方向 |
+| --- | --- | --- | --- |
+| `click_4_4.wav` | 120 BPM、4/4、16 个四分音符，首拍位于 0.25 秒 | ffmpeg 转换、BPM/offset、onset-grid、spectral、BarFeature、TJA 写入 | 基础 onset、beat、downbeat 与首拍误差基线 |
+| `click_4_4_leadin.wav` | 与基础点击轨相同，但首个实际事件位于 1.25 秒 | 带前导静音的 BPM/相位稳定性 | 前导静音与实际 first downbeat 的独立校验；不得把它误作弱起 fixture |
+| `sparse_120.wav` | 120 BPM、8 小节；第 3、5 小节仅保留 downbeat，其余为四分音符 | 四难度确定性、稀疏段密度上限、accent、静音违规 | sparse/rest、谱面负载和无证据 note 基线 |
+| `dense_180.wav` | 180 BPM、8 小节；八分音符为主，第 3、7 小节为十六分音符，第 5 小节仅保留 downbeat | 四难度密度递增、NPS、连续流 | dense/flow、强弱密度对比和谱面响应基线 |
+| `transient_noise_intro_120.wav` | 2.25 秒后进入 120 BPM 点击轨，前部含两个低电平瞬态 | 首部连续静音、低电平毛刺、density hint 和静音区零 note | 静音区 onset 误检与违规 note 基线 |
+| `straight_120.wav` | 120 BPM、4 小节、每拍四等分 | 16 格 resolution 稳定选择 | straight subdivision 和量化误差基线 |
+| `triplet_120.wav` | 120 BPM、4 小节、每拍三等分 | 24 格 resolution 稳定选择 | triplet subdivision 和量化误差基线 |
+| `mixed_120.wav` | 120 BPM、4 小节，直拍与三连音逐小节交替 | 48 格 resolution 稳定选择 | mixed subdivision、可表达事件比例和高 resolution 必要性基线 |
+| `structure_build_up_120.wav` | 120 BPM、12 小节，细分由稀到密后骤降 | `build_up`、`peak`、`drop` 与 phrase 边界 | 结构密度趋势、高潮对比和 drop 响应基线 |
+
+现有复用入口集中在 `tests/test_audio_pipeline_integration.py`：基础点击轨覆盖完整真实音频流水线，sparse/dense 覆盖四难度规则生成与 QualityReport，straight/triplet/mixed 覆盖 ResolutionPlan，structure fixture 覆盖结构角色，transient fixture 覆盖首部静音保护。`tests/test_resolution.py` 中的内存事件 fixture 继续补充 3/4、6/8 和 phrase-stable resolution 单元测试，但它们不是可用于真实音频 benchmark 的 WAV。
+
+本次盘点确认的缺口为：持久化 ground truth JSON、切分、真正的弱起、低频主拍/高频反拍、持续 harmonic 背景、明确 fill burst、3/4 WAV、6/8 WAV 和半速/倍速歧义模式。这些缺口分别留给 6.2 和 6.3，不在 6.1 重复扩展音频集。
+
+## 6.2 Fixture ground truth 格式
 
 建议为程序生成的 fixture 生成独立 JSON：
 
@@ -279,7 +299,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 这些数据由 fixture 生成脚本同时产生，不由人工逐项填写。
 
-## 6.2 新增 fixture 类型
+## 6.3 新增 fixture 类型
 
 至少覆盖：
 
@@ -299,7 +319,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 - 6/8；
 - 半速/倍速容易混淆的模式。
 
-## 6.3 自动指标
+## 6.4 自动指标
 
 ### Onset
 
@@ -337,7 +357,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 - fill burst 响应率；
 - 相同输入生成确定性。
 
-## 6.4 真实歌曲的角色
+## 6.5 真实歌曲的角色
 
 真实歌曲不建立强制人工标注。仅用于：
 
@@ -349,7 +369,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 不得把“听起来更好”直接升级为 CI 门槛。
 
-## 6.5 退出条件
+## 6.6 退出条件
 
 - fixture 与 ground truth 可以由同一脚本确定性重建；
 - benchmark 不访问网络；
@@ -359,7 +379,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 ## Phase 0 任务划分列表
 
-- [ ] 6.1 盘点并复用现有 fixture
+- [x] 6.1 盘点并复用现有 fixture
 - [ ] 6.2 建立 ground truth schema，并让 fixture 同步生成事件 JSON
 - [ ] 6.4 建立基础 onset、beat 与 downbeat benchmark
 - [ ] 6.3 扩展切分、弱起、频带攻击、fill、3/4 和 6/8 fixture
