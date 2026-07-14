@@ -205,7 +205,7 @@ def test_missing_instrument_models_fall_back_without_blocking_real_audio_generat
         instrument_model_dir=tmp_path / "missing-models",
     )
 
-    assert analysis.analysis_schema_version == 5
+    assert analysis.analysis_schema_version == 6
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "fallback"
     assert analysis.instrument_analysis_reason == "missing-model:manifest"

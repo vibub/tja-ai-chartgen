@@ -134,7 +134,7 @@ tja-ai-chartgen generate song.mp3 \
   --use-beatnet
 ```
 
-BeatNet 不是默认依赖。如需启用，请先安装 `BeatNet`；当 BeatNet 未安装或分析失败时，CLI 会继续使用默认 librosa 分析结果。
+BeatNet 不是默认依赖。如需启用，请先执行 `pip install BeatNet`。项目会自动补齐 BeatNet/madmom 在 NumPy 1.24+ 下需要的兼容类型别名；当依赖不可用、推理失败或输出无效时，CLI 会继续使用默认 librosa 分析结果，并在 notice detail 中记录稳定的失败类别。
 
 一次生成 Easy、Normal、Hard、Oni 四个难度：
 

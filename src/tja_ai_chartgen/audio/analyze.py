@@ -22,6 +22,9 @@ MIN_ONSET_GRID_ONSETS = 8
 MIN_ONSET_GRID_SPAN_SECONDS = 4.0
 MIN_ONSET_GRID_TIME_COVERAGE = 0.5
 MIN_ONSET_GRID_SUPPORT = 0.75
+MIN_HIGH_EVIDENCE_ONSET_GRID_SUPPORT = 0.68
+FULL_ONSET_GRID_EVIDENCE_COUNT = 64
+FULL_ONSET_GRID_EVIDENCE_COVERAGE = 0.9
 MAX_ONSET_GRID_RUNNER_UP_RATIO = 0.9
 MIN_DISTINCT_BPM_DISTANCE = 3.0
 MIN_DISTINCT_BPM_RATIO = 0.03
@@ -71,6 +74,8 @@ class AudioAnalysisRaw(BaseModel):
     time_signature: str = "4/4"
     analyzer: str = "librosa"
     tempo_analysis: TempoAnalysisDecision | None = None
+    beatnet_analysis_status: str = "unavailable"
+    beatnet_analysis_reason: str | None = None
     spectral: SpectralAnalysisRaw = Field(default_factory=SpectralAnalysisRaw)
     instruments: InstrumentAnalysisRaw = Field(default_factory=InstrumentAnalysisRaw)
 
@@ -163,6 +168,24 @@ def _onset_weights(
     if max_weight <= 0:
         return [1.0 for _ in onset_times]
     return [0.1 + (weight / max_weight) for weight in weights]
+
+
+def _required_onset_grid_support(onset_count: int, time_coverage: float) -> float:
+    onset_evidence = np.clip(
+        (onset_count - MIN_ONSET_GRID_ONSETS)
+        / (FULL_ONSET_GRID_EVIDENCE_COUNT - MIN_ONSET_GRID_ONSETS),
+        0.0,
+        1.0,
+    )
+    coverage_evidence = np.clip(
+        (time_coverage - MIN_ONSET_GRID_TIME_COVERAGE)
+        / (FULL_ONSET_GRID_EVIDENCE_COVERAGE - MIN_ONSET_GRID_TIME_COVERAGE),
+        0.0,
+        1.0,
+    )
+    evidence = float(min(onset_evidence, coverage_evidence))
+    relaxation = MIN_ONSET_GRID_SUPPORT - MIN_HIGH_EVIDENCE_ONSET_GRID_SUPPORT
+    return MIN_ONSET_GRID_SUPPORT - (relaxation * evidence)
 
 
 def _estimate_tempo_and_offset_from_onsets(
@@ -309,7 +332,8 @@ def _estimate_tempo_and_offset_from_onsets(
             runner_up_bpm=runner_up_bpm,
             runner_up_support=runner_up_support,
         )
-    if best_support < MIN_ONSET_GRID_SUPPORT:
+    required_support = _required_onset_grid_support(onset_count, time_coverage)
+    if best_support < required_support:
         return rejected(
             "low_normalized_support",
             onset_count=onset_count,
@@ -619,15 +643,55 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
     return enhance_with_beatnet(input_path, raw)
 
 
+def _ensure_beatnet_numpy_compatibility() -> None:
+    # BeatNet 依赖的 madmom 0.16.1 仍会访问 NumPy 1.24 移除的旧别名。
+    if "float" not in np.__dict__:
+        setattr(np, "float", np.float64)
+    if "int" not in np.__dict__:
+        setattr(np, "int", np.int_)
+
+
 def enhance_with_beatnet(input_path: Path, raw: AudioAnalysisRaw) -> AudioAnalysisRaw:
     try:
+        _ensure_beatnet_numpy_compatibility()
         from BeatNet.BeatNet import BeatNet
 
-        estimator = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
+        estimator = BeatNet(
+            model=1,
+            mode="offline",
+            inference_model="DBN",
+            plot=[],
+            thread=False,
+        )
         output = estimator.process(str(input_path))
-        return merge_beatnet_output(raw, output)
-    except Exception:  # noqa: BLE001 - BeatNet is an optional enhancement.
-        return raw
+        merged = merge_beatnet_output(raw, output)
+        if merged is raw:
+            return raw.model_copy(
+                update={
+                    "beatnet_analysis_status": "fallback",
+                    "beatnet_analysis_reason": "invalid-or-empty-output",
+                }
+            )
+        return merged.model_copy(
+            update={
+                "beatnet_analysis_status": "complete",
+                "beatnet_analysis_reason": None,
+            }
+        )
+    except ImportError as error:
+        return raw.model_copy(
+            update={
+                "beatnet_analysis_status": "fallback",
+                "beatnet_analysis_reason": f"missing-dependency:{error.name or 'BeatNet'}",
+            }
+        )
+    except Exception as error:  # noqa: BLE001 - BeatNet is an optional enhancement.
+        return raw.model_copy(
+            update={
+                "beatnet_analysis_status": "fallback",
+                "beatnet_analysis_reason": f"inference-error:{type(error).__name__}",
+            }
+        )
 
 
 def _normalize_beatnet_rows(output: Any) -> np.ndarray | None:

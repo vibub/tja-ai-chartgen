@@ -181,6 +181,8 @@ class PhraseFeature(BaseModel):
 
 class SongAnalysis(BaseModel):
     analysis_schema_version: int = 1
+    beatnet_analysis_status: str = "unavailable"
+    beatnet_analysis_reason: str | None = None
     spectral_feature_version: str | None = None
     spectral_analysis_status: str = "unavailable"
     spectral_analysis_reason: str | None = None

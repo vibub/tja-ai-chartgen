@@ -216,6 +216,27 @@ def test_estimate_tempo_and_offset_from_onsets_rejects_non_vector_input():
     assert estimate.reason == "invalid_input"
 
 
+def test_estimate_tempo_and_offset_accepts_dense_high_coverage_grid_with_musical_noise():
+    periodic_onsets = [0.2 + i * 0.5 for i in range(120)]
+    off_grid_onsets = np.random.default_rng(7).uniform(0.0, 60.0, 50).tolist()
+    onset_times = sorted(periodic_onsets + off_grid_onsets)
+
+    estimate = _estimate_tempo_and_offset_from_onsets(
+        onset_times,
+        [1.0 for _ in onset_times],
+        np.asarray([], dtype=float),
+        sample_rate=0,
+        fallback_bpm=120,
+        duration=60.0,
+    )
+
+    assert estimate.accepted is True
+    assert estimate.bpm == 120
+    assert 0.68 <= estimate.normalized_support < 0.75
+    assert estimate.onset_count == 170
+    assert estimate.time_coverage > 0.9
+
+
 def test_estimate_tempo_and_offset_normalizes_support_by_total_weight():
     short_onsets = [0.2 + i * 0.5 for i in range(12)]
     long_onsets = [0.2 + i * 0.5 for i in range(24)]
@@ -719,6 +740,49 @@ def test_merge_beatnet_output_keeps_raw_for_invalid_array_structure(output):
     assert merge_beatnet_output(raw, output) is raw
 
 
+def test_enhance_with_beatnet_applies_numpy_compatibility_and_records_success(monkeypatch):
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0.1, 0.6],
+        onset_times=[],
+        onset_strengths=[],
+        duration=2.0,
+        offset=0.1,
+    )
+    constructor_kwargs = {}
+
+    class FakeBeatNet:
+        def __init__(self, **kwargs):
+            constructor_kwargs.update(kwargs)
+
+        def process(self, input_path):
+            assert input_path == "song.ogg"
+            return [[0.25, 1], [0.75, 2], [1.25, 3], [1.75, 1]]
+
+    beatnet_package = types.ModuleType("BeatNet")
+    beatnet_module = types.ModuleType("BeatNet.BeatNet")
+    beatnet_module.BeatNet = FakeBeatNet
+    monkeypatch.setitem(sys.modules, "BeatNet", beatnet_package)
+    monkeypatch.setitem(sys.modules, "BeatNet.BeatNet", beatnet_module)
+    monkeypatch.delitem(np.__dict__, "float", raising=False)
+    monkeypatch.delitem(np.__dict__, "int", raising=False)
+
+    updated = enhance_with_beatnet(Path("song.ogg"), raw)
+
+    assert constructor_kwargs == {
+        "model": 1,
+        "mode": "offline",
+        "inference_model": "DBN",
+        "plot": [],
+        "thread": False,
+    }
+    assert np.float is np.float64
+    assert np.int is np.int_
+    assert updated.analyzer == "beatnet"
+    assert updated.beatnet_analysis_status == "complete"
+    assert updated.beatnet_analysis_reason is None
+
+
 def test_enhance_with_beatnet_keeps_raw_when_merge_fails(monkeypatch):
     raw = AudioAnalysisRaw(
         bpm=120,
@@ -747,7 +811,12 @@ def test_enhance_with_beatnet_keeps_raw_when_merge_fails(monkeypatch):
 
     monkeypatch.setattr("tja_ai_chartgen.audio.analyze.merge_beatnet_output", fail_merge)
 
-    assert enhance_with_beatnet(Path("song.ogg"), raw) is raw
+    updated = enhance_with_beatnet(Path("song.ogg"), raw)
+
+    assert updated.bpm == raw.bpm
+    assert updated.beat_times == raw.beat_times
+    assert updated.beatnet_analysis_status == "fallback"
+    assert updated.beatnet_analysis_reason == "inference-error:ValueError"
 
 
 def test_estimate_time_signature_defaults_to_four_four_for_unknown_meter():

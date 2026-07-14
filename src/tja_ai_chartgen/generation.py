@@ -157,7 +157,9 @@ def build_song_analysis(
         for phrase in structure.phrases
     ]
     return SongAnalysis(
-        analysis_schema_version=5,
+        analysis_schema_version=6,
+        beatnet_analysis_status=raw.beatnet_analysis_status,
+        beatnet_analysis_reason=raw.beatnet_analysis_reason,
         spectral_feature_version=raw.spectral.feature_version,
         spectral_analysis_status=raw.spectral.status,
         spectral_analysis_reason=raw.spectral.reason,
@@ -210,6 +212,7 @@ def build_analysis_notices(
                 level="warning",
                 stage="analysis",
                 message="BeatNet 增强未生效，已保留 librosa 分析结果。",
+                detail=f"reason={analysis.beatnet_analysis_reason or 'unknown'}",
             )
         )
 

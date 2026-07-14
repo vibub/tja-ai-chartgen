@@ -132,7 +132,7 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.time_signature == "3/4"
     assert len(analysis.bars) == 2
     assert all(bar.time_signature == "3/4" for bar in analysis.bars)
-    assert analysis.analysis_schema_version == 5
+    assert analysis.analysis_schema_version == 6
     assert analysis.spectral_feature_version == "spectral-v1"
     assert analysis.spectral_analysis_status == "complete"
     assert analysis.instrument_feature_version is None
@@ -214,7 +214,7 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
             },
         )
     ]
-    assert analysis.analysis_schema_version == 5
+    assert analysis.analysis_schema_version == 6
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "complete"
     assert analysis.instrument_demucs_model == "htdemucs"
@@ -227,6 +227,8 @@ def test_build_analysis_notices_reports_optional_analysis_fallbacks():
     analysis = _analysis(bars).model_copy(
         update={
             "analyzer": "librosa",
+            "beatnet_analysis_status": "fallback",
+            "beatnet_analysis_reason": "inference-error:RuntimeError",
             "spectral_feature_version": "spectral-v1",
             "spectral_analysis_status": "fallback",
             "spectral_analysis_reason": "extractor-error:RuntimeError",
@@ -266,6 +268,8 @@ def test_build_analysis_notices_reports_optional_analysis_fallbacks():
     }
     assert all(notice.level == "warning" for notice in notices)
     assert all(notice.stage == "analysis" for notice in notices)
+    beatnet_notice = next(notice for notice in notices if notice.code == "beatnet-fallback")
+    assert beatnet_notice.detail == "reason=inference-error:RuntimeError"
 
 
 @pytest.mark.parametrize(

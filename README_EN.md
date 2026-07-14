@@ -113,7 +113,7 @@ tja-ai-chartgen generate song.mp3 \
   --use-beatnet
 ```
 
-BeatNet is not a default dependency. Install `BeatNet` separately before using it. If BeatNet is unavailable or analysis fails, the CLI keeps the default librosa analysis result.
+BeatNet is not a default dependency. Run `pip install BeatNet` before using it. The project automatically supplies the legacy NumPy aliases required by BeatNet/madmom on NumPy 1.24+; when dependencies are unavailable, inference fails, or output is invalid, the CLI keeps the default librosa result and records a stable failure category in the notice detail.
 
 Generate Easy, Normal, Hard, and Oni charts in one run:
 
