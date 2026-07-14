@@ -2,9 +2,10 @@ import asyncio
 import json
 import os
 import re
+from _thread import LockType
 from pathlib import Path
 from shutil import copy2, rmtree
-from threading import Thread
+from threading import Event, Lock, Thread
 from time import sleep
 from typing import Annotated
 from uuid import uuid4
@@ -14,6 +15,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import ValidationError
 
+from tja_ai_chartgen.cancellation import GenerationCancelledError, raise_if_cancelled
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
 from tja_ai_chartgen.generation import (
     GenerationNotice,
@@ -452,6 +454,18 @@ button:active,
   transform: translateY(1px) scale(0.985);
 }
 
+.danger-button {
+  color: #fff4ef;
+  background: linear-gradient(180deg, #b84b38, #843326);
+  box-shadow: 0 16px 34px rgba(184, 75, 56, 0.2);
+}
+
+.danger-button:disabled {
+  cursor: wait;
+  filter: saturate(0.55);
+  opacity: 0.72;
+}
+
 form[data-loading="true"] button[type="submit"] {
   color: rgba(22, 19, 13, 0.72);
   cursor: progress;
@@ -726,6 +740,15 @@ form[data-loading="true"] button[type="submit"]::after {
 .progress-step[data-state="error"] .progress-step-marker {
   color: #2a100a;
   background: var(--danger);
+}
+
+.progress-step[data-state="cancelled"] {
+  border-color: rgba(184, 75, 56, 0.48);
+}
+
+.progress-step[data-state="cancelled"] .progress-step-marker {
+  color: #fff4ef;
+  background: #843326;
 }
 
 @keyframes orbit-note {
@@ -1341,6 +1364,7 @@ function setupAnalyzeForm(form) {
 
 function setupProgressPage(root) {
   const statusUrl = root.dataset.statusUrl;
+  const cancelUrl = root.dataset.cancelUrl;
   const message = root.querySelector('[data-role="progress-message"]');
   const meter = root.querySelector('[data-role="progress-meter"]');
   const notices = root.querySelector('[data-role="progress-notices"]');
@@ -1348,6 +1372,7 @@ function setupProgressPage(root) {
   const retryPanel = root.querySelector('[data-role="metadata-retry"]');
   const retryTitle = root.querySelector('[data-role="metadata-retry-title"]');
   const retryArtist = root.querySelector('[data-role="metadata-retry-artist"]');
+  const cancelButton = root.querySelector('[data-role="cancel-job"]');
   const steps = Array.from(root.querySelectorAll('[data-progress-step]'));
   let metadataRetryFilled = false;
   if (!statusUrl) return;
@@ -1356,6 +1381,7 @@ function setupProgressPage(root) {
     if (state === 'done') return '完成';
     if (state === 'running') return '进行中';
     if (state === 'error') return '出错';
+    if (state === 'cancelled') return '已终止';
     return '等待';
   }
 
@@ -1385,6 +1411,10 @@ function setupProgressPage(root) {
       const stateLabel = step.querySelector('[data-role="progress-step-state"]');
       if (stateLabel) stateLabel.textContent = labelForState(state);
     });
+    if (cancelButton) {
+      cancelButton.disabled = ['cancelling', 'cancelled', 'done', 'error'].includes(data.status);
+      cancelButton.textContent = data.status === 'cancelling' ? '正在终止' : data.status === 'cancelled' ? '任务已终止' : '终止任务';
+    }
     if (data.status === 'done' && data.result_url) {
       window.location.href = data.result_url;
       return false;
@@ -1404,7 +1434,29 @@ function setupProgressPage(root) {
       }
       return false;
     }
+    if (data.status === 'cancelled') return false;
     return true;
+  }
+
+  if (cancelButton && cancelUrl) {
+    cancelButton.addEventListener('click', () => {
+      cancelButton.disabled = true;
+      cancelButton.textContent = '正在终止';
+      fetch(cancelUrl, { method: 'POST', cache: 'no-store' })
+        .then(async (response) => {
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || '终止任务失败。');
+          renderProgress(data);
+        })
+        .catch((cancelError) => {
+          cancelButton.disabled = false;
+          cancelButton.textContent = '终止任务';
+          if (error) {
+            error.hidden = false;
+            error.textContent = cancelError.message || '终止任务失败。';
+          }
+        });
+    });
   }
 
   function poll() {
@@ -1762,6 +1814,8 @@ def create_app(
     app.state.output_dir = output_dir
     app.state.remote_mode = remote_mode
     app.state.allow_instrument_analysis = not remote_mode or allow_instrument_analysis
+    app.state.job_cancellations: dict[str, Event] = {}
+    app.state.job_cancellations_lock = Lock()
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
@@ -1823,9 +1877,15 @@ def create_app(
                 step="upload",
                 message="音频已接收，准备转换为 OGG。",
             )
+            cancel_event = Event()
+            with app.state.job_cancellations_lock:
+                app.state.job_cancellations[job_dir.name] = cancel_event
             Thread(
-                target=_run_analyze_job,
+                target=_run_tracked_analyze_job,
                 kwargs={
+                    "cancellation_registry": app.state.job_cancellations,
+                    "registry_lock": app.state.job_cancellations_lock,
+                    "cancel_event": cancel_event,
                     "job_dir": job_dir,
                     "input_path": input_path,
                     "title": title,
@@ -1882,6 +1942,32 @@ def create_app(
         except (FileNotFoundError, ValueError) as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         return JSONResponse(_read_progress(job_dir))
+
+    @app.post("/jobs/{job_id}/cancel")
+    async def cancel_job(job_id: str) -> JSONResponse:
+        try:
+            job_dir = _job_dir(app.state.output_dir, job_id)
+        except (FileNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+        progress = _read_progress(job_dir)
+        if progress.get("status") in {_PROGRESS_DONE, _PROGRESS_ERROR, _PROGRESS_CANCELLED}:
+            raise HTTPException(status_code=409, detail="Job is no longer running")
+
+        with app.state.job_cancellations_lock:
+            cancel_event = app.state.job_cancellations.get(job_id)
+        if cancel_event is None:
+            raise HTTPException(status_code=409, detail="Job is not active in this server process")
+
+        step = str(progress.get("step", "upload"))
+        _write_progress(
+            job_dir,
+            status=_PROGRESS_CANCELLING,
+            step=step,
+            message="正在终止任务；若当前正在调用 AI，将立即取消该请求。",
+        )
+        cancel_event.set()
+        return JSONResponse(_read_progress(job_dir), status_code=202)
 
     @app.get("/jobs/{job_id}/result", response_class=HTMLResponse)
     async def job_result(job_id: str):
@@ -2272,6 +2358,25 @@ def create_app(
 app = create_app()
 
 
+def _run_tracked_analyze_job(
+    *,
+    cancellation_registry: dict[str, Event],
+    registry_lock: LockType,
+    cancel_event: Event,
+    job_dir: Path,
+    **job_kwargs: object,
+) -> None:
+    try:
+        _run_analyze_job(
+            job_dir=job_dir,
+            cancel_event=cancel_event,
+            **job_kwargs,
+        )
+    finally:
+        with registry_lock:
+            cancellation_registry.pop(job_dir.name, None)
+
+
 def _run_analyze_job(
     *,
     job_dir: Path,
@@ -2298,11 +2403,14 @@ def _run_analyze_job(
     ai_request_timeout: float,
     ai_transport_retries: int,
     remote_mode: bool,
+    cancel_event: Event,
 ) -> None:
     try:
+        raise_if_cancelled(cancel_event)
         ogg_path = job_dir / f"{input_path.stem}.ogg"
 
         def report_analysis_stage(stage: str) -> None:
+            raise_if_cancelled(cancel_event)
             if stage == "convert":
                 _write_progress(
                     job_dir,
@@ -2339,6 +2447,7 @@ def _run_analyze_job(
             instrument_device=instrument_device,
             stage_callback=report_analysis_stage,
         )
+        raise_if_cancelled(cancel_event)
         bars = analysis.bars
         write_json(job_dir / "analysis.json", analysis)
         notices = build_analysis_notices(
@@ -2378,7 +2487,9 @@ def _run_analyze_job(
             ai_input_path=job_dir / f"ai_input_1_{len(bars)}.json",
             ai_output_path=job_dir / f"ai_output_1_{len(bars)}.json",
             ai_attempts_path=job_dir / f"ai_attempts_1_{len(bars)}.json",
+            cancel_event=cancel_event,
         )
+        raise_if_cancelled(cancel_event)
         chart_bars = generation_result.chart_bars
         ai_failure = generation_result.ai_failure
         notices.extend(generation_result.notices)
@@ -2410,6 +2521,7 @@ def _run_analyze_job(
             notices=notices,
             include_notice_details=not remote_mode,
         )
+        raise_if_cancelled(cancel_event)
         _write_preview_result(
             job_dir=job_dir,
             analysis=analysis,
@@ -2429,6 +2541,14 @@ def _run_analyze_job(
             result_url=f"/jobs/{job_dir.name}/result",
             notices=notices,
             include_notice_details=not remote_mode,
+        )
+    except GenerationCancelledError:
+        step = str(_read_progress(job_dir).get("step", "upload"))
+        _write_progress(
+            job_dir,
+            status=_PROGRESS_CANCELLED,
+            step=step,
+            message="任务已终止，未继续生成或写入谱面。",
         )
     except Exception as error:  # noqa: BLE001 - Background job reports failures through status JSON.
         step = str(_read_progress(job_dir).get("step", "upload"))
@@ -3222,7 +3342,7 @@ def _progress_page(job_id: str) -> str:
     return _page(
         "Generating chart",
         f"""
-<section class="progress-shell" data-progress-page data-status-url="/jobs/{_escape(job_id)}/status" aria-labelledby="progress-heading">
+<section class="progress-shell" data-progress-page data-status-url="/jobs/{_escape(job_id)}/status" data-cancel-url="/jobs/{_escape(job_id)}/cancel" aria-labelledby="progress-heading">
   <section class="progress-visual" aria-hidden="true">
     <div class="progress-drum"><span class="progress-drum-core">太</span></div>
     <div class="progress-beatline"><span></span></div>
@@ -3262,6 +3382,7 @@ def _progress_page(job_id: str) -> str:
     </section>
     <div class="helper-strip">
       <span>任务 <code>{_escape(job_id)}</code></span>
+      <button class="danger-button" type="button" data-role="cancel-job">终止任务</button>
       <a class="button-link" href="/">返回首页</a>
     </div>
   </section>
@@ -3941,6 +4062,8 @@ _PROGRESS_STEPS = (
 _PROGRESS_STEP_INDEX = {step["key"]: index for index, step in enumerate(_PROGRESS_STEPS)}
 _PROGRESS_PENDING = "pending"
 _PROGRESS_RUNNING = "running"
+_PROGRESS_CANCELLING = "cancelling"
+_PROGRESS_CANCELLED = "cancelled"
 _PROGRESS_DONE = "done"
 _PROGRESS_ERROR = "error"
 _PROGRESS_JSON = "progress.json"
@@ -4000,8 +4123,8 @@ def _progress_payload(
     current_index = _PROGRESS_STEP_INDEX.get(step, -1)
     steps = []
     for index, item in enumerate(_PROGRESS_STEPS):
-        if status == _PROGRESS_ERROR and index == current_index:
-            state = _PROGRESS_ERROR
+        if status in {_PROGRESS_ERROR, _PROGRESS_CANCELLED} and index == current_index:
+            state = status
         elif index < current_index or status == _PROGRESS_DONE:
             state = _PROGRESS_DONE
         elif index == current_index:
@@ -4031,7 +4154,7 @@ def _progress_percent(status: str, current_index: int) -> int:
     if current_index < 0:
         return 0
     unit = 100 / max(1, len(_PROGRESS_STEPS))
-    if status == _PROGRESS_ERROR:
+    if status in {_PROGRESS_ERROR, _PROGRESS_CANCELLED}:
         return round((current_index + 1) * unit)
     return round((current_index + 0.35) * unit)
 

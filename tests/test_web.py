@@ -2,6 +2,7 @@ import json
 import time
 from io import BytesIO
 from pathlib import Path
+from threading import Event
 
 import pytest
 from fastapi import UploadFile
@@ -11,6 +12,7 @@ from tja_ai_chartgen.ai.client import AiProviderError
 from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw
 from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw
+from tja_ai_chartgen.cancellation import raise_if_cancelled
 from tja_ai_chartgen.tja.model import ChartBar, SongAnalysis, TempoAnalysisDecision
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
 from tja_ai_chartgen.web import (
@@ -262,6 +264,44 @@ def test_web_remote_mode_rejects_instrument_analysis_without_server_opt_in(
     assert response.status_code == 400
     assert "Remote instrument analysis is disabled" in response.text
     assert not list(tmp_path.iterdir())
+
+
+def test_web_progress_page_can_cancel_running_generation(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(monkeypatch)
+    generation_started = Event()
+
+    def blocking_generate_chart_bars(*, cancel_event=None, **_kwargs):
+        assert cancel_event is not None
+        generation_started.set()
+        cancel_event.wait(timeout=2)
+        raise_if_cancelled(cancel_event)
+        raise AssertionError("generation should have been cancelled")
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.web.generate_chart_bars",
+        blocking_generate_chart_bars,
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={"title": "Song Title", "max_bars": "1", "use_ai": "true"},
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    assert 'data-role="cancel-job"' in response.text
+    job_dir = next(tmp_path.iterdir())
+    assert generation_started.wait(timeout=1)
+
+    cancel_response = client.post(f"/jobs/{job_dir.name}/cancel")
+
+    assert cancel_response.status_code == 202
+    assert cancel_response.json()["status"] in {"cancelling", "cancelled"}
+    status = _wait_for_job_done(client, job_dir.name, final_status="cancelled")
+    assert status["message"] == "任务已终止，未继续生成或写入谱面。"
+    assert not (job_dir / "preview.tja").exists()
+    assert client.post(f"/jobs/{job_dir.name}/cancel").status_code == 409
 
 
 def test_web_analyze_oversized_upload_returns_413_and_removes_job(tmp_path, monkeypatch):
@@ -746,6 +786,7 @@ def test_web_analyze_uses_admin_ai_environment_when_request_credentials_are_empt
         attempt_log_path=None,
         request_timeout=300.0,
         max_transport_retries=1,
+        cancel_event=None,
     ):
         assert api_base == "https://env.example.com/v1"
         assert api_key == "env-secret"
@@ -799,6 +840,7 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
         attempt_log_path=None,
         request_timeout=300.0,
         max_transport_retries=1,
+        cancel_event=None,
     ):
         assert course == "Hard"
         assert level == 8
@@ -1123,6 +1165,7 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
         attempt_log_path=None,
         request_timeout=300.0,
         max_transport_retries=1,
+        cancel_event=None,
     ):
         assert course == "Oni"
         assert level == 10

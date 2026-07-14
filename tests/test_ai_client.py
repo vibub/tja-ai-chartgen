@@ -1,4 +1,6 @@
+import asyncio
 import json
+from threading import Event, Thread
 
 import pytest
 from litellm import (
@@ -17,6 +19,7 @@ from tja_ai_chartgen.ai.client import (
     sanitize_ai_bars,
 )
 from tja_ai_chartgen.ai.prompts import build_chart_generation_payload, build_chart_generation_prompt
+from tja_ai_chartgen.cancellation import GenerationCancelledError
 from tja_ai_chartgen.tja.model import (
     BarFeature,
     BarStructureFeature,
@@ -558,6 +561,46 @@ def test_generate_chart_bars_with_ai_passes_timeout_and_disables_litellm_retries
     assert captured_kwargs[0]["max_retries"] == 0
     assert raw["request_timeout"] == 12.5
     assert raw["max_transport_retries"] == 0
+
+
+def test_generate_chart_bars_with_ai_cancels_active_async_request(monkeypatch):
+    request_started = Event()
+    request_cancelled = Event()
+    cancel_event = Event()
+    errors: list[BaseException] = []
+
+    async def fake_acompletion(**_kwargs):
+        request_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            request_cancelled.set()
+            raise
+
+    def run_request():
+        try:
+            generate_chart_bars_with_ai(
+                _analysis(),
+                "Oni",
+                10,
+                "technical",
+                cancel_event=cancel_event,
+            )
+        except BaseException as error:  # noqa: BLE001 - test captures thread outcome.
+            errors.append(error)
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.acompletion", fake_acompletion)
+    worker = Thread(target=run_request, daemon=True)
+    worker.start()
+    assert request_started.wait(timeout=1)
+
+    cancel_event.set()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert request_cancelled.is_set()
+    assert len(errors) == 1
+    assert isinstance(errors[0], GenerationCancelledError)
 
 
 @pytest.mark.parametrize(

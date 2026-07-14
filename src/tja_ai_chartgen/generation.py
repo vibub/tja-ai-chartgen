@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
@@ -9,6 +10,7 @@ from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw, analyze_audio, apply
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.audio.instrument_models import resolve_instrument_model_dir
 from tja_ai_chartgen.audio.instruments import AST_WINDOW_SECONDS, analyze_instruments
+from tja_ai_chartgen.cancellation import GenerationCancelledError, raise_if_cancelled
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
 from tja_ai_chartgen.features.resolution import build_resolution_plan, output_resolution_for_bar
@@ -342,9 +344,11 @@ def generate_chart_bars(
     ai_input_path: Path | None = None,
     ai_output_path: Path | None = None,
     ai_attempts_path: Path | None = None,
+    cancel_event: Event | None = None,
 ) -> ChartGenerationResult:
     chart_bars: list[ChartBar] | None = None
     ai_failure: str | None = None
+    raise_if_cancelled(cancel_event)
 
     if use_ai:
         try:
@@ -365,12 +369,16 @@ def generate_chart_bars(
                 ai_input_path=ai_input_path,
                 ai_output_path=ai_output_path,
                 ai_attempts_path=ai_attempts_path,
+                cancel_event=cancel_event,
             )
+        except GenerationCancelledError:
+            raise
         except Exception as error:  # noqa: BLE001 - AI failure must produce a usable fallback.
             ai_failure = _redact_value(str(error), api_key)
             _write_ai_failure(ai_attempts_path, error, api_key)
             _write_ai_failure(ai_output_path, error, api_key)
 
+    raise_if_cancelled(cancel_event)
     used_fallback = chart_bars is None
     if chart_bars is None:
         chart_bars = generate_fallback_chart_bars(
@@ -471,6 +479,7 @@ def _generate_ai_bars(
     ai_input_path: Path | None,
     ai_output_path: Path | None,
     ai_attempts_path: Path | None,
+    cancel_event: Event | None,
 ) -> list[ChartBar]:
     from tja_ai_chartgen.ai.client import generate_chart_bars_with_ai, sanitize_ai_bars
     from tja_ai_chartgen.ai.prompts import build_chart_generation_payload
@@ -506,6 +515,17 @@ def _generate_ai_bars(
                 special_notes=special_notes,
             ),
         )
+    ai_call_kwargs: dict[str, Any] = {
+        "api_base": api_base,
+        "api_key": api_key,
+        "max_repair_attempts": ai_repair_retries,
+        "special_notes": special_notes,
+        "attempt_log_path": ai_attempts_path,
+        "request_timeout": ai_request_timeout,
+        "max_transport_retries": ai_transport_retries,
+    }
+    if cancel_event is not None:
+        ai_call_kwargs["cancel_event"] = cancel_event
     ai_bars, ai_output = generate_chart_bars_with_ai(
         selected_analysis,
         course,
@@ -513,13 +533,7 @@ def _generate_ai_bars(
         style,
         density,
         model,
-        api_base=api_base,
-        api_key=api_key,
-        max_repair_attempts=ai_repair_retries,
-        special_notes=special_notes,
-        attempt_log_path=ai_attempts_path,
-        request_timeout=ai_request_timeout,
-        max_transport_retries=ai_transport_retries,
+        **ai_call_kwargs,
     )
     _redact_json_file(ai_attempts_path, api_key)
     if ai_output_path is not None:

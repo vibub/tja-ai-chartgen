@@ -1,6 +1,8 @@
+import asyncio
 import json
 import os
 from pathlib import Path
+from threading import Event
 from time import perf_counter
 from typing import Any
 
@@ -10,11 +12,13 @@ from litellm import (
     RateLimitError,
     ServiceUnavailableError,
     Timeout,
+    acompletion,
     completion,
 )
 from openai import OpenAIError
 
 from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
+from tja_ai_chartgen.cancellation import GenerationCancelledError, raise_if_cancelled
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.resolution import (
     output_resolution_for_analysis_bar,
@@ -94,6 +98,7 @@ def generate_chart_bars_with_ai(
     attempt_log_path: Path | None = None,
     request_timeout: float = DEFAULT_AI_REQUEST_TIMEOUT,
     max_transport_retries: int = DEFAULT_AI_TRANSPORT_RETRIES,
+    cancel_event: Event | None = None,
 ) -> tuple[list[ChartBar], dict[str, Any]]:
     if not MIN_AI_REQUEST_TIMEOUT <= request_timeout <= MAX_AI_REQUEST_TIMEOUT:
         raise ValueError("AI request timeout must be between 1 and 600 seconds")
@@ -117,6 +122,7 @@ def generate_chart_bars_with_ai(
     transport_attempts: list[dict[str, Any]] = []
 
     for attempt_index in range(repair_attempts + 1):
+        raise_if_cancelled(cancel_event)
         try:
             response = _completion_with_transport_retries(
                 model=model_name,
@@ -127,6 +133,7 @@ def generate_chart_bars_with_ai(
                 request_timeout=request_timeout,
                 max_transport_retries=max_transport_retries,
                 transport_attempts=transport_attempts,
+                cancel_event=cancel_event,
             )
         except _AiProviderCallError as error:
             output = _build_ai_output(
@@ -369,18 +376,23 @@ def _completion_with_transport_retries(
     request_timeout: float,
     max_transport_retries: int,
     transport_attempts: list[dict[str, Any]],
+    cancel_event: Event | None,
 ) -> Any:
     for transport_attempt in range(1, max_transport_retries + 2):
+        raise_if_cancelled(cancel_event)
         started_at = perf_counter()
         try:
-            response = completion(
-                **_completion_kwargs(
-                    model=model,
-                    messages=messages,
-                    api_base=api_base,
-                    api_key=api_key,
-                    request_timeout=request_timeout,
-                )
+            completion_kwargs = _completion_kwargs(
+                model=model,
+                messages=messages,
+                api_base=api_base,
+                api_key=api_key,
+                request_timeout=request_timeout,
+            )
+            response = (
+                asyncio.run(_cancelable_acompletion(completion_kwargs, cancel_event))
+                if cancel_event is not None
+                else completion(**completion_kwargs)
             )
         except _RETRYABLE_PROVIDER_ERRORS as error:
             transport_attempts.append(
@@ -420,6 +432,24 @@ def _completion_with_transport_retries(
             return response
 
     raise AssertionError("transport retry loop exited without a response")
+
+
+async def _cancelable_acompletion(
+    completion_kwargs: dict[str, Any],
+    cancel_event: Event,
+) -> Any:
+    raise_if_cancelled(cancel_event)
+    request_task = asyncio.create_task(acompletion(**completion_kwargs))
+    while not request_task.done():
+        if cancel_event.is_set():
+            request_task.cancel()
+            try:
+                await request_task
+            except asyncio.CancelledError:
+                pass
+            raise GenerationCancelledError("Generation job was cancelled by the user")
+        await asyncio.wait({request_task}, timeout=0.05)
+    return await request_task
 
 
 def _completion_kwargs(
