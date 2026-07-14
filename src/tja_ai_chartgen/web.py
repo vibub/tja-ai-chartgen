@@ -3248,7 +3248,7 @@ def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
           </select>
         </label>
         <label class="checkbox-card field-wide">
-          <input name="use_beatnet" type="checkbox" value="true" checked>
+          <input name="use_beatnet" type="checkbox" value="true">
           <span>使用 BeatNet <span class="field-hint">尝试增强强拍、拍号和 offset。</span></span>
         </label>
         <label class="checkbox-card field-wide">

@@ -38,7 +38,8 @@ def test_web_index_shows_upload_form(tmp_path):
     assert "multipart/form-data" in response.text
     assert 'accept="audio/*,video/mp4,.mp4,.m4s"' in response.text
     assert "m4s" in response.text
-    assert 'name="use_beatnet" type="checkbox" value="true" checked' in response.text
+    assert 'name="use_beatnet" type="checkbox" value="true">' in response.text
+    assert 'name="use_beatnet" type="checkbox" value="true" checked' not in response.text
     assert 'name="use_instrument_analysis" type="checkbox" value="true"' in response.text
     assert 'select name="instrument_device"' in response.text
     assert "prepare-instrument-models" in response.text
