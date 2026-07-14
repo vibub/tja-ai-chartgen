@@ -248,7 +248,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 | 6.1 盘点并复用现有 fixture | 已完成 | 已盘点 9 个由标准库脚本确定性生成的 WAV，明确其节拍、密度、resolution、结构和边缘静音复用范围，并记录后续缺口。 | 2026-07-15：`pytest tests/test_audio_pipeline_integration.py -v`，10 passed。 |
 | 6.2 新增节奏事件 ground truth | 已完成 | 已建立 schema version 1，为当前 17 个 WAV 同步生成事件 JSON，持久化 BPM、拍号、时长、onset、强 onset、beat、downbeat、静音区、频带事件、fill 区间和结构段落。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`；确定性重建后的 WAV、schema 和事件 JSON 与仓库文件逐字节一致。 |
 | 6.3 扩展合成节奏类型 | 已完成 | 新增 8 个 WAV，覆盖切分、真正弱起、低频主拍/高频反拍、持续 harmonic 背景、短 fill burst、3/4、6/8 和半速/倍速歧义；fixture 总数增至 17。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`，4 passed；完整重建逐字节一致。 |
-| 6.4 建立音频分析 benchmark | 部分完成 | 已建立 `audio-alignment-v1` 基础 benchmark，统一输出 onset、强 onset、beat、downbeat、BPM、拍号、first downbeat 和静音误检指标，并将 baseline 刷新到全部 17 个 fixture；resolution 指标与完整报告仍待 6.4b 完成。 | 2026-07-15：`python tools/benchmark_audio_fixtures.py`；`pytest tests/test_audio_benchmark.py -v`，5 passed。 |
+| 6.4 建立音频分析 benchmark | 已完成 | `audio-alignment-v2` 已覆盖全部 17 个 fixture，补齐频带、弱起、fill 与 resolution 指标，并同时生成机器可读 JSON baseline 和逐 fixture Markdown 报告。 | 2026-07-15：`python tools/benchmark_audio_fixtures.py`；`pytest tests/test_audio_benchmark.py -v`，9 passed。 |
 | 6.5 建立谱面对齐 baseline | 部分完成 | 已有部分 drum、bass、accent、structure 和 resolution 指标；尚缺统一 note alignment 指标。 | 现有 QualityReport 测试可复用。 |
 | 6.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -321,37 +321,46 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 ## 6.4 自动指标
 
-基础实现为 `audio-alignment-v1`：`tools/benchmark_audio_fixtures.py` 离线读取 `<stem>.events.json`，调用默认 `analyze_audio()`，再由 `evaluation/audio_benchmark.py` 做一对一事件匹配与聚合。默认容差为 onset 50 ms、beat 70 ms、downbeat 70 ms；可通过 CLI 参数覆盖，并可显式启用 `--use-beatnet`。默认路径不访问网络。
+完整实现为 `audio-alignment-v2`：`tools/benchmark_audio_fixtures.py` 离线读取全部 `<stem>.events.json`，调用默认 `analyze_audio()`，再由 `evaluation/audio_benchmark.py` 做一对一事件匹配、ResolutionPlan 评测与跨 fixture 聚合。默认容差为 onset 50 ms、beat 70 ms、downbeat 70 ms，频带峰值阈值为 0.25；均可通过 CLI 参数覆盖，并可显式启用 `--use-beatnet`。默认路径不访问网络。
 
-报告写入 `tests/fixtures/audio/audio_benchmark_baseline.json`，包含每个 fixture 的 analyzer、BPM/拍号判断、事件计数、precision、recall、F1、平均/最大绝对时间误差，以及全体 fixture 的 micro aggregate。默认分析没有独立 downbeat 输出时，benchmark 按估计 offset、四分音符 BPM 和拍号推导 downbeat，并把来源记录为 `derived-offset-meter`；BeatNet 提供 downbeat 时记录为 `analyzer`，避免把两类结果混为一谈。
+机器可读结果写入 `tests/fixtures/audio/audio_benchmark_baseline.json`，schema version 2 除基础 onset/beat/downbeat、BPM、拍号、first downbeat 和静音误检外，还记录：
 
-扩展后的 17-fixture baseline 的 onset F1 为 0.996421、beat F1 为 0.805740、downbeat F1 为 0.418033，平均 BPM 绝对误差为 8.008412，meter accuracy 为 0.882353，静音区 onset 误检为 2。该结果只用于修改前后 A/B 和回归趋势，不作为跨 librosa/平台版本必须逐值相等的 CI 阈值；CI 只校验报告 schema、fixture 完整性和指标范围。
+- 仅对带标注 fixture 生效的 low/high band onset、pickup onset 和 fill onset precision/recall/F1；
+- 每个 fixture 的 spectral 状态及 downbeat 来源；
+- ResolutionPlan policy、base/bar resolution、切换次数；
+- ground-truth onset 到目标 resolution 的平均/最大量化误差和可表达事件比例；
+- under-resolved bar、不必要高 resolution bar、高 resolution 占比；
+- 实际 resolution 分布与 ground truth 所需最小 resolution 分布；
+- first downbeat 之前无法归入完整小节的 pickup 事件数量。
+
+同一次命令还会原子写入 `tests/fixtures/audio/audio_benchmark_baseline.md`，提供聚合表和 17 个 fixture 的逐项对照，便于无需手工解析 JSON 即可进行修改前后 A/B。默认分析没有独立 downbeat 输出时，benchmark 按估计 offset、四分音符 BPM 和拍号推导并标记为 `derived-offset-meter`；BeatNet 提供结果时标记为 `analyzer`。
+
+当前 17-fixture baseline 的 onset/beat/downbeat F1 分别为 0.996421、0.805740、0.418033；low/high band onset F1 均为 0.666667，pickup recall 和 fill recall 均为 1.0。ResolutionPlan 对 ground-truth 事件的可表达比例为 1.0、量化误差为 0，但 114 个已评测小节全部选择 48 格且都高于 ground truth 所需最小 resolution，明确暴露出真实检测 onset 抖动导致的过度升级基线。该结果只用于修改前后 A/B 和回归趋势，不作为跨 librosa、BeatNet 或平台版本必须逐值相等的 CI 阈值；CI 校验 schema、fixture 完整性、指标范围和 Markdown 报告覆盖。
 
 ### Onset
 
-- precision；
-- recall；
-- F1；
-- 平均时间误差；
-- 强 onset recall；
-- 静音区误检数量。
+- [x] precision、recall 和 F1；
+- [x] 平均/最大时间误差；
+- [x] 强 onset recall；
+- [x] 静音区误检数量；
+- [x] 有标注 fixture 的 low/high band、pickup 和 fill onset 指标。
 
 ### Beat/downbeat
 
-- BPM 绝对误差；
-- BPM 相对误差；
-- 半速/倍速错误；
-- beat F-measure；
-- downbeat F-measure；
-- first downbeat 误差；
-- meter accuracy。
+- [x] BPM 绝对/相对误差；
+- [x] 半速/倍速错误；
+- [x] beat/downbeat F-measure；
+- [x] first downbeat 误差；
+- [x] meter accuracy；
+- [x] analyzer 与 derived downbeat 来源区分。
 
 ### Resolution
 
-- canonical onset 到目标 resolution 的量化误差；
-- 可表达事件比例；
-- 不必要的高 resolution 比例；
-- resolution 切换次数。
+- [x] ground-truth onset 到目标 resolution 的量化误差；
+- [x] 可表达事件比例；
+- [x] under-resolved 与不必要高 resolution 小节；
+- [x] high resolution 比例和 resolution 切换次数；
+- [x] selected 与 expected minimum resolution 分布。
 
 ### 谱面
 
@@ -389,7 +398,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 - [x] 6.2 建立 ground truth schema，并让 fixture 同步生成事件 JSON
 - [x] 6.4a 建立基础 onset、beat 与 downbeat benchmark
 - [x] 6.3 扩展切分、弱起、频带攻击、fill、3/4 和 6/8 fixture
-- [ ] 6.4b 完善全部 fixture 的自动 benchmark 与基线报告
+- [x] 6.4b 完善全部 fixture 的自动 benchmark 与基线报告
 - [ ] 6.5 建立谱面对齐 baseline
 - [ ] 6.6 执行 Phase 0 阶段验收
 

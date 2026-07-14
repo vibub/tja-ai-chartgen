@@ -3,20 +3,24 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from uuid import uuid4
 
 from tja_ai_chartgen.audio.analyze import analyze_audio
 from tja_ai_chartgen.evaluation.audio_benchmark import (
+    DEFAULT_BAND_ONSET_THRESHOLD,
     DEFAULT_BEAT_TOLERANCE_SECONDS,
     DEFAULT_DOWNBEAT_TOLERANCE_SECONDS,
     DEFAULT_ONSET_TOLERANCE_SECONDS,
     build_audio_benchmark,
     build_fixture_audio_metrics,
+    render_audio_benchmark_markdown,
 )
 from tja_ai_chartgen.utils.paths import write_json
 
 
 DEFAULT_FIXTURE_DIR = Path(__file__).parents[1] / "tests" / "fixtures" / "audio"
 DEFAULT_OUTPUT_PATH = DEFAULT_FIXTURE_DIR / "audio_benchmark_baseline.json"
+DEFAULT_REPORT_PATH = DEFAULT_FIXTURE_DIR / "audio_benchmark_baseline.md"
 
 
 def benchmark_fixture_directory(
@@ -26,6 +30,7 @@ def benchmark_fixture_directory(
     onset_tolerance_seconds: float = DEFAULT_ONSET_TOLERANCE_SECONDS,
     beat_tolerance_seconds: float = DEFAULT_BEAT_TOLERANCE_SECONDS,
     downbeat_tolerance_seconds: float = DEFAULT_DOWNBEAT_TOLERANCE_SECONDS,
+    band_onset_threshold: float = DEFAULT_BAND_ONSET_THRESHOLD,
 ) -> dict[str, object]:
     fixture_metrics: list[dict[str, object]] = []
     event_paths = sorted(fixture_dir.glob("*.events.json"))
@@ -45,6 +50,7 @@ def benchmark_fixture_directory(
                 onset_tolerance_seconds=onset_tolerance_seconds,
                 beat_tolerance_seconds=beat_tolerance_seconds,
                 downbeat_tolerance_seconds=downbeat_tolerance_seconds,
+                band_onset_threshold=band_onset_threshold,
             )
         )
 
@@ -54,6 +60,7 @@ def benchmark_fixture_directory(
         onset_tolerance_seconds=onset_tolerance_seconds,
         beat_tolerance_seconds=beat_tolerance_seconds,
         downbeat_tolerance_seconds=downbeat_tolerance_seconds,
+        band_onset_threshold=band_onset_threshold,
     )
 
 
@@ -63,6 +70,7 @@ def main() -> int:
     )
     parser.add_argument("--fixture-dir", type=Path, default=DEFAULT_FIXTURE_DIR)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
+    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT_PATH)
     parser.add_argument("--use-beatnet", action="store_true")
     parser.add_argument(
         "--onset-tolerance",
@@ -79,6 +87,11 @@ def main() -> int:
         type=float,
         default=DEFAULT_DOWNBEAT_TOLERANCE_SECONDS,
     )
+    parser.add_argument(
+        "--band-onset-threshold",
+        type=float,
+        default=DEFAULT_BAND_ONSET_THRESHOLD,
+    )
     args = parser.parse_args()
     benchmark = benchmark_fixture_directory(
         args.fixture_dir,
@@ -86,8 +99,13 @@ def main() -> int:
         onset_tolerance_seconds=args.onset_tolerance,
         beat_tolerance_seconds=args.beat_tolerance,
         downbeat_tolerance_seconds=args.downbeat_tolerance,
+        band_onset_threshold=args.band_onset_threshold,
     )
     output_path = write_json(args.output, benchmark)
+    report_path = _write_text_atomic(
+        args.report,
+        render_audio_benchmark_markdown(benchmark),
+    )
     summary = benchmark["summary"]
     print(
         f"Benchmarked {benchmark['fixture_count']} fixtures: "
@@ -96,7 +114,19 @@ def main() -> int:
         f"downbeat F1={summary['downbeat']['f1']:.3f}"
     )
     print(f"Wrote {output_path}")
+    print(f"Wrote {report_path}")
     return 0
+
+
+def _write_text_atomic(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary_path.write_text(text, encoding="utf-8")
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return path
 
 
 if __name__ == "__main__":

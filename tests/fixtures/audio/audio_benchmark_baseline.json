@@ -1,12 +1,13 @@
 {
-  "schema_version": 1,
-  "benchmark_version": "audio-alignment-v1",
+  "schema_version": 2,
+  "benchmark_version": "audio-alignment-v2",
   "fixture_ground_truth_schema_version": 1,
   "settings": {
     "use_beatnet": false,
     "onset_tolerance_seconds": 0.05,
     "beat_tolerance_seconds": 0.07,
-    "downbeat_tolerance_seconds": 0.07
+    "downbeat_tolerance_seconds": 0.07,
+    "band_onset_threshold": 0.25
   },
   "fixture_count": 17,
   "summary": {
@@ -58,6 +59,78 @@
       "mean_absolute_error_seconds": 0.012861,
       "max_absolute_error_seconds": 0.055188
     },
+    "low_band_onset": {
+      "reference_count": 32,
+      "estimated_count": 64,
+      "true_positive_count": 32,
+      "false_positive_count": 32,
+      "false_negative_count": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.666667,
+      "mean_absolute_error_seconds": 0.017029,
+      "max_absolute_error_seconds": 0.027937,
+      "applicable_fixture_count": 1
+    },
+    "high_band_onset": {
+      "reference_count": 32,
+      "estimated_count": 64,
+      "true_positive_count": 32,
+      "false_positive_count": 32,
+      "false_negative_count": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.666667,
+      "mean_absolute_error_seconds": 0.020998,
+      "max_absolute_error_seconds": 0.031814,
+      "applicable_fixture_count": 1
+    },
+    "pickup_onset": {
+      "reference_count": 2,
+      "estimated_count": 3,
+      "true_positive_count": 2,
+      "false_positive_count": 1,
+      "false_negative_count": 0,
+      "precision": 0.666667,
+      "recall": 1.0,
+      "f1": 0.8,
+      "mean_absolute_error_seconds": 0.013549,
+      "max_absolute_error_seconds": 0.016259,
+      "applicable_fixture_count": 1
+    },
+    "fill_onset": {
+      "reference_count": 8,
+      "estimated_count": 9,
+      "true_positive_count": 8,
+      "false_positive_count": 1,
+      "false_negative_count": 0,
+      "precision": 0.888889,
+      "recall": 1.0,
+      "f1": 0.941176,
+      "mean_absolute_error_seconds": 0.017489,
+      "max_absolute_error_seconds": 0.027188,
+      "applicable_fixture_count": 1
+    },
+    "resolution": {
+      "evaluated_bar_count": 114,
+      "evaluated_event_count": 697,
+      "pre_downbeat_event_count": 2,
+      "expressible_event_count": 697,
+      "expressible_event_ratio": 1.0,
+      "mean_quantization_error_seconds": 0.0,
+      "max_quantization_error_seconds": 0.0,
+      "under_resolved_bar_count": 0,
+      "unnecessary_high_resolution_bar_count": 114,
+      "resolution_change_count": 0,
+      "selected_resolution_counts": {
+        "48": 114
+      },
+      "expected_minimum_resolution_counts": {
+        "12": 16,
+        "16": 91,
+        "24": 7
+      }
+    },
     "mean_bpm_absolute_error": 8.008412,
     "max_bpm_absolute_error": 60.0,
     "mean_bpm_relative_error": 0.06599,
@@ -71,6 +144,7 @@
     {
       "audio": "band_attacks_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -130,11 +204,72 @@
         "f1": 0.941176,
         "mean_absolute_error_seconds": 0.008031,
         "max_absolute_error_seconds": 0.008031
+      },
+      "low_band_onset": {
+        "reference_count": 32,
+        "estimated_count": 64,
+        "true_positive_count": 32,
+        "false_positive_count": 32,
+        "false_negative_count": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.666667,
+        "mean_absolute_error_seconds": 0.017029,
+        "max_absolute_error_seconds": 0.027937
+      },
+      "high_band_onset": {
+        "reference_count": 32,
+        "estimated_count": 64,
+        "true_positive_count": 32,
+        "false_positive_count": 32,
+        "false_negative_count": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.666667,
+        "mean_absolute_error_seconds": 0.020998,
+        "max_absolute_error_seconds": 0.031814
+      },
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 64,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 64,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 8,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 8
+        }
       }
     },
     {
       "audio": "click_4_4.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -194,11 +329,46 @@
         "f1": 0.888889,
         "mean_absolute_error_seconds": 0.00976,
         "max_absolute_error_seconds": 0.00976
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 4,
+        "evaluated_event_count": 16,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 16,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 4,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 4,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 4
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 4
+        }
       }
     },
     {
       "audio": "click_4_4_leadin.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -258,11 +428,46 @@
         "f1": 0.0,
         "mean_absolute_error_seconds": null,
         "max_absolute_error_seconds": null
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 4,
+        "evaluated_event_count": 16,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 16,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 4,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 4,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 4
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 4
+        }
       }
     },
     {
       "audio": "dense_180.wav",
       "analyzer": "librosa",
+      "spectral_status": "complete",
       "estimated_bpm": 184.57,
       "expected_bpm": 180.0,
       "bpm_absolute_error": 4.57,
@@ -322,11 +527,50 @@
         "f1": 0.352941,
         "mean_absolute_error_seconds": 0.029401,
         "max_absolute_error_seconds": 0.055188
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 73,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 73,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 8,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 8
+        }
       }
     },
     {
       "audio": "fill_burst_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -386,11 +630,61 @@
         "f1": 0.941176,
         "mean_absolute_error_seconds": 0.009927,
         "max_absolute_error_seconds": 0.009927
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": {
+        "reference_count": 8,
+        "estimated_count": 9,
+        "true_positive_count": 8,
+        "false_positive_count": 1,
+        "false_negative_count": 0,
+        "precision": 0.888889,
+        "recall": 1.0,
+        "f1": 0.941176,
+        "mean_absolute_error_seconds": 0.017489,
+        "max_absolute_error_seconds": 0.027188
+      },
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 38,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 38,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 8,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 8
+        }
       }
     },
     {
       "audio": "harmonic_sparse_120.wav",
       "analyzer": "librosa",
+      "spectral_status": "complete",
       "estimated_bpm": 120.185,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.185,
@@ -450,11 +744,49 @@
         "f1": 0.0,
         "mean_absolute_error_seconds": null,
         "max_absolute_error_seconds": null
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 16,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 16,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 8,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 8
+        }
       }
     },
     {
       "audio": "meter_3_4_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -514,11 +846,48 @@
         "f1": 0.266667,
         "mean_absolute_error_seconds": 0.008769,
         "max_absolute_error_seconds": 0.008769
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 24,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 24,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 0,
+        "high_resolution_bar_ratio": 0.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "12": 8
+        }
       }
     },
     {
       "audio": "meter_6_8_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -578,11 +947,48 @@
         "f1": 0.266667,
         "mean_absolute_error_seconds": 0.008162,
         "max_absolute_error_seconds": 0.008162
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 48,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 48,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 0,
+        "high_resolution_bar_ratio": 0.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "12": 8
+        }
       }
     },
     {
       "audio": "mixed_120.wav",
       "analyzer": "librosa",
+      "spectral_status": "complete",
       "estimated_bpm": 117.454,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 2.546,
@@ -642,11 +1048,47 @@
         "f1": 0.444444,
         "mean_absolute_error_seconds": 0.032516,
         "max_absolute_error_seconds": 0.054192
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 4,
+        "evaluated_event_count": 56,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 56,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 4,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 4,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 4
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 2,
+          "24": 2
+        }
       }
     },
     {
       "audio": "pickup_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -706,11 +1148,61 @@
         "f1": 0.0,
         "mean_absolute_error_seconds": null,
         "max_absolute_error_seconds": null
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": {
+        "reference_count": 2,
+        "estimated_count": 3,
+        "true_positive_count": 2,
+        "false_positive_count": 1,
+        "false_negative_count": 0,
+        "precision": 0.666667,
+        "recall": 1.0,
+        "f1": 0.8,
+        "mean_absolute_error_seconds": 0.013549,
+        "max_absolute_error_seconds": 0.016259
+      },
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 32,
+        "pre_downbeat_event_count": 2,
+        "expressible_event_count": 32,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 8,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 8
+        }
       }
     },
     {
       "audio": "sparse_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -770,11 +1262,50 @@
         "f1": 0.941176,
         "mean_absolute_error_seconds": 0.0098,
         "max_absolute_error_seconds": 0.0098
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 26,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 26,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 8,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 8
+        }
       }
     },
     {
       "audio": "straight_120.wav",
       "analyzer": "librosa",
+      "spectral_status": "complete",
       "estimated_bpm": 95.703,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 24.297,
@@ -834,11 +1365,45 @@
         "f1": 0.0,
         "mean_absolute_error_seconds": null,
         "max_absolute_error_seconds": null
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 4,
+        "evaluated_event_count": 64,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 64,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 4,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 4,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 4
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 4
+        }
       }
     },
     {
       "audio": "structure_build_up_120.wav",
       "analyzer": "librosa",
+      "spectral_status": "complete",
       "estimated_bpm": 117.454,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 2.546,
@@ -898,11 +1463,54 @@
         "f1": 0.166667,
         "mean_absolute_error_seconds": 0.032516,
         "max_absolute_error_seconds": 0.054192
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 12,
+        "evaluated_event_count": 96,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 96,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 12,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 12,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 12
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 11,
+          "24": 1
+        }
       }
     },
     {
       "audio": "syncopated_120.wav",
       "analyzer": "librosa",
+      "spectral_status": "complete",
       "estimated_bpm": 161.499,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 41.499,
@@ -962,11 +1570,53 @@
         "f1": 0.2,
         "mean_absolute_error_seconds": 0.027845,
         "max_absolute_error_seconds": 0.044852
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 40,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 40,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 8,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 8
+        }
       }
     },
     {
       "audio": "tempo_ambiguity_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.0,
@@ -1026,11 +1676,50 @@
         "f1": 0.941176,
         "mean_absolute_error_seconds": 0.009364,
         "max_absolute_error_seconds": 0.009364
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 8,
+        "evaluated_event_count": 32,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 32,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 8,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 8,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 8
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 8
+        }
       }
     },
     {
       "audio": "transient_noise_intro_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 120.5,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 0.5,
@@ -1090,11 +1779,45 @@
         "f1": 0.666667,
         "mean_absolute_error_seconds": 0.006029,
         "max_absolute_error_seconds": 0.010179
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 2,
+        "evaluated_event_count": 8,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 8,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 2,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 2,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 2
+        },
+        "expected_minimum_resolution_counts": {
+          "16": 2
+        }
       }
     },
     {
       "audio": "triplet_120.wav",
       "analyzer": "librosa+onset-grid",
+      "spectral_status": "complete",
       "estimated_bpm": 180.0,
       "expected_bpm": 120.0,
       "bpm_absolute_error": 60.0,
@@ -1154,6 +1877,42 @@
         "f1": 0.0,
         "mean_absolute_error_seconds": null,
         "max_absolute_error_seconds": null
+      },
+      "low_band_onset": null,
+      "high_band_onset": null,
+      "pickup_onset": null,
+      "fill_onset": null,
+      "resolution": {
+        "policy_version": "song-global-v1",
+        "base_resolution": 48,
+        "bar_resolutions": [
+          48,
+          48,
+          48,
+          48,
+          48,
+          48,
+          48
+        ],
+        "resolution_change_count": 0,
+        "evaluated_bar_count": 4,
+        "evaluated_event_count": 48,
+        "pre_downbeat_event_count": 0,
+        "expressible_event_count": 48,
+        "expressible_event_ratio": 1.0,
+        "mean_quantization_error_seconds": 0.0,
+        "max_quantization_error_seconds": 0.0,
+        "under_resolved_bar_count": 0,
+        "unnecessary_high_resolution_bar_count": 4,
+        "unnecessary_high_resolution_bar_ratio": 1.0,
+        "high_resolution_bar_count": 4,
+        "high_resolution_bar_ratio": 1.0,
+        "selected_resolution_counts": {
+          "48": 4
+        },
+        "expected_minimum_resolution_counts": {
+          "24": 4
+        }
       }
     }
   ]
