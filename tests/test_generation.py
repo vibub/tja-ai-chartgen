@@ -68,6 +68,19 @@ def test_generation_config_writes_schema_version_and_excludes_secrets(tmp_path):
         GenerationConfig.model_validate({**_config_data(tmp_path), "ai_api_key": "secret"})
 
 
+def test_generation_config_accepts_transport_retry_upper_bound(tmp_path):
+    config = GenerationConfig.model_validate(
+        {**_config_data(tmp_path), "ai_transport_retries": 5}
+    )
+
+    assert config.ai_transport_retries == 5
+
+    with pytest.raises(ValidationError):
+        GenerationConfig.model_validate(
+            {**_config_data(tmp_path), "ai_transport_retries": 6}
+        )
+
+
 def test_load_generation_config_accepts_legacy_config_without_schema_version(tmp_path):
     config_path = tmp_path / "generation_config.json"
     config_path.write_text(json.dumps(_config_data(tmp_path)), encoding="utf-8")

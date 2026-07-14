@@ -678,7 +678,7 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
         assert api_key == "secret-key"
         assert max_repair_attempts == 1
         assert request_timeout == 45.5
-        assert max_transport_retries == 0
+        assert max_transport_retries == 5
         return [ChartBar(index=0, notes="1000100010001000")], {"final": {"bars": []}}
 
     monkeypatch.setattr(
@@ -707,7 +707,7 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
             "--ai-request-timeout",
             "45.5",
             "--ai-transport-retries",
-            "0",
+            "5",
         ],
     )
 
@@ -717,7 +717,7 @@ def test_generate_with_ai_passes_openai_compatible_options_without_saving_key(
     assert "ai_base_url" not in saved_config
     assert saved_config["ai_repair_retries"] == 1
     assert saved_config["ai_request_timeout"] == 45.5
-    assert saved_config["ai_transport_retries"] == 0
+    assert saved_config["ai_transport_retries"] == 5
     assert "ai_api_key" not in saved_config
     assert "secret-key" not in (output_dir / "generation_config.json").read_text(encoding="utf-8")
     quality_text = (output_dir / "quality_report.json").read_text(encoding="utf-8")
@@ -868,7 +868,7 @@ def test_generate_rejects_ai_request_timeout_outside_bounds(tmp_path, value):
     assert "--ai-request-timeout must be between 1 and 600 seconds" in result.output
 
 
-@pytest.mark.parametrize("value", ["-1", "2"])
+@pytest.mark.parametrize("value", ["-1", "6"])
 def test_generate_rejects_ai_transport_retries_outside_bounds(tmp_path, value):
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")
@@ -886,7 +886,7 @@ def test_generate_rejects_ai_transport_retries_outside_bounds(tmp_path, value):
     )
 
     assert result.exit_code == 1
-    assert "--ai-transport-retries must be 0 or 1" in result.output
+    assert "--ai-transport-retries must be between 0 and 5" in result.output
 
 
 def test_generate_with_ai_provider_failure_writes_structured_sidecars_and_falls_back(

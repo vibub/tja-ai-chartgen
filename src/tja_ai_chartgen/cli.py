@@ -15,6 +15,7 @@ from tja_ai_chartgen.audio.instrument_models import (
 )
 from tja_ai_chartgen.features.meter import validate_time_signature
 from tja_ai_chartgen.generation import (
+    MAX_AI_TRANSPORT_RETRIES,
     GenerationConfig,
     GenerationNotice,
     build_analysis_notices,
@@ -146,7 +147,7 @@ def generate(
     ai_transport_retries: int = typer.Option(
         DEFAULT_AI_TRANSPORT_RETRIES,
         "--ai-transport-retries",
-        help="Retry count shared by all AI provider call failures (0 or 1).",
+        help=f"Retry count shared by all AI provider call failures (0-{MAX_AI_TRANSPORT_RETRIES}).",
     ),
 ) -> None:
     run_generate(
@@ -313,8 +314,11 @@ def run_generate(
         _fail("--ai-repair-retries must be greater than or equal to 0.")
     if not 1 <= ai_request_timeout <= 600:
         _fail("--ai-request-timeout must be between 1 and 600 seconds.")
-    if ai_transport_retries not in (0, 1):
-        _fail("--ai-transport-retries must be 0 or 1.")
+    if not 0 <= ai_transport_retries <= MAX_AI_TRANSPORT_RETRIES:
+        _fail(
+            "--ai-transport-retries must be between "
+            f"0 and {MAX_AI_TRANSPORT_RETRIES}."
+        )
     try:
         validate_density(density)
         validate_style(style)

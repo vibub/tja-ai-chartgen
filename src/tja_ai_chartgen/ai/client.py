@@ -39,6 +39,7 @@ ALLOWED_AI_NOTES = set("01234578")
 DEFAULT_AI_REPAIR_RETRIES = 2
 DEFAULT_AI_REQUEST_TIMEOUT = 300.0
 DEFAULT_AI_TRANSPORT_RETRIES = 1
+MAX_AI_TRANSPORT_RETRIES = 5
 MIN_AI_REQUEST_TIMEOUT = 1.0
 MAX_AI_REQUEST_TIMEOUT = 600.0
 class AiOutputRepairError(RuntimeError):
@@ -84,8 +85,10 @@ def generate_chart_bars_with_ai(
 ) -> tuple[list[ChartBar], dict[str, Any]]:
     if not MIN_AI_REQUEST_TIMEOUT <= request_timeout <= MAX_AI_REQUEST_TIMEOUT:
         raise ValueError("AI request timeout must be between 1 and 600 seconds")
-    if max_transport_retries not in (0, 1):
-        raise ValueError("AI transport retries must be 0 or 1")
+    if not 0 <= max_transport_retries <= MAX_AI_TRANSPORT_RETRIES:
+        raise ValueError(
+            f"AI transport retries must be between 0 and {MAX_AI_TRANSPORT_RETRIES}"
+        )
 
     model_name = model or os.getenv("MODEL", "openai/gpt-4o-mini")
     resolved_api_base = api_base or os.getenv("OPENAI_BASE_URL")

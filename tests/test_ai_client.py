@@ -734,7 +734,7 @@ def test_generate_chart_bars_with_ai_rejects_request_timeout_outside_bounds(
     assert completion_called is False
 
 
-@pytest.mark.parametrize("max_transport_retries", [-1, 2])
+@pytest.mark.parametrize("max_transport_retries", [-1, 6])
 def test_generate_chart_bars_with_ai_rejects_transport_retry_count_outside_bounds(
     monkeypatch, max_transport_retries
 ):
@@ -746,7 +746,7 @@ def test_generate_chart_bars_with_ai_rejects_transport_retry_count_outside_bound
 
     monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
 
-    with pytest.raises(ValueError, match="0 or 1"):
+    with pytest.raises(ValueError, match="between 0 and 5"):
         generate_chart_bars_with_ai(
             _analysis(),
             "Oni",

@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from tja_ai_chartgen.cancellation import GenerationCancelledError, raise_if_cancelled
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
 from tja_ai_chartgen.generation import (
+    MAX_AI_TRANSPORT_RETRIES,
     GenerationNotice,
     build_analysis_notices,
     build_song_analysis,
@@ -3158,8 +3159,10 @@ def _optional_form_text(value: str) -> str | None:
 def _validate_ai_transport_settings(request_timeout: float, transport_retries: int) -> None:
     if not 1 <= request_timeout <= 600:
         raise ValueError("AI request timeout must be between 1 and 600 seconds")
-    if transport_retries not in (0, 1):
-        raise ValueError("AI transport retries must be 0 or 1")
+    if not 0 <= transport_retries <= MAX_AI_TRANSPORT_RETRIES:
+        raise ValueError(
+            f"AI transport retries must be between 0 and {MAX_AI_TRANSPORT_RETRIES}"
+        )
 
 
 def _resolve_web_ai_credentials(ai_base_url: str, ai_api_key: str) -> tuple[str | None, str | None]:
@@ -3307,7 +3310,7 @@ def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
             </label>
             <label class="field">
               网络重试
-              <input name="ai_transport_retries" type="number" min="0" max="1" value="1">
+              <input name="ai_transport_retries" type="number" min="0" max="{MAX_AI_TRANSPORT_RETRIES}" value="3">
             </label>
           </div>
         </details>
@@ -3548,7 +3551,7 @@ def _regenerate_form(
           </label>
           <label class="field">
             网络重试
-            <input name="ai_transport_retries" type="number" min="0" max="1" value="{ai_transport_retries}">
+            <input name="ai_transport_retries" type="number" min="0" max="{MAX_AI_TRANSPORT_RETRIES}" value="{ai_transport_retries}">
           </label>
         </div>
       </details>

@@ -192,7 +192,7 @@ tja-ai-chartgen generate song.mp3 \
 
 `generation_config.json` 会记录最终解析使用的 `model`、单次请求超时和 transport 重试次数，但不会记录 `OPENAI_BASE_URL` 或 `OPENAI_API_KEY`。复跑 AI 生成时，请继续通过 `.env`、环境变量或命令行参数提供连接配置。
 
-每次 AI provider transport 尝试默认超时 300 秒，可用 `--ai-request-timeout` 在 1–600 秒范围内调整。超时、连接失败、HTTP 错误、认证错误、参数错误及其他 provider 调用异常共用同一组 transport 重试次数，默认最多重试 1 次，可用 `--ai-transport-retries 0|1` 调整；LiteLLM 内部重试会被关闭，项目自行记录每次 transport 尝试的耗时和异常类别。该重试与内容修复独立：AI 使用 `tja-ai-chartgen-compact-v2` 输入并返回 canonical tick 上的稀疏 `hits` / `long_notes` 事件，不直接决定 notes 字符串长度；统一事件编码器会校验 tick 范围、目标 resolution 可表示性、冲突和长音结构。旧 `notes` 输出 schema、JSON/bar 数量错误或质量门控失败都会进入内容修复，默认最多重试 2 次，可用 `--ai-repair-retries` 调整。任一阶段最终失败都会回退到规则生成器。
+每次 AI provider transport 尝试默认超时 300 秒，可用 `--ai-request-timeout` 在 1–600 秒范围内调整。超时、连接失败、HTTP 错误、认证错误、参数错误及其他 provider 调用异常共用同一组 transport 重试次数，默认最多重试 1 次，可用 `--ai-transport-retries 0|1|2|3|4|5` 调整；LiteLLM 内部重试会被关闭，项目自行记录每次 transport 尝试的耗时和异常类别。该重试与内容修复独立：AI 使用 `tja-ai-chartgen-compact-v2` 输入并返回 canonical tick 上的稀疏 `hits` / `long_notes` 事件，不直接决定 notes 字符串长度；统一事件编码器会校验 tick 范围、目标 resolution 可表示性、冲突和长音结构。旧 `notes` 输出 schema、JSON/bar 数量错误或质量门控失败都会进入内容修复，默认最多重试 2 次，可用 `--ai-repair-retries` 调整。任一阶段最终失败都会回退到规则生成器。
 
 运行时 AI prompt 会按 course 和接近的 level，从仓库内的匿名连续参考窗口中选取 intro、peak、cadence 各一段。当前静态数据由 5 组本地参考、23 个 course 离线生成，共 69 个连续窗口；窗口只保留匿名 source ID、course/level、每小节 resolution/measure/BPM/GOGO 和稀疏事件，不保存标题、WAVE、外部绝对路径或完整 notes 字符串。运行时不会访问原始参考目录；静态窗口不可读时才回退到旧的均匀抽样参考片段。
 
@@ -210,7 +210,7 @@ tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote --allow-instrument-analysis
 ```
 
-Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则或 AI 增强谱面片段。生成完成后会进入游玩预览，支持播放 OGG、自动演奏谱面、拖动进度条以及播放咚/咔命中音效。分析置信度不足、BeatNet 未生效、`spectral-v1` fallback、`instrument-v1` complete/partial/fallback、基础 resolution 降级、AI fallback 和最终写入错误会通过结构化 `GenerationNotice` 同时显示在进度页与结果页，并持久化为 `generation_notices*.json`；CLI 也会写入同类 sidecar 和 `report.txt`。折叠的 AI 参数区可设置单次请求超时和 0–1 次 transport 重试；全曲生成会保存这两项非敏感设置供结果页沿用，局部 regenerate 的同步 AI 调用在线程池中执行，不阻塞 FastAPI 事件循环。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件，且公开进度/结果会隐藏服务器路径、连接地址和 provider 响应详情。远程模式默认禁用 Demucs/AST 重型推理，只有服务器管理员额外提供 `--allow-instrument-analysis` 后，请求方才能启用阶段 C。
+Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则或 AI 增强谱面片段。生成完成后会进入游玩预览，支持播放 OGG、自动演奏谱面、拖动进度条以及播放咚/咔命中音效。分析置信度不足、BeatNet 未生效、`spectral-v1` fallback、`instrument-v1` complete/partial/fallback、基础 resolution 降级、AI fallback 和最终写入错误会通过结构化 `GenerationNotice` 同时显示在进度页与结果页，并持久化为 `generation_notices*.json`；CLI 也会写入同类 sidecar 和 `report.txt`。折叠的 AI 参数区可设置单次请求超时和 0–5 次 transport 重试；全曲生成会保存这两项非敏感设置供结果页沿用，局部 regenerate 的同步 AI 调用在线程池中执行，不阻塞 FastAPI 事件循环。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件，且公开进度/结果会隐藏服务器路径、连接地址和 provider 响应详情。远程模式默认禁用 Demucs/AST 重型推理，只有服务器管理员额外提供 `--allow-instrument-analysis` 后，请求方才能启用阶段 C。
 
 ## 输出文件
 

@@ -48,7 +48,7 @@ def test_web_index_shows_upload_form(tmp_path):
     assert '<details class="advanced-panel field-wide" data-role="ai-options">' in response.text
     assert 'name="ai_model"' in response.text
     assert 'name="ai_request_timeout" type="number" min="1" max="600" value="300"' in response.text
-    assert 'name="ai_transport_retries" type="number" min="0" max="1" value="1"' in response.text
+    assert 'name="ai_transport_retries" type="number" min="0" max="5" value="3"' in response.text
 
 
 def test_web_remote_mode_disables_instrument_analysis_without_server_opt_in(tmp_path):
@@ -115,7 +115,7 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert '<summary>AI 参数</summary>' in result.text
     assert '<details class="advanced-panel field-wide" open>' not in result.text
     assert 'name="ai_request_timeout" type="number" min="1" max="600" value="300"' in result.text
-    assert 'name="ai_transport_retries" type="number" min="0" max="1" value="1"' in result.text
+    assert 'name="ai_transport_retries" type="number" min="0" max="5" value="3"' in result.text
     assert "BPM: 180.0" not in result.text
     assert "OFFSET: 0.25" not in result.text
     assert "小节预览" not in result.text
@@ -851,7 +851,7 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
         assert api_key == "secret-key"
         assert max_repair_attempts == 1
         assert request_timeout == 42.5
-        assert max_transport_retries == 0
+        assert max_transport_retries == 5
         assert special_notes is True
         assert attempt_log_path is not None
         assert attempt_log_path.name == "ai_attempts_1_2.json"
@@ -899,7 +899,7 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
             "ai_api_key": "secret-key",
             "ai_repair_retries": "1",
             "ai_request_timeout": "42.5",
-            "ai_transport_retries": "0",
+            "ai_transport_retries": "5",
         },
         files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
     )
@@ -920,9 +920,9 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
     assert "222200000000," in generated_text
     chart_options = json.loads((job_dir / "chart_options.json").read_text(encoding="utf-8"))
     assert chart_options["ai_request_timeout"] == 42.5
-    assert chart_options["ai_transport_retries"] == 0
+    assert chart_options["ai_transport_retries"] == 5
     assert 'name="ai_request_timeout" type="number" min="1" max="600" value="42.5"' in result.text
-    assert 'name="ai_transport_retries" type="number" min="0" max="1" value="0"' in result.text
+    assert 'name="ai_transport_retries" type="number" min="0" max="5" value="5"' in result.text
 
     for artifact_path in job_dir.rglob("*"):
         if artifact_path.is_file() and artifact_path.suffix in {".json", ".html", ".tja", ".txt"}:
@@ -937,8 +937,8 @@ def test_web_analyze_can_use_ai_for_full_chart(tmp_path, monkeypatch):
     [
         ("ai_request_timeout", "0", "AI request timeout must be between 1 and 600 seconds"),
         ("ai_request_timeout", "601", "AI request timeout must be between 1 and 600 seconds"),
-        ("ai_transport_retries", "-1", "AI transport retries must be 0 or 1"),
-        ("ai_transport_retries", "2", "AI transport retries must be 0 or 1"),
+        ("ai_transport_retries", "-1", "AI transport retries must be between 0 and 5"),
+        ("ai_transport_retries", "6", "AI transport retries must be between 0 and 5"),
     ],
 )
 def test_web_analyze_rejects_invalid_ai_transport_settings(
@@ -1176,7 +1176,7 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
         assert api_key == "secret-key"
         assert max_repair_attempts == 1
         assert request_timeout == 42.5
-        assert max_transport_retries == 0
+        assert max_transport_retries == 5
         assert special_notes is True
         assert attempt_log_path is not None
         assert attempt_log_path.name == "ai_attempts_1_2.json"
@@ -1217,7 +1217,7 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
             "ai_api_key": "secret-key",
             "ai_repair_retries": "1",
             "ai_request_timeout": "42.5",
-            "ai_transport_retries": "0",
+            "ai_transport_retries": "5",
         },
     )
 
@@ -1234,7 +1234,7 @@ def test_web_regenerate_can_use_ai_enhancement(tmp_path, monkeypatch):
     assert "1111000000000000," in generated_text
     assert "2222000000000000," in generated_text
     assert 'name="ai_request_timeout" type="number" min="1" max="600" value="42.5"' in response.text
-    assert 'name="ai_transport_retries" type="number" min="0" max="1" value="0"' in response.text
+    assert 'name="ai_transport_retries" type="number" min="0" max="5" value="5"' in response.text
 
 
 def test_web_regenerate_rejects_custom_ai_url_without_request_key(tmp_path, monkeypatch):
@@ -1284,7 +1284,7 @@ def test_web_regenerate_rejects_custom_ai_url_without_request_key(tmp_path, monk
     ("field", "value", "message"),
     [
         ("ai_request_timeout", "601", "AI request timeout must be between 1 and 600 seconds"),
-        ("ai_transport_retries", "2", "AI transport retries must be 0 or 1"),
+        ("ai_transport_retries", "6", "AI transport retries must be between 0 and 5"),
     ],
 )
 def test_web_regenerate_rejects_invalid_ai_transport_settings(

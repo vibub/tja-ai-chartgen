@@ -22,6 +22,7 @@ from tja_ai_chartgen.utils.paths import write_json
 
 DEFAULT_AI_REQUEST_TIMEOUT = 300.0
 DEFAULT_AI_TRANSPORT_RETRIES = 1
+MAX_AI_TRANSPORT_RETRIES = 5
 GenerationStageCallback = Callable[[str], None]
 
 
@@ -51,7 +52,11 @@ class GenerationConfig(BaseModel):
     model: str | None = None
     ai_repair_retries: int = Field(default=2, ge=0)
     ai_request_timeout: float = Field(default=DEFAULT_AI_REQUEST_TIMEOUT, ge=1, le=600)
-    ai_transport_retries: int = Field(default=DEFAULT_AI_TRANSPORT_RETRIES, ge=0, le=1)
+    ai_transport_retries: int = Field(
+        default=DEFAULT_AI_TRANSPORT_RETRIES,
+        ge=0,
+        le=MAX_AI_TRANSPORT_RETRIES,
+    )
 
     @field_serializer("input_audio", "output_dir", "instrument_model_dir")
     def serialize_path(self, value: Path | None) -> str | None:
