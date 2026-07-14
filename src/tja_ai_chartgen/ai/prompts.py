@@ -42,27 +42,27 @@ BAR_COLUMNS = [
     "canonical_grids_per_bar",
     "output_resolution",
     "allowed_tick_step",
-    "onset_events",
+    "audio_channels",
     "accent_grids",
-    "activity_grids",
-    "spectral_events",
-    "instrument_events",
     "beat_events",
     "downbeat_grid",
     "phrase_position",
     "fill_candidate",
     "section",
 ]
-ONSET_EVENT_COLUMNS = ["grid", "strength"]
-BEAT_EVENT_COLUMNS = ["grid", "beat"]
-SPECTRAL_GRID_COLUMNS = ["grid", "low_onset", "mid_onset", "high_onset", "spectral_flux"]
-INSTRUMENT_GRID_COLUMNS = [
-    "grid",
+AUDIO_CHANNEL_COLUMNS = [
+    "onset_strength",
+    "activity",
+    "low_onset",
+    "mid_onset",
+    "high_onset",
+    "spectral_flux",
     "vocal_onset",
     "drum_onset",
     "bass_onset",
     "accompaniment_onset",
 ]
+BEAT_EVENT_COLUMNS = ["grid", "beat"]
 INSTRUMENT_BAR_COLUMNS = [
     "vocal_activity",
     "vocal_presence_ratio",
@@ -159,14 +159,14 @@ def build_chart_generation_payload(
     forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
 
     payload = {
-        "schema": "tja-ai-chartgen-compact-v3",
+        "schema": "tja-ai-chartgen-compact-v4",
         "legend": {
             "bool": "0=false, 1=true",
             "bar_columns": BAR_COLUMNS,
-            "onset_event_columns": ONSET_EVENT_COLUMNS,
+            "audio_channel_columns": AUDIO_CHANNEL_COLUMNS,
+            "audio_channel_scale": "-1=present with unknown strength; 0=absent; 1..1000=normalized strength",
+            "audio_channel_positions": "channel index i maps to canonical tick i*allowed_tick_step",
             "beat_event_columns": BEAT_EVENT_COLUMNS,
-            "spectral_grid_columns": SPECTRAL_GRID_COLUMNS,
-            "instrument_grid_columns": INSTRUMENT_GRID_COLUMNS,
             "instrument_bar_columns": INSTRUMENT_BAR_COLUMNS,
             "bar_density_hint_columns": BAR_DENSITY_HINT_COLUMNS,
             "bar_structure_columns": BAR_STRUCTURE_COLUMNS,
@@ -277,7 +277,7 @@ Rules:
 19. Let the chart's style and music decide the don/ka mix, but avoid outputs where nearly all normal 1/2 notes are 1. Use some 2 notes for offbeat responses, back-half answers, syncopated hits, or phrase-end fills.
 20. When translated to four equal positions, useful rhythmic cells include 1020, 1200, 1012, 1210, 1122, 1221, 1022, and 2012, but do not force a fixed ratio.
 21. Avoid long all-don streams such as 1010101010101010 unless the input clearly describes a very plain stamina passage; even then, vary later bars with occasional 2 notes.
-22. Use onset_events and activity_grids to align notes. Decode onset_events with legend.onset_event_columns; each row preserves an onset's canonical grid and strength, with null strength only for legacy analysis that did not record it. activity_grids has one value per canonical grid and preserves sustained musical sound such as vocals, guitar, strings, piano, or pads even without an onset. If activity is high but onsets are sparse, this is not a rest; place a simple beat/downbeat skeleton rather than leaving the bar empty.
+22. Decode audio_channels with legend.audio_channel_columns, audio_channel_scale, and audio_channel_positions. Each channel is projected onto the bar's playable output slots, so no evidence is sent at ticks the output resolution cannot represent. onset_strength marks playable attacks; activity preserves sustained musical sound such as vocals, guitar, strings, piano, or pads. If activity is high but onsets are sparse, this is not a rest; place a simple beat/downbeat skeleton rather than leaving the bar empty.
 23. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=0, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
 24. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density or sustained activity asks for more.
 25. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
@@ -294,8 +294,8 @@ Rules:
 36. Breakdown lowers load but is not silence when activity remains present; keep a simple beat/downbeat skeleton.
 37. Repeated section_id values should retain a recognizable base motif, with controlled later-song variation rather than exact copying.
 38. Do not create a fill merely because a bar number is divisible by 4 or 8; require fill_candidate_score and the musical context.
-39. Decode each bar's spectral_events with legend.spectral_grid_columns. Treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence; onset, accents, playability, and motif design remain authoritative. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes, build-ups, peaks, breakdowns, and fills without forcing a note on every spectral change.
-40. Decode bar_instruments with legend.instrument_bar_columns and each bar's instrument_events with legend.instrument_grid_columns. Drum attacks are strong soft evidence for placements and accents; bass attacks are weaker downbeat/don evidence. Use vocals for phrase entrances, breaths, call-and-response, and cadences, but never map every syllable to a hit. Use reliable guitar, piano/keyboard, strings, brass, woodwind, synth, and organ labels for motifs and section contrast. Ignore low-confidence labels, and never let instrument semantics override silence, density, speed, occupancy, resolution, or playability constraints.
+39. In audio_channels, treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence; onset, accents, playability, and motif design remain authoritative. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes, build-ups, peaks, breakdowns, and fills without forcing a note on every spectral change.
+40. Decode bar_instruments with legend.instrument_bar_columns. In audio_channels, drum attacks are strong soft evidence for placements and accents; bass attacks are weaker downbeat/don evidence. Use vocals for phrase entrances, breaths, call-and-response, and cadences, but never map every syllable to a hit. Use reliable guitar, piano/keyboard, strings, brass, woodwind, synth, and organ labels for motifs and section contrast. Ignore low-confidence labels, and never let instrument semantics override silence, density, speed, occupancy, resolution, or playability constraints.
 
 Input:
 {json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}
@@ -405,29 +405,8 @@ def _compact_bar(bar: BarFeature, *, output_resolution: int) -> list[Any]:
         bar.grids_per_bar,
         output_resolution,
         bar.grids_per_bar // output_resolution,
-        _compact_onset_events(bar),
+        _compact_audio_channels(bar, output_resolution=output_resolution),
         bar.accent_grids,
-        [_compact_number(value) for value in bar.activity_grids],
-        [
-            [
-                feature.grid,
-                _compact_number(feature.low_onset_strength),
-                _compact_number(feature.mid_onset_strength),
-                _compact_number(feature.high_onset_strength),
-                _compact_number(feature.spectral_flux),
-            ]
-            for feature in bar.spectral_grid_features
-        ],
-        [
-            [
-                feature.grid,
-                _compact_number(feature.vocal_onset),
-                _compact_number(feature.drum_onset),
-                _compact_number(feature.bass_onset),
-                _compact_number(feature.accompaniment_onset),
-            ]
-            for feature in bar.instrument_grid_features
-        ],
         _compact_beat_events(bar),
         bar.downbeat_grid,
         bar.phrase_position,
@@ -436,14 +415,93 @@ def _compact_bar(bar: BarFeature, *, output_resolution: int) -> list[Any]:
     ]
 
 
-def _compact_onset_events(bar: BarFeature) -> list[list[Any]]:
-    strengths = {
-        feature.grid: _compact_number(feature.strength)
-        for feature in bar.grid_features
-        if feature.onset
+def _compact_audio_channels(bar: BarFeature, *, output_resolution: int) -> list[list[int]]:
+    channels = [[0] * output_resolution for _ in AUDIO_CHANNEL_COLUMNS]
+    step = bar.grids_per_bar // output_resolution
+    onset_strengths = {
+        feature.grid: feature.strength for feature in bar.grid_features if feature.onset
     }
-    grids = sorted(set(bar.onset_grids) | set(strengths))
-    return [[grid, strengths.get(grid)] for grid in grids]
+    for grid in sorted(set(bar.onset_grids) | set(onset_strengths)):
+        slot = _projected_slot(grid, step=step, output_resolution=output_resolution)
+        strength = onset_strengths.get(grid)
+        if strength is None:
+            if channels[0][slot] == 0:
+                channels[0][slot] = -1
+        else:
+            channels[0][slot] = max(channels[0][slot], max(1, _compact_unit(strength)))
+
+    activity_values = bar.activity_grids or [feature.activity for feature in bar.grid_features]
+    for grid, value in enumerate(activity_values):
+        _set_projected_channel(
+            channels[1],
+            grid=grid,
+            value=value,
+            step=step,
+            output_resolution=output_resolution,
+        )
+
+    for feature in bar.spectral_grid_features:
+        for channel, value in zip(
+            channels[2:6],
+            (
+                feature.low_onset_strength,
+                feature.mid_onset_strength,
+                feature.high_onset_strength,
+                feature.spectral_flux,
+            ),
+            strict=True,
+        ):
+            _set_projected_channel(
+                channel,
+                grid=feature.grid,
+                value=value,
+                step=step,
+                output_resolution=output_resolution,
+            )
+
+    for feature in bar.instrument_grid_features:
+        for channel, value in zip(
+            channels[6:10],
+            (
+                feature.vocal_onset,
+                feature.drum_onset,
+                feature.bass_onset,
+                feature.accompaniment_onset,
+            ),
+            strict=True,
+        ):
+            _set_projected_channel(
+                channel,
+                grid=feature.grid,
+                value=value,
+                step=step,
+                output_resolution=output_resolution,
+            )
+    return channels
+
+
+def _set_projected_channel(
+    channel: list[int],
+    *,
+    grid: int,
+    value: float,
+    step: int,
+    output_resolution: int,
+) -> None:
+    slot = _projected_slot(grid, step=step, output_resolution=output_resolution)
+    channel[slot] = max(channel[slot], _compact_unit(value))
+
+
+def _projected_slot(grid: int, *, step: int, output_resolution: int) -> int:
+    return min(output_resolution - 1, max(0, (grid + step // 2) // step))
+
+
+def _compact_unit(value: Any) -> int:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0
+    return round(min(1.0, max(0.0, number)) * 1000)
 
 
 def _compact_beat_events(bar: BarFeature) -> list[list[int]]:

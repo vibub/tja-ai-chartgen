@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from threading import Event
 from time import perf_counter
@@ -549,8 +550,10 @@ def _parse_event_bar(
         if not isinstance(tick, int) or isinstance(tick, bool):
             issues.append(f"bars[{index}].hits[{hit_index}][0] must be an integer")
             continue
+        if isinstance(note, int) and not isinstance(note, bool) and note in {1, 2, 3, 4}:
+            note = str(note)
         if not isinstance(note, str):
-            issues.append(f"bars[{index}].hits[{hit_index}][1] must be a string")
+            issues.append(f"bars[{index}].hits[{hit_index}][1] must be a string or integer 1-4")
             continue
         hits.append(ChartHitEvent(tick=tick, note=note))
 
@@ -783,6 +786,27 @@ def _overused_patterns(bars: list[ChartBar]) -> list[tuple[str, int]]:
     )
 
 
+def _compact_repair_issues(issues: list[str], *, max_groups: int = 40) -> list[str]:
+    grouped: dict[str, list[str]] = {}
+    for issue in issues:
+        signature = re.sub(r"\[\d+\]", "[*]", issue)
+        grouped.setdefault(signature, []).append(issue)
+
+    compact: list[str] = []
+    for signature, examples in list(grouped.items())[:max_groups]:
+        if len(examples) == 1:
+            compact.append(examples[0])
+            continue
+        compact.append(
+            f"{signature} ({len(examples)} occurrences; examples: "
+            f"{'; '.join(examples[:3])})"
+        )
+    omitted = len(grouped) - max_groups
+    if omitted > 0:
+        compact.append(f"{omitted} additional validation error group(s) omitted")
+    return compact
+
+
 def _build_repair_prompt(
     issues: list[str],
     analysis: SongAnalysis,
@@ -791,28 +815,15 @@ def _build_repair_prompt(
     density: str,
     special_notes: bool,
 ) -> str:
-    resolutions = [
-        {
-            "bar": index + 1,
-            "canonical_grids": bar.grids_per_bar,
-            "output_resolution": _expected_note_length(analysis, index),
-            "allowed_tick_step": bar.grids_per_bar // _expected_note_length(analysis, index),
-            "phrase_id": bar.phrase_id,
-            "phrase_progress": bar.phrase_progress,
-            "transition_role": bar.transition_role,
-            "section_id": bar.section_id,
-            "fill_candidate_score": bar.fill_candidate_score,
-        }
-        for index, bar in enumerate(analysis.bars)
-    ]
     forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
+    compact_issues = _compact_repair_issues(issues)
     return f"""
 Your previous output was invalid and cannot be used as a TJA chart draft.
 
 Fix the output and return JSON only.
 
-Validation errors:
-{json.dumps(issues, ensure_ascii=False, indent=2)}
+Validation errors (repeated errors are grouped):
+{json.dumps(compact_issues, ensure_ascii=False, separators=(",", ":"))}
 
 Required schema:
 {{
@@ -823,7 +834,7 @@ Required schema:
 
 Rules:
 - bars must contain exactly {len(analysis.bars)} item(s).
-- Use canonical ticks and do not output a resolution. Per-bar timing rules: {json.dumps(resolutions, ensure_ascii=False, separators=(",", ":"))}.
+- Use the canonical ticks, per-bar resolution, timing, density, and structure rules from the original input. Do not output a resolution.
 - Use only hits and long_notes; never return legacy notes or balloon_counts fields.
 - Normal hit notes are 1, 2, 3, or 4.
 - long_notes must be empty unless special_notes is true. Balloons require a positive balloon_count.

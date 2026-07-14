@@ -14,6 +14,7 @@ from litellm import (
 
 from tja_ai_chartgen.ai.client import (
     AiOutputRepairError,
+    _compact_repair_issues,
     AiProviderError,
     generate_chart_bars_with_ai,
     sanitize_ai_bars,
@@ -84,6 +85,17 @@ def _event_payload(
     }
 
 
+def test_compact_repair_issues_groups_repeated_indexed_errors():
+    issues = [f"bars[{index}].hits[0][1] must be a string" for index in range(100)]
+
+    compact = _compact_repair_issues(issues)
+
+    assert len(compact) == 1
+    assert "100 occurrences" in compact[0]
+    assert "bars[*].hits[*][*] must be a string" in compact[0]
+    assert len(json.dumps(compact)) < len(json.dumps(issues)) // 5
+
+
 def test_sanitize_ai_bars_rejects_bar_count_mismatch():
     with pytest.raises(ValueError, match="exactly 2 bars"):
         sanitize_ai_bars([ChartBar(index=10, notes="1000100010001000")], expected_count=2)
@@ -138,7 +150,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density_policy"]["quality_average_min_per_16_grid_bar"] == 6.5
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
-    assert payload["schema"] == "tja-ai-chartgen-compact-v3"
+    assert payload["schema"] == "tja-ai-chartgen-compact-v4"
     assert len(payload["reference_windows"]) == 3
     assert "reference_window_bar_columns" in payload["legend"]
     bar_columns = payload["legend"]["bar_columns"]
@@ -146,19 +158,20 @@ def test_build_chart_generation_payload_includes_density():
     assert bar[bar_columns.index("canonical_grids_per_bar")] == 48
     assert bar[bar_columns.index("output_resolution")] == 16
     assert bar[bar_columns.index("allowed_tick_step")] == 3
-    assert bar[bar_columns.index("onset_events")] == [
-        [0, None],
-        [12, None],
-        [24, None],
-        [36, None],
-    ]
-    assert bar[bar_columns.index("activity_grids")] == []
+    audio_channels = bar[bar_columns.index("audio_channels")]
+    assert len(audio_channels) == 10
+    assert all(len(channel) == 16 for channel in audio_channels)
+    assert audio_channels[0] == [-1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0]
+    assert audio_channels[1] == [0] * 16
     assert bar[bar_columns.index("beat_events")] == [[0, 1], [12, 2], [24, 3], [36, 4]]
-    assert payload["legend"]["onset_event_columns"] == ["grid", "strength"]
+    assert payload["legend"]["audio_channel_columns"][0:2] == [
+        "onset_strength",
+        "activity",
+    ]
     assert payload["legend"]["beat_event_columns"] == ["grid", "beat"]
 
 
-def test_compact_bar_preserves_grid_audio_detail_without_dense_feature_rows():
+def test_compact_bar_projects_audio_detail_to_playable_output_slots():
     grid_features = [
         GridFeature(
             grid=grid,
@@ -185,12 +198,19 @@ def test_compact_bar_preserves_grid_audio_detail_without_dense_feature_rows():
 
     columns = payload["legend"]["bar_columns"]
     compact_bar = payload["bars"][0]
-    assert compact_bar[columns.index("onset_events")] == [[0, 0.625], [18, 0.875]]
+    audio_columns = payload["legend"]["audio_channel_columns"]
+    audio_channels = compact_bar[columns.index("audio_channels")]
+    onset_channel = audio_channels[audio_columns.index("onset_strength")]
+    activity_channel = audio_channels[audio_columns.index("activity")]
+    assert onset_channel[0] == 625
+    assert onset_channel[6] == 875
+    assert sum(value != 0 for value in onset_channel) == 2
+    assert len(activity_channel) == 16
+    assert activity_channel[6] == 190
+    assert activity_channel[-1] == 470
     assert compact_bar[columns.index("accent_grids")] == [0]
-    assert compact_bar[columns.index("activity_grids")] == [grid / 100 for grid in range(48)]
     assert compact_bar[columns.index("beat_events")] == [[0, 1], [12, 2], [24, 3], [36, 4]]
     assert compact_bar[columns.index("downbeat_grid")] == 0
-    assert "grid_feature_columns" not in payload["legend"]
 
 
 def test_build_chart_generation_payload_includes_compact_structure_plan():
@@ -296,17 +316,13 @@ def test_build_chart_generation_payload_includes_compact_spectral_semantics():
     assert payload["spectral_analysis_status"] == "complete"
     assert payload["bar_structure"][0][flux_index] == 0.9
     assert payload["bar_structure"][0][novelty_index] == 0.7
-    assert payload["legend"]["spectral_grid_columns"] == [
-        "grid",
-        "low_onset",
-        "mid_onset",
-        "high_onset",
-        "spectral_flux",
-    ]
+    audio_columns = payload["legend"]["audio_channel_columns"]
     bar_columns = payload["legend"]["bar_columns"]
-    assert payload["bars"][0][bar_columns.index("spectral_events")] == [
-        [12, 0.8, 0.0, 0.2, 0.9]
-    ]
+    audio_channels = payload["bars"][0][bar_columns.index("audio_channels")]
+    assert audio_channels[audio_columns.index("low_onset")][4] == 800
+    assert audio_channels[audio_columns.index("mid_onset")][4] == 0
+    assert audio_channels[audio_columns.index("high_onset")][4] == 200
+    assert audio_channels[audio_columns.index("spectral_flux")][4] == 900
 
 
 def test_build_chart_generation_payload_includes_compact_instrument_semantics():
@@ -354,17 +370,13 @@ def test_build_chart_generation_payload_includes_compact_instrument_semantics():
     assert payload["bar_instruments"][0][columns.index("active_instruments")] == [
         ["guitar", 0.75]
     ]
-    assert payload["legend"]["instrument_grid_columns"] == [
-        "grid",
-        "vocal_onset",
-        "drum_onset",
-        "bass_onset",
-        "accompaniment_onset",
-    ]
+    audio_columns = payload["legend"]["audio_channel_columns"]
     bar_columns = payload["legend"]["bar_columns"]
-    assert payload["bars"][0][bar_columns.index("instrument_events")] == [
-        [12, 0.3, 0.9, 0.6, 0.4]
-    ]
+    audio_channels = payload["bars"][0][bar_columns.index("audio_channels")]
+    assert audio_channels[audio_columns.index("vocal_onset")][4] == 300
+    assert audio_channels[audio_columns.index("drum_onset")][4] == 900
+    assert audio_channels[audio_columns.index("bass_onset")][4] == 600
+    assert audio_channels[audio_columns.index("accompaniment_onset")][4] == 400
 
 
 def test_build_chart_generation_payload_can_include_static_reference_prompt():
@@ -429,6 +441,33 @@ def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
     assert raw["final"] == payload
     assert raw["model"] == "fake/model"
     assert bars == [ChartBar(index=0, notes="1000100010001000")]
+
+
+def test_generate_chart_bars_with_ai_accepts_numeric_normal_note_values(monkeypatch):
+    payload = {
+        "bars": [
+            {
+                "bar": 1,
+                "hits": [[0, 1], [12, 2], [24, 3], [36, 4]],
+                "long_notes": [],
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.completion",
+        lambda **_kwargs: {"choices": [{"message": {"content": json.dumps(payload)}}]},
+    )
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis(),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+    )
+
+    assert bars == [ChartBar(index=0, notes="1000200030004000")]
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["ok"]
 
 
 def test_generate_chart_bars_with_ai_encodes_canonical_event_ticks(monkeypatch):
