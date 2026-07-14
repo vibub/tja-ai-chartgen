@@ -42,6 +42,7 @@ def test_web_index_shows_upload_form(tmp_path):
     assert 'name="use_instrument_analysis" type="checkbox" value="true"' in response.text
     assert 'select name="instrument_device"' in response.text
     assert "prepare-instrument-models" in response.text
+    assert "启用 AI 时还会增加输入上下文与 token 消耗" in response.text
     assert '<select name="course">' in response.text
     assert '魔王（Oni）' in response.text
     assert 'name="use_ai" type="checkbox" value="true" data-role="ai-toggle" checked' in response.text

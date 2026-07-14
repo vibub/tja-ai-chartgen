@@ -3185,7 +3185,7 @@ def _resolve_web_ai_credentials(ai_base_url: str, ai_api_key: str) -> tuple[str 
 def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
     instrument_disabled = "" if allow_instrument_analysis else " disabled"
     instrument_hint = (
-        "需要先运行 prepare-instrument-models；分析会增加耗时和内存占用。"
+        "需要先运行 prepare-instrument-models；分析会增加耗时和内存占用，启用 AI 时还会增加输入上下文与 token 消耗。"
         if allow_instrument_analysis
         else "远程模式未由服务器管理员开放重型分析。"
     )
