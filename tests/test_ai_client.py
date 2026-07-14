@@ -680,7 +680,7 @@ def test_generate_chart_bars_with_ai_stops_after_transport_retries_are_exhausted
     )
 
 
-def test_generate_chart_bars_with_ai_does_not_retry_non_transient_provider_errors(monkeypatch):
+def test_generate_chart_bars_with_ai_retries_other_provider_errors_with_shared_limit(monkeypatch):
     calls = 0
 
     def fake_completion(**kwargs):
@@ -700,11 +700,14 @@ def test_generate_chart_bars_with_ai_does_not_retry_non_transient_provider_error
             max_transport_retries=1,
         )
 
-    assert calls == 1
+    assert calls == 2
     assert error.value.output["attempts"] == []
-    assert len(error.value.output["transport_attempts"]) == 1
-    assert error.value.output["fallback_reason"] == "provider_error"
-    assert error.value.output["transport_attempts"][0]["error_type"] == "AuthenticationError"
+    assert len(error.value.output["transport_attempts"]) == 2
+    assert error.value.output["fallback_reason"] == "transport_retries_exhausted"
+    assert all(
+        attempt["error_type"] == "AuthenticationError"
+        for attempt in error.value.output["transport_attempts"]
+    )
 
 
 @pytest.mark.parametrize("request_timeout", [0, 0.999, 600.001, 601])

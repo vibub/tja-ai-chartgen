@@ -146,7 +146,7 @@ def generate(
     ai_transport_retries: int = typer.Option(
         DEFAULT_AI_TRANSPORT_RETRIES,
         "--ai-transport-retries",
-        help="Retry count for transient AI provider transport failures (0 or 1).",
+        help="Retry count shared by all AI provider call failures (0 or 1).",
     ),
 ) -> None:
     run_generate(

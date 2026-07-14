@@ -6,16 +6,7 @@ from threading import Event
 from time import perf_counter
 from typing import Any
 
-from litellm import (
-    APIConnectionError,
-    InternalServerError,
-    RateLimitError,
-    ServiceUnavailableError,
-    Timeout,
-    acompletion,
-    completion,
-)
-from openai import OpenAIError
+from litellm import acompletion, completion
 
 from tja_ai_chartgen.ai.prompts import build_chart_generation_prompt
 from tja_ai_chartgen.cancellation import GenerationCancelledError, raise_if_cancelled
@@ -50,15 +41,6 @@ DEFAULT_AI_REQUEST_TIMEOUT = 300.0
 DEFAULT_AI_TRANSPORT_RETRIES = 1
 MIN_AI_REQUEST_TIMEOUT = 1.0
 MAX_AI_REQUEST_TIMEOUT = 600.0
-_RETRYABLE_PROVIDER_ERRORS = (
-    Timeout,
-    APIConnectionError,
-    RateLimitError,
-    ServiceUnavailableError,
-    InternalServerError,
-)
-
-
 class AiOutputRepairError(RuntimeError):
     def __init__(self, message: str, output: dict[str, Any]) -> None:
         super().__init__(message)
@@ -72,7 +54,7 @@ class AiProviderError(RuntimeError):
 
 
 class _AiProviderCallError(RuntimeError):
-    def __init__(self, error: OpenAIError, fallback_reason: str) -> None:
+    def __init__(self, error: Exception, fallback_reason: str) -> None:
         super().__init__(str(error))
         self.error = error
         self.fallback_reason = fallback_reason
@@ -394,7 +376,9 @@ def _completion_with_transport_retries(
                 if cancel_event is not None
                 else completion(**completion_kwargs)
             )
-        except _RETRYABLE_PROVIDER_ERRORS as error:
+        except GenerationCancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - all provider call failures share one retry budget.
             transport_attempts.append(
                 {
                     "content_attempt": content_attempt,
@@ -408,18 +392,6 @@ def _completion_with_transport_retries(
             if transport_attempt <= max_transport_retries:
                 continue
             raise _AiProviderCallError(error, "transport_retries_exhausted") from None
-        except OpenAIError as error:
-            transport_attempts.append(
-                {
-                    "content_attempt": content_attempt,
-                    "transport_attempt": transport_attempt,
-                    "status": "error",
-                    "elapsed_seconds": max(0.0, perf_counter() - started_at),
-                    "error_type": type(error).__name__,
-                    "error": _redact_sensitive_value(str(error), api_key),
-                }
-            )
-            raise _AiProviderCallError(error, "provider_error") from None
         else:
             transport_attempts.append(
                 {

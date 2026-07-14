@@ -192,7 +192,7 @@ tja-ai-chartgen generate song.mp3 \
 
 `generation_config.json` 会记录最终解析使用的 `model`、单次请求超时和 transport 重试次数，但不会记录 `OPENAI_BASE_URL` 或 `OPENAI_API_KEY`。复跑 AI 生成时，请继续通过 `.env`、环境变量或命令行参数提供连接配置。
 
-每次 AI provider transport 尝试默认超时 300 秒，可用 `--ai-request-timeout` 在 1–600 秒范围内调整。超时、连接失败、HTTP 429 和主要 5xx 错误默认最多重试 1 次，可用 `--ai-transport-retries 0|1` 调整；LiteLLM 内部重试会被关闭，项目自行记录每次 transport 尝试的耗时和异常类别。认证或参数错误不会重试。该重试与内容修复独立：AI 使用 `tja-ai-chartgen-compact-v2` 输入并返回 canonical tick 上的稀疏 `hits` / `long_notes` 事件，不直接决定 notes 字符串长度；统一事件编码器会校验 tick 范围、目标 resolution 可表示性、冲突和长音结构。旧 `notes` 输出 schema、JSON/bar 数量错误或质量门控失败都会进入内容修复，默认最多重试 2 次，可用 `--ai-repair-retries` 调整。任一阶段最终失败都会回退到规则生成器。
+每次 AI provider transport 尝试默认超时 300 秒，可用 `--ai-request-timeout` 在 1–600 秒范围内调整。超时、连接失败、HTTP 错误、认证错误、参数错误及其他 provider 调用异常共用同一组 transport 重试次数，默认最多重试 1 次，可用 `--ai-transport-retries 0|1` 调整；LiteLLM 内部重试会被关闭，项目自行记录每次 transport 尝试的耗时和异常类别。该重试与内容修复独立：AI 使用 `tja-ai-chartgen-compact-v2` 输入并返回 canonical tick 上的稀疏 `hits` / `long_notes` 事件，不直接决定 notes 字符串长度；统一事件编码器会校验 tick 范围、目标 resolution 可表示性、冲突和长音结构。旧 `notes` 输出 schema、JSON/bar 数量错误或质量门控失败都会进入内容修复，默认最多重试 2 次，可用 `--ai-repair-retries` 调整。任一阶段最终失败都会回退到规则生成器。
 
 运行时 AI prompt 会按 course 和接近的 level，从仓库内的匿名连续参考窗口中选取 intro、peak、cadence 各一段。当前静态数据由 5 组本地参考、23 个 course 离线生成，共 69 个连续窗口；窗口只保留匿名 source ID、course/level、每小节 resolution/measure/BPM/GOGO 和稀疏事件，不保存标题、WAVE、外部绝对路径或完整 notes 字符串。运行时不会访问原始参考目录；静态窗口不可读时才回退到旧的均匀抽样参考片段。
 
