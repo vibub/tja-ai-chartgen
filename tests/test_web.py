@@ -45,6 +45,8 @@ def test_web_index_shows_upload_form(tmp_path):
     assert "启用 AI 时还会增加输入上下文与 token 消耗" in response.text
     assert '<select name="course">' in response.text
     assert '魔王（Oni）' in response.text
+    assert 'name="level" type="number" min="1" max="10" value="8"' in response.text
+    assert 'name="special_notes" type="checkbox" value="true" checked' in response.text
     assert 'name="use_ai" type="checkbox" value="true" data-role="ai-toggle" checked' in response.text
     assert '<details class="advanced-panel field-wide" data-role="ai-options">' in response.text
     assert 'name="ai_model"' in response.text
@@ -110,6 +112,7 @@ def test_web_analyze_upload_opens_game_preview(tmp_path, monkeypatch):
     assert '<select name="course">' in result.text
     assert '魔王（Oni）' in result.text
     assert '技巧（technical）' in result.text
+    assert 'name="level" type="number" min="1" max="10" value="8"' in result.text
     assert 'name="special_notes" type="checkbox" value="true" checked' in result.text
     assert 'name="use_ai" type="checkbox" value="true" checked' in result.text
     assert '<details class="advanced-panel field-wide">' in result.text

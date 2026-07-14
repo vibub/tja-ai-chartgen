@@ -3267,7 +3267,7 @@ def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
         </label>
         <label class="field">
           难度等级
-          <input name="level" type="number" min="1" max="10" value="10">
+          <input name="level" type="number" min="1" max="10" value="8">
         </label>
         <label class="field">
           风格
@@ -3278,7 +3278,7 @@ def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
           <select name="density">{_option_tags(("auto", "low", "medium", "high", "max"), "auto")}</select>
         </label>
         <label class="checkbox-card field-wide">
-          <input name="special_notes" type="checkbox" value="true">
+          <input name="special_notes" type="checkbox" value="true" checked>
           <span>特殊音符 <span class="field-hint">允许简单滚奏和气球。</span></span>
         </label>
         <label class="checkbox-card field-wide">
@@ -3508,7 +3508,7 @@ def _regenerate_form(
       </label>
       <label class="field">
         难度等级
-        <input name="level" type="number" min="1" max="10" value="10">
+        <input name="level" type="number" min="1" max="10" value="8">
       </label>
       <label class="field">
         风格
