@@ -249,7 +249,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 | 6.2 新增节奏事件 ground truth | 已完成 | 已建立 schema version 1，为当前 17 个 WAV 同步生成事件 JSON，持久化 BPM、拍号、时长、onset、强 onset、beat、downbeat、静音区、频带事件、fill 区间和结构段落。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`；确定性重建后的 WAV、schema 和事件 JSON 与仓库文件逐字节一致。 |
 | 6.3 扩展合成节奏类型 | 已完成 | 新增 8 个 WAV，覆盖切分、真正弱起、低频主拍/高频反拍、持续 harmonic 背景、短 fill burst、3/4、6/8 和半速/倍速歧义；fixture 总数增至 17。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`，4 passed；完整重建逐字节一致。 |
 | 6.4 建立音频分析 benchmark | 已完成 | `audio-alignment-v2` 已覆盖全部 17 个 fixture，补齐频带、弱起、fill 与 resolution 指标，并同时生成机器可读 JSON baseline 和逐 fixture Markdown 报告。 | 2026-07-15：`python tools/benchmark_audio_fixtures.py`；`pytest tests/test_audio_benchmark.py -v`，9 passed。 |
-| 6.5 建立谱面对齐 baseline | 部分完成 | 已有部分 drum、bass、accent、structure 和 resolution 指标；尚缺统一 note alignment 指标。 | 现有 QualityReport 测试可复用。 |
+| 6.5 建立谱面对齐 baseline | 已完成 | `chart-alignment-v1` 已对全部 17 个 fixture 的 Easy 3、Normal 5、Hard 7、Oni 10 规则谱面计算 note/onset、强 onset、downbeat、无证据 note、静音违规、fill 响应和确定性指标，并生成 JSON/Markdown 基线。 | 2026-07-15：`python tools/benchmark_chart_alignment.py`；`pytest tests/test_chart_alignment_benchmark.py -v`，7 passed。 |
 | 6.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
 ## 6.1 现有 fixture 盘点与复用结论
@@ -364,13 +364,19 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 ### 谱面
 
-- note/onset 对齐率；
-- 强 onset 响应率；
-- downbeat 响应率；
-- 无证据 note 比例；
-- 静音区违规 note；
-- fill burst 响应率；
-- 相同输入生成确定性。
+- [x] note/onset 对齐率；
+- [x] 强 onset 响应率；
+- [x] downbeat 响应率；
+- [x] 无证据 note 比例；
+- [x] 静音区违规 note；
+- [x] fill burst 响应率；
+- [x] 相同输入生成确定性。
+
+完整实现为 `chart-alignment-v1`：`tools/benchmark_chart_alignment.py` 对每个 fixture 只执行一次默认音频分析和结构/resolution 构建，再用固定 `technical` / `auto` / 不启用特殊音符的规则配置分别生成 Easy 3、Normal 5、Hard 7 和 Oni 10，共 68 张谱面。每张谱面连续生成两次并比较完整 `ChartBar`，因此确定性检查同时覆盖落点、咚咔配色和气球计数等结构化输出，而不只是 note 时间。
+
+`evaluation/chart_alignment.py` 将普通 note 和长音起点按对应 `BarFeature` 的实际起止时间与输出 resolution 映射回音频秒数。默认使用 50 ms 判断 note/onset、强 onset 和 fill onset 对齐，使用 70 ms 判断 downbeat 与理论 beat 证据；无证据 note 指既不接近真实 onset、也不接近理论 beat 的 note。静音区采用左闭右开范围，避免区间终点与首个合法事件重复计数。机器可读基线写入 `tests/fixtures/audio/chart_alignment_baseline.json`，逐 course 和逐谱面对照写入 `chart_alignment_baseline.md`。
+
+当前基线共评测 3,358 个 note：note/onset precision 0.626563、onset recall 0.752504、强 onset response 0.923077、downbeat response 0.934211、fill onset response 0.656250、无证据 note 比例 0.059857、静音区违规 65 个，68 张谱面的重复生成完全一致。按难度观察，Easy 的 note/onset precision 为 0.941667，Oni 为 0.495811；高难度为保持可玩负载会加入更多由 beat、activity 或结构支持而非真实瞬态直接支持的落点。该结果是修改前基线，不直接作为质量门槛。
 
 ## 6.5 真实歌曲的角色
 
@@ -399,7 +405,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 - [x] 6.4a 建立基础 onset、beat 与 downbeat benchmark
 - [x] 6.3 扩展切分、弱起、频带攻击、fill、3/4 和 6/8 fixture
 - [x] 6.4b 完善全部 fixture 的自动 benchmark 与基线报告
-- [ ] 6.5 建立谱面对齐 baseline
+- [x] 6.5 建立谱面对齐 baseline
 - [ ] 6.6 执行 Phase 0 阶段验收
 
 ---
