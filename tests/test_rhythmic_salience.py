@@ -3,6 +3,8 @@ from pydantic import ValidationError
 
 from tja_ai_chartgen.features.salience import (
     RHYTHMIC_SALIENCE_FEATURE_VERSION,
+    build_accent_salience,
+    build_bar_accent_salience,
     build_bar_hit_salience,
     build_canonical_rhythmic_evidence,
     build_hit_salience,
@@ -85,6 +87,7 @@ def test_canonical_rhythmic_evidence_aligns_all_base_channels():
         energy=0.5,
         grids_per_bar=48,
         onset_grids=[12, 47],
+        accent_grids=[12],
         activity_grids=[0.0] * 12 + [0.4] + [0.0] * 35,
         beat_grids=[36, 0, 24, 12],
         downbeat_grid=0,
@@ -116,6 +119,7 @@ def test_canonical_rhythmic_evidence_aligns_all_base_channels():
     assert evidence[0].downbeat is True
     assert evidence[12].onset is True
     assert evidence[12].onset_strength == 0.65
+    assert evidence[12].accent_hint is True
     assert evidence[12].activity == 0.7
     assert evidence[12].beat == 2
     assert evidence[12].low_onset_strength == 0.8
@@ -160,6 +164,22 @@ def test_canonical_rhythmic_evidence_supports_compound_meter_and_ignores_invalid
     assert evidence[18].downbeat is True
     assert evidence[18].high_onset_strength == 0.9
     assert sum(point.onset for point in evidence) == 1
+
+
+def test_canonical_rhythmic_evidence_does_not_treat_activity_strength_as_onset():
+    bar = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.4,
+        grid_features=[GridFeature(grid=8, strength=0.7, activity=0.7)],
+    )
+
+    evidence = build_canonical_rhythmic_evidence(bar)
+
+    assert evidence[8].onset is False
+    assert evidence[8].onset_strength == 0.0
+    assert evidence[8].activity == 0.7
 
 
 def test_canonical_rhythmic_evidence_requires_positive_grid_size():
@@ -355,3 +375,106 @@ def test_hit_salience_is_deterministic():
     second = build_bar_hit_salience(bar)
 
     assert first.model_dump() == second.model_dump()
+
+
+def test_accent_salience_uses_downbeat_onset_peaks_and_legacy_hints():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.6,
+        grid_features=[
+            GridFeature(grid=0, onset=True, strength=0.6, beat=1, downbeat=True),
+            GridFeature(grid=6, onset=True, strength=0.9),
+            GridFeature(grid=7, onset=True, strength=0.7, accent=True),
+        ],
+    )
+
+    salience = build_bar_accent_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[0].accent == 0.72
+    assert "accent:downbeat" in points[0].reasons
+    assert "accent:onset-peak" in points[0].reasons
+    assert points[6].accent == 0.855
+    assert points[6].reasons[-1] == "accent:onset-peak"
+    assert points[7].accent == 0.5
+    assert "accent:onset-peak" not in points[7].reasons
+    assert points[7].reasons[-1] == "accent:hint"
+
+
+def test_accent_salience_uses_low_attack_without_treating_all_spectral_hits_as_accents():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.0,
+        grids_per_bar=48,
+        spectral_grid_features=[
+            SpectralGridFeature(grid=10, low_onset_strength=0.8),
+            SpectralGridFeature(grid=24, high_onset_strength=0.8),
+        ],
+    )
+
+    salience = build_bar_accent_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[10].accent == 0.67
+    assert points[10].reasons == ["spectral", "accent:low-attack"]
+    assert points[24].accent == 0.0
+    assert points[24].reasons == ["spectral"]
+
+
+def test_accent_salience_applies_section_start_energy_rise_and_cadence_to_first_hit():
+    previous = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        phrase_id=0,
+        section_id="section-a",
+        grid_features=[GridFeature(grid=3, onset=True, strength=0.7)],
+    )
+    current = BarFeature(
+        index=2,
+        start_time=4.0,
+        end_time=6.0,
+        energy=0.5,
+        energy_delta=0.6,
+        boundary_confidence=0.8,
+        phrase_id=1,
+        section_id="section-b",
+        transition_role="cadence",
+        spectral_grid_features=[
+            SpectralGridFeature(grid=5, high_onset_strength=0.8),
+            SpectralGridFeature(grid=15, high_onset_strength=0.8),
+        ],
+    )
+
+    salience = build_accent_salience([previous, current])[1]
+    points = {point.grid: point for point in salience.points}
+
+    assert points[5].accent == 0.784
+    assert "accent:section-start" in points[5].reasons
+    assert "accent:energy-rise" in points[5].reasons
+    assert "accent:role:cadence" in points[5].reasons
+    assert points[15].accent == 0.0
+
+
+def test_accent_salience_does_not_create_hits_from_structure_or_activity():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.8,
+        energy_delta=0.8,
+        boundary_confidence=1.0,
+        phrase_position="phrase_start",
+        transition_role="peak",
+        activity_grids=[0.9] * 48,
+    )
+
+    salience = build_bar_accent_salience(bar)
+
+    assert salience.points == []
+    assert salience.active_ratio == 1.0

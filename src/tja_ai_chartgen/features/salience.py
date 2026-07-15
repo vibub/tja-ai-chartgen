@@ -13,12 +13,21 @@ RHYTHMIC_SALIENCE_FEATURE_VERSION = "rhythmic-salience-v1"
 ACTIVE_GRID_THRESHOLD = 0.08
 HIT_OUTPUT_THRESHOLD = 0.02
 SPECTRAL_EVIDENCE_THRESHOLD = 0.05
+ACCENT_OUTPUT_THRESHOLD = 0.15
 STRUCTURE_HIT_MULTIPLIERS = {
     "build_up": 1.04,
     "peak": 1.08,
     "fill": 1.06,
     "cadence": 1.06,
     "drop": 0.92,
+    "breakdown": 0.85,
+}
+STRUCTURE_ACCENT_MULTIPLIERS = {
+    "build_up": 1.03,
+    "peak": 1.08,
+    "fill": 1.12,
+    "cadence": 1.12,
+    "drop": 0.95,
     "breakdown": 0.85,
 }
 
@@ -28,6 +37,7 @@ class CanonicalRhythmicEvidencePoint:
     grid: int
     onset: bool = False
     onset_strength: float = 0.0
+    accent_hint: bool = False
     activity: float = 0.0
     beat: int | None = None
     downbeat: bool = False
@@ -46,6 +56,7 @@ def build_canonical_rhythmic_evidence(
 
     grid_count = bar.grids_per_bar
     onset_grids = {grid for grid in bar.onset_grids if 0 <= grid < grid_count}
+    accent_grids = {grid for grid in bar.accent_grids if 0 <= grid < grid_count}
     beat_numbers = {
         grid: number
         for number, grid in enumerate(
@@ -65,6 +76,7 @@ def build_canonical_rhythmic_evidence(
 
     onsets = [grid in onset_grids for grid in range(grid_count)]
     onset_strengths = [1.0 if onset else 0.0 for onset in onsets]
+    accent_hints = [grid in accent_grids for grid in range(grid_count)]
     explicit_onset_strengths: dict[int, float] = {}
     downbeats = [grid in downbeat_grids for grid in range(grid_count)]
 
@@ -72,9 +84,10 @@ def build_canonical_rhythmic_evidence(
         if feature.grid < 0 or feature.grid >= grid_count:
             continue
         grid = feature.grid
-        onsets[grid] = onsets[grid] or feature.onset or feature.strength > 0
+        onsets[grid] = onsets[grid] or feature.onset
+        accent_hints[grid] = accent_hints[grid] or feature.accent
         activities[grid] = max(activities[grid], _unit_value(feature.activity))
-        if feature.strength > 0:
+        if feature.onset and feature.strength > 0:
             explicit_onset_strengths[grid] = max(
                 explicit_onset_strengths.get(grid, 0.0),
                 _unit_value(feature.strength),
@@ -104,6 +117,7 @@ def build_canonical_rhythmic_evidence(
             grid=grid,
             onset=onsets[grid],
             onset_strength=onset_strengths[grid],
+            accent_hint=accent_hints[grid],
             activity=activities[grid],
             beat=beat_numbers.get(grid),
             downbeat=downbeats[grid],
@@ -180,6 +194,144 @@ def build_bar_hit_salience(
         active_ratio=round(active_grid_count / len(evidence), 6),
         onset_evidence_count=onset_evidence_count,
     )
+
+
+def build_accent_salience(bars: list[BarFeature]) -> list[BarRhythmicSalience]:
+    """在 hit salience 上补充歌曲上下文中的 accent salience。"""
+    silent_indexes = edge_silence_indexes(bars)
+    results: list[BarRhythmicSalience] = []
+    for position, bar in enumerate(bars):
+        force_silent = position in silent_indexes
+        hit_salience = build_bar_hit_salience(bar, force_silent=force_silent)
+        results.append(
+            build_bar_accent_salience(
+                bar,
+                hit_salience=hit_salience,
+                force_silent=force_silent,
+                start_reason=_bar_start_reason(bars, position),
+            )
+        )
+    return results
+
+
+def build_bar_accent_salience(
+    bar: BarFeature,
+    *,
+    hit_salience: BarRhythmicSalience | None = None,
+    force_silent: bool = False,
+    start_reason: str | None = None,
+) -> BarRhythmicSalience:
+    """只为已有 hit 候选计算 accent，不直接决定大音符。"""
+    if force_silent:
+        return BarRhythmicSalience()
+    base = hit_salience or build_bar_hit_salience(bar)
+    if not base.points:
+        return base
+
+    evidence = build_canonical_rhythmic_evidence(bar)
+    evidence_by_grid = {item.grid: item for item in evidence}
+    onset_peaks = _onset_peak_grids(evidence)
+    spectral_peaks = _spectral_peak_grids(evidence)
+    first_hit_grid = base.points[0].grid
+    resolved_start_reason = start_reason or _single_bar_start_reason(bar)
+    role_multiplier = STRUCTURE_ACCENT_MULTIPLIERS.get(bar.transition_role, 1.0)
+
+    points: list[RhythmicSaliencePoint] = []
+    for point in base.points:
+        item = evidence_by_grid[point.grid]
+        accent = 0.0
+        accent_reasons: list[str] = []
+
+        if item.downbeat:
+            accent = max(accent, 0.58)
+            accent_reasons.append("accent:downbeat")
+        if item.accent_hint:
+            accent = max(accent, 0.50)
+            accent_reasons.append("accent:hint")
+        if item.grid in onset_peaks:
+            onset_strength = item.onset_strength if item.onset_strength > 0 else 0.65
+            accent = max(accent, 0.45 + onset_strength * 0.45)
+            accent_reasons.append("accent:onset-peak")
+        if (
+            item.grid in spectral_peaks
+            and item.low_onset_strength >= SPECTRAL_EVIDENCE_THRESHOLD
+        ):
+            accent = max(accent, 0.35 + item.low_onset_strength * 0.40)
+            accent_reasons.append("accent:low-attack")
+        if point.grid == first_hit_grid and resolved_start_reason is not None:
+            accent = max(accent, 0.50 + bar.boundary_confidence * 0.25)
+            accent_reasons.append(f"accent:{resolved_start_reason}")
+        if point.grid == first_hit_grid and bar.energy_delta > 0.10:
+            accent = max(accent, 0.35 + bar.energy_delta * 0.35)
+            accent_reasons.append("accent:energy-rise")
+
+        if accent >= ACCENT_OUTPUT_THRESHOLD and role_multiplier != 1.0:
+            accent = _unit_value(accent * role_multiplier)
+            accent_reasons.append(f"accent:role:{bar.transition_role}")
+        if accent < ACCENT_OUTPUT_THRESHOLD:
+            accent = 0.0
+            accent_reasons = []
+
+        points.append(
+            point.model_copy(
+                update={
+                    "accent": round(accent, 6),
+                    "reasons": [*point.reasons, *accent_reasons],
+                }
+            )
+        )
+
+    return base.model_copy(update={"points": points})
+
+
+def _onset_peak_grids(
+    evidence: list[CanonicalRhythmicEvidencePoint],
+) -> set[int]:
+    strengths = [
+        item.onset_strength if item.onset_strength > 0 else 0.65 if item.onset else 0.0
+        for item in evidence
+    ]
+    peaks: set[int] = set()
+    for index, item in enumerate(evidence):
+        if not item.onset:
+            continue
+        strength = strengths[index]
+        left = strengths[index - 1] if index > 0 else 0.0
+        right = strengths[index + 1] if index + 1 < len(strengths) else 0.0
+        if strength > left and strength >= right:
+            peaks.add(item.grid)
+    return peaks
+
+
+def _bar_start_reason(bars: list[BarFeature], position: int) -> str | None:
+    bar = bars[position]
+    if position == 0:
+        return "song-start"
+    if bar.phrase_position == "phrase_start":
+        return "phrase-start"
+
+    previous = bars[position - 1]
+    if (
+        bar.section_id is not None
+        and previous.section_id is not None
+        and bar.section_id != previous.section_id
+    ):
+        return "section-start"
+    if (
+        bar.phrase_id is not None
+        and previous.phrase_id is not None
+        and bar.phrase_id != previous.phrase_id
+    ):
+        return "phrase-start"
+    return None
+
+
+def _single_bar_start_reason(bar: BarFeature) -> str | None:
+    if bar.index == 0:
+        return "song-start"
+    if bar.phrase_position == "phrase_start":
+        return "phrase-start"
+    return None
 
 
 def _spectral_peak_grids(
