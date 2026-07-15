@@ -3,7 +3,9 @@ from pydantic import ValidationError
 
 from tja_ai_chartgen.features.salience import (
     RHYTHMIC_SALIENCE_FEATURE_VERSION,
+    build_bar_hit_salience,
     build_canonical_rhythmic_evidence,
+    build_hit_salience,
 )
 from tja_ai_chartgen.tja.model import (
     BarFeature,
@@ -171,3 +173,185 @@ def test_canonical_rhythmic_evidence_requires_positive_grid_size():
 
     with pytest.raises(ValueError, match="positive canonical grid size"):
         build_canonical_rhythmic_evidence(bar)
+
+
+def test_hit_salience_prioritizes_offbeat_onset_over_beat_skeleton():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.6,
+        grids_per_bar=48,
+        beat_grids=[0, 12, 24, 36],
+        downbeat_grid=0,
+        grid_features=[
+            GridFeature(grid=0, activity=0.8, beat=1, downbeat=True),
+            GridFeature(grid=7, onset=True, strength=0.7, activity=0.6),
+            GridFeature(grid=12, activity=0.8, beat=2),
+        ],
+    )
+
+    salience = build_bar_hit_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[7].hit > points[0].hit > points[12].hit
+    assert points[7].reasons == ["onset"]
+    assert points[0].reasons == ["downbeat"]
+    assert points[12].reasons == ["beat"]
+    assert salience.onset_evidence_count == 1
+    assert salience.active_ratio == pytest.approx(3 / 48, abs=1e-6)
+
+
+def test_hit_salience_does_not_create_hits_from_activity_alone():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.7,
+        grids_per_bar=48,
+        activity_grids=[0.9] * 48,
+    )
+
+    salience = build_bar_hit_salience(bar)
+
+    assert salience.points == []
+    assert salience.active_ratio == 1.0
+    assert salience.onset_evidence_count == 0
+
+
+def test_hit_salience_keeps_strong_spectral_attack_when_mix_onset_is_missing():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.0,
+        spectral_grid_features=[
+            SpectralGridFeature(grid=10, high_onset_strength=0.8, spectral_flux=0.7)
+        ],
+    )
+
+    salience = build_bar_hit_salience(bar)
+
+    assert salience.points[0].grid == 10
+    assert salience.points[0].hit == 0.6
+    assert salience.points[0].reasons == ["spectral"]
+
+
+def test_hit_salience_merges_adjacent_spectral_frames_but_preserves_onsets():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        grids_per_bar=48,
+        grid_features=[
+            GridFeature(grid=20, onset=True, strength=0.55),
+            GridFeature(grid=21, onset=True, strength=0.5),
+        ],
+        spectral_grid_features=[
+            SpectralGridFeature(grid=5, high_onset_strength=0.6),
+            SpectralGridFeature(grid=6, high_onset_strength=0.9),
+            SpectralGridFeature(grid=7, high_onset_strength=0.7),
+            SpectralGridFeature(grid=19, spectral_flux=0.9),
+            SpectralGridFeature(grid=20, low_onset_strength=0.8),
+            SpectralGridFeature(grid=21, mid_onset_strength=0.7),
+        ],
+    )
+
+    salience = build_bar_hit_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert 5 not in points
+    assert 6 in points
+    assert 7 not in points
+    assert 19 not in points
+    assert points[6].reasons == ["spectral"]
+    assert points[20].reasons == ["onset", "spectral"]
+    assert points[20].hit == 0.6
+    assert points[21].reasons == ["onset", "spectral"]
+    assert points[21].hit == 0.525
+
+
+def test_hit_salience_uses_structure_as_modifier_not_independent_evidence():
+    base = dict(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        grids_per_bar=48,
+        grid_features=[GridFeature(grid=9, onset=True, strength=0.6)],
+    )
+
+    peak = build_bar_hit_salience(BarFeature(**base, transition_role="peak"))
+    breakdown = build_bar_hit_salience(BarFeature(**base, transition_role="breakdown"))
+    empty_peak = build_bar_hit_salience(
+        BarFeature(
+            index=1,
+            start_time=2.0,
+            end_time=4.0,
+            energy=0.5,
+            transition_role="peak",
+        )
+    )
+
+    assert peak.points[0].hit > breakdown.points[0].hit
+    assert peak.points[0].reasons == ["onset", "role:peak"]
+    assert breakdown.points[0].reasons == ["onset", "role:breakdown"]
+    assert empty_peak.points == []
+
+
+def test_hit_salience_forces_digital_and_edge_silence_to_zero():
+    edge_noise = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.02,
+        rms_dbfs=-60.0,
+        peak_rms_dbfs=-45.0,
+        relative_rms_db=-45.0,
+        sustained_activity_ratio=0.05,
+        onset_grids=[0],
+        grid_features=[GridFeature(grid=0, onset=True, strength=0.8)],
+    )
+    digital_silence = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.0,
+        beat_grids=[0, 12, 24, 36],
+        downbeat_grid=0,
+    )
+    active = BarFeature(
+        index=2,
+        start_time=4.0,
+        end_time=6.0,
+        energy=0.5,
+        phrase_position="song_end",
+        grid_features=[GridFeature(grid=6, onset=True, strength=0.7)],
+    )
+
+    results = build_hit_salience([edge_noise, digital_silence, active])
+
+    assert results[0].points == []
+    assert results[0].active_ratio == 0.0
+    assert results[1].points == []
+    assert results[2].points[0].grid == 6
+
+
+def test_hit_salience_is_deterministic():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        beat_grids=[0, 12, 24, 36],
+        grid_features=[GridFeature(grid=5, onset=True, strength=0.72, activity=0.4)],
+        spectral_grid_features=[
+            SpectralGridFeature(grid=5, low_onset_strength=0.8, spectral_flux=0.6)
+        ],
+    )
+
+    first = build_bar_hit_salience(bar)
+    second = build_bar_hit_salience(bar)
+
+    assert first.model_dump() == second.model_dump()

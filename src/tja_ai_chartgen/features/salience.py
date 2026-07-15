@@ -2,9 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tja_ai_chartgen.tja.model import BarFeature
+from tja_ai_chartgen.features.silence import edge_silence_indexes, is_silent_bar
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    BarRhythmicSalience,
+    RhythmicSaliencePoint,
+)
 
 RHYTHMIC_SALIENCE_FEATURE_VERSION = "rhythmic-salience-v1"
+ACTIVE_GRID_THRESHOLD = 0.08
+HIT_OUTPUT_THRESHOLD = 0.02
+SPECTRAL_EVIDENCE_THRESHOLD = 0.05
+STRUCTURE_HIT_MULTIPLIERS = {
+    "build_up": 1.04,
+    "peak": 1.08,
+    "fill": 1.06,
+    "cadence": 1.06,
+    "drop": 0.92,
+    "breakdown": 0.85,
+}
 
 
 @dataclass(frozen=True)
@@ -98,6 +114,127 @@ def build_canonical_rhythmic_evidence(
         )
         for grid in range(grid_count)
     ]
+
+
+def build_hit_salience(bars: list[BarFeature]) -> list[BarRhythmicSalience]:
+    """为一组小节生成 hit salience，并将首尾静音小节强制归零。"""
+    silent_indexes = edge_silence_indexes(bars)
+    return [
+        build_bar_hit_salience(bar, force_silent=position in silent_indexes)
+        for position, bar in enumerate(bars)
+    ]
+
+
+def build_bar_hit_salience(
+    bar: BarFeature,
+    *,
+    force_silent: bool = False,
+) -> BarRhythmicSalience:
+    """融合基础瞬态与节拍骨架，不让持续 activity 单独制造 hit。"""
+    evidence = build_canonical_rhythmic_evidence(bar)
+    has_transient_evidence = any(
+        item.onset or _spectral_strength(item) >= SPECTRAL_EVIDENCE_THRESHOLD
+        for item in evidence
+    )
+    if force_silent or (is_silent_bar(bar) and not has_transient_evidence):
+        return BarRhythmicSalience()
+
+    spectral_peaks = _spectral_peak_grids(evidence)
+    role_multiplier = STRUCTURE_HIT_MULTIPLIERS.get(bar.transition_role, 1.0)
+    points: list[RhythmicSaliencePoint] = []
+    for item in evidence:
+        spectral_strength = (
+            _spectral_strength(item) if item.grid in spectral_peaks else 0.0
+        )
+        transient_strength = _transient_hit_strength(item, spectral_strength)
+        beat_strength = _beat_skeleton_strength(item, bar.energy)
+        hit = _unit_value(max(transient_strength, beat_strength) * role_multiplier)
+        if hit < HIT_OUTPUT_THRESHOLD:
+            continue
+
+        reasons: list[str] = []
+        if item.onset:
+            reasons.append("onset")
+        if spectral_strength >= SPECTRAL_EVIDENCE_THRESHOLD:
+            reasons.append("spectral")
+        if item.downbeat:
+            reasons.append("downbeat")
+        elif item.beat is not None:
+            reasons.append("beat")
+        if role_multiplier != 1.0:
+            reasons.append(f"role:{bar.transition_role}")
+
+        points.append(
+            RhythmicSaliencePoint(
+                grid=item.grid,
+                hit=round(hit, 6),
+                sustained_activity=round(item.activity, 6),
+                reasons=reasons,
+            )
+        )
+
+    active_grid_count = sum(item.activity >= ACTIVE_GRID_THRESHOLD for item in evidence)
+    onset_evidence_count = sum(item.onset for item in evidence)
+    return BarRhythmicSalience(
+        points=points,
+        active_ratio=round(active_grid_count / len(evidence), 6),
+        onset_evidence_count=onset_evidence_count,
+    )
+
+
+def _spectral_peak_grids(
+    evidence: list[CanonicalRhythmicEvidencePoint],
+) -> set[int]:
+    strengths = [_spectral_strength(item) for item in evidence]
+    peaks: set[int] = set()
+    for index, item in enumerate(evidence):
+        strength = strengths[index]
+        if strength < SPECTRAL_EVIDENCE_THRESHOLD:
+            continue
+        if item.onset:
+            peaks.add(item.grid)
+            continue
+        left = strengths[index - 1] if index > 0 else 0.0
+        right = strengths[index + 1] if index + 1 < len(strengths) else 0.0
+        adjacent_onset = (
+            (index > 0 and evidence[index - 1].onset)
+            or (index + 1 < len(evidence) and evidence[index + 1].onset)
+        )
+        if not adjacent_onset and strength > left and strength >= right:
+            peaks.add(item.grid)
+    return peaks
+
+
+def _spectral_strength(item: CanonicalRhythmicEvidencePoint) -> float:
+    band_attack = max(
+        item.low_onset_strength,
+        item.mid_onset_strength,
+        item.high_onset_strength,
+    )
+    return max(band_attack, item.spectral_flux * 0.8)
+
+
+def _transient_hit_strength(
+    item: CanonicalRhythmicEvidencePoint,
+    spectral_strength: float,
+) -> float:
+    onset_strength = item.onset_strength
+    if item.onset and onset_strength <= 0:
+        onset_strength = 0.65
+    return max(onset_strength, spectral_strength * 0.75)
+
+
+def _beat_skeleton_strength(
+    item: CanonicalRhythmicEvidencePoint,
+    bar_energy: float,
+) -> float:
+    if item.beat is None and not item.downbeat:
+        return 0.0
+    drive = max(item.activity, _unit_value(bar_energy))
+    if drive <= 0:
+        return 0.0
+    base = 0.26 if item.downbeat else 0.20
+    return base * drive
 
 
 def _unit_value(value: float) -> float:
