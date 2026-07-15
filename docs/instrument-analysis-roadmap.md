@@ -431,7 +431,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
 | 7.1 定义 RhythmicSalience 数据模型 | 已完成 | 已定义 `RhythmicSaliencePoint`、`BarRhythmicSalience` 及 `rhythmic-salience-v1` 版本常量；字段具有稳定默认值和 0–1/非负边界，暂不改变现有 `analysis.json` schema。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖版本、序列化、默认值隔离和边界校验。 |
-| 7.2 统一 canonical 时间轴 | 部分完成 | 当前 onset、activity、spectral 和 instrument frame 已映射到 canonical grid；尚未统一为 salience。 | 现有 BarFeature 映射测试可复用。 |
+| 7.2 统一 canonical 时间轴 | 已完成 | `build_canonical_rhythmic_evidence()` 现在把 onset/strength、activity、beat/downbeat 和稀疏 spectral attack/flux 合并到完整 canonical grid；兼容旧 `BarFeature` 字段与显式 `GridFeature`，重复频谱证据取最大值，越界证据稳定忽略。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖 48 格 4/4、36 格 6/8、旧字段回退、显式证据优先、重复/越界处理和活动值门控。 |
 | 7.3 定义 hit salience | 未开始 | 尚未实施。 | 尚未执行。 |
 | 7.4 定义 accent salience | 未开始 | 尚未实施。 | 尚未执行。 |
 | 7.5 定义 don/ka 软倾向 | 部分完成 | 当前 fallback 已使用低频咚、高频咔弱证据；尚未形成统一字段。 | 现有 fallback spectral 测试可复用。 |
@@ -552,7 +552,7 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 ## Phase 1 任务划分列表
 
 - [x] 7.1 定义 `RhythmicSalience` 数据模型与版本
-- [ ] 7.2 统一 onset、activity、spectral、beat 的 canonical 时间轴
+- [x] 7.2 统一 onset、activity、spectral、beat 的 canonical 时间轴
 - [ ] 7.3 定义并实现 hit salience
 - [ ] 7.4 定义并实现 accent salience
 - [ ] 7.5 定义并实现 don/ka 软倾向
