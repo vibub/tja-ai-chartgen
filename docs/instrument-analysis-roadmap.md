@@ -583,7 +583,7 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 | 8.1 建立 salience 候选排序 | 已完成 | 新增 `features/salience_candidates.py`，按可靠强瞬态、可靠普通瞬态、持续 beat/downbeat 骨架、结构 highlight、弱证据建立稳定优先级，并按当前 `ResolutionPlan` 精确过滤不可表达、越界和同格重复点。 | 2026-07-15：`pytest tests/test_salience_candidates.py tests/test_rhythmic_salience.py -q`，40 passed；`pytest`，541 passed、1 deselected；`ruff check .`；`python tools/verify_phase_one.py`，PASS。 |
 | 8.2 改进普通 note 选择 | 已完成 | fallback 现在为全曲一次构建逐小节 salience 候选，普通 note 在旧 style/spectral/instrument 补点前优先消费可靠强瞬态、普通瞬态、持续 beat/downbeat 骨架和结构 highlight；弱证据仍交给后续旧评分补足目标负荷。 | 2026-07-15：`pytest tests/test_fallback_generator.py -q`，38 passed；`pytest`，543 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` benchmark 为 68/68 确定性，strong onset recall 由 0.923077 提升到 0.973077，downbeat recall 由 0.934211 提升到 0.982456，unsupported-note ratio 保持 0.059857，四难度 note 数保持 360 < 608 < 1077 < 1313；aggregate note/onset precision 从 0.626563 轻微变化为 0.626266，留待 8.3 的弱证据补点约束继续优化。 |
 | 8.3 控制无证据补点 | 已完成 | fallback 将可靠 salience 之后的候选拆成有 onset/beat/activity/spectral/instrument 支持的弱证据与无证据格点，按 course 设置总弱补点和无证据子预算，连续弱 note 最多 2 个；sparse/breakdown 禁止无证据补点，纯活跃无格点证据时只保留最小 course 骨架。 | 2026-07-15：`pytest tests/test_fallback_generator.py tests/test_salience_candidates.py -q`，55 passed；`pytest`，550 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` 为 68/68 确定性，unsupported-note ratio 从 0.059857 降至 0.045524，note/onset precision 从 0.626266 升至 0.638240，strong/downbeat recall 保持 0.973077/0.982456。 |
-| 8.4 保留 course/density 约束 | 部分完成 | 当前已有 NPS、occupancy、density hint 和 silent/rest/sparse 硬约束。 | 现有四难度回归可复用。 |
+| 8.4 保留 course/density 约束 | 已完成 | 新增 `tests/test_phase_two_constraints.py`，以 4/4、3/4、6/8 的 16/24/48 与 12/18/36、四 course 和五档 density 组成完整矩阵，逐项验证输出长度、course/density 单调性、真实时间 NPS、legacy/实际 occupancy、跨 resolution 等价 hit 数，以及 silent/rest/sparse 硬上限。 | 2026-07-15：约束矩阵 6 passed，覆盖 360 个生成配置和 1080 个小节结果；`pytest`，556 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` 指标与 8.3 完全一致，68/68 确定性。 |
 | 8.5 接入 AI compact payload | 未开始 | 尚未实施 salience payload。 | 尚未执行。 |
 | 8.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -627,6 +627,8 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 
 当前 8.3 已把可靠候选之后的选择拆成两层。第一层只接收低置信 salience 或仍有 onset/accent/beat/downbeat、activity、spectral attack/flux、instrument onset 支持的格点，总弱补点比例按 Easy/Normal/Hard/Oni 限制为目标 hit 的 45%/50%/55%/60%；sparse 最多 2 个，breakdown 最多 2 个。第二层才允许无上述证据的 style 骨架，并进一步限制为目标 hit 的 10%/12%/15%/20%；sparse 和 breakdown 为 0，整小节没有任何格点证据但仍活跃时最多保留 1/2/2/3 个 course 最小骨架。所有非可靠补点共享最多 2 个连续输出格的限制，并对可靠节奏一至两个输出步长内的连接点加分；预算基于原 `target_hits` 而非 output resolution，因此升到 24/48 或 18/36 格不会自动增加弱 note。最终 benchmark 总 note 从 3358 降至 3295，四难度仍保持 360 < 605 < 1052 < 1278，静音区违规从 64 降至 60。
 
+当前 8.4 通过独立约束矩阵锁定上述生成边界。负荷矩阵覆盖 3 种拍号、每种 3 档 resolution、4 个 course 和 5 档 density，共 180 个活跃谱面配置：每个结果必须满足 course speed cap、按 legacy resolution 计算的绝对 occupancy cap 和按实际输出长度计算的 occupancy ratio；同 course 内 density 不递减，同 density 内 Easy/Normal/Hard/Oni 不递减，同一输入在对应 resolution 家族中的普通 hit 数完全一致。静音矩阵再覆盖相同 180 个配置和每组 5 类小节，要求首尾静音与中段 rest 全零、活跃小节非空、sparse 不超过 4 个普通 hit。矩阵共验证 360 个生成配置、1080 个小节结果，没有发现需要调整生成器的约束回归。
+
 ## 8.3 AI 输入
 
 AI payload 建议发送：
@@ -667,7 +669,7 @@ AI payload 建议发送：
 - [x] 8.1 建立 salience 候选排序与可表达性过滤
 - [x] 8.2 让规则普通 note 优先跟随可靠 salience
 - [x] 8.3 限制无证据补点和连续弱证据铺点
-- [ ] 8.4 全程验证 course、density、NPS、occupancy 与静音约束
+- [x] 8.4 全程验证 course、density、NPS、occupancy 与静音约束
 - [ ] 8.5 将紧凑 salience 输入接入 AI prompt 与校验
 - [ ] 8.6 执行 Phase 2 阶段验收
 
