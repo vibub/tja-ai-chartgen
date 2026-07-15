@@ -584,7 +584,7 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 | 8.2 改进普通 note 选择 | 已完成 | fallback 现在为全曲一次构建逐小节 salience 候选，普通 note 在旧 style/spectral/instrument 补点前优先消费可靠强瞬态、普通瞬态、持续 beat/downbeat 骨架和结构 highlight；弱证据仍交给后续旧评分补足目标负荷。 | 2026-07-15：`pytest tests/test_fallback_generator.py -q`，38 passed；`pytest`，543 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` benchmark 为 68/68 确定性，strong onset recall 由 0.923077 提升到 0.973077，downbeat recall 由 0.934211 提升到 0.982456，unsupported-note ratio 保持 0.059857，四难度 note 数保持 360 < 608 < 1077 < 1313；aggregate note/onset precision 从 0.626563 轻微变化为 0.626266，留待 8.3 的弱证据补点约束继续优化。 |
 | 8.3 控制无证据补点 | 已完成 | fallback 将可靠 salience 之后的候选拆成有 onset/beat/activity/spectral/instrument 支持的弱证据与无证据格点，按 course 设置总弱补点和无证据子预算，连续弱 note 最多 2 个；sparse/breakdown 禁止无证据补点，纯活跃无格点证据时只保留最小 course 骨架。 | 2026-07-15：`pytest tests/test_fallback_generator.py tests/test_salience_candidates.py -q`，55 passed；`pytest`，550 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` 为 68/68 确定性，unsupported-note ratio 从 0.059857 降至 0.045524，note/onset precision 从 0.626266 升至 0.638240，strong/downbeat recall 保持 0.973077/0.982456。 |
 | 8.4 保留 course/density 约束 | 已完成 | 新增 `tests/test_phase_two_constraints.py`，以 4/4、3/4、6/8 的 16/24/48 与 12/18/36、四 course 和五档 density 组成完整矩阵，逐项验证输出长度、course/density 单调性、真实时间 NPS、legacy/实际 occupancy、跨 resolution 等价 hit 数，以及 silent/rest/sparse 硬上限。 | 2026-07-15：约束矩阵 6 passed，覆盖 360 个生成配置和 1080 个小节结果；`pytest`，556 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` 指标与 8.3 完全一致，68/68 确定性。 |
-| 8.5 接入 AI compact payload | 未开始 | 尚未实施 salience payload。 | 尚未执行。 |
+| 8.5 接入 AI compact payload | 已完成 | AI payload 升级为 `tja-ai-chartgen-compact-v5`，逐小节发送仅含目标 resolution 可表达点的稀疏 salience，使用 0–1000 整数编码 hit/accent/don/ka/activity/confidence 和候选等级；成功 AI 结果生成 `ai-salience-validation-v1` 首轮 report-only 对齐诊断并持久化到 AI output/attempt sidecar。 | 2026-07-15：`pytest tests/test_ai_client.py tests/test_salience_candidates.py tests/test_rhythmic_salience.py tests/test_event_encoder.py -q`，107 passed；`pytest`，558 passed、1 deselected；`ruff check .`；`git diff --check`。 |
 | 8.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
 ## 8.1 候选选择原则
@@ -643,6 +643,8 @@ AI payload 建议发送：
 
 不再要求 AI 根据具体乐器名称决定 note 时间。
 
+当前 8.5 已将 AI 输入升级为 `tja-ai-chartgen-compact-v5`。`bar_salience` 与 bars 按位置对齐，每个小节包含 bar confidence、稳定 fallback reason 和稀疏 point；point 使用 legend 定义的 `[grid,hit,accent,don_preference,ka_preference,sustained_activity,confidence,kind]` 行，其中连续值统一编码为 0–1000 整数。salience 在发送前复用与 fallback 相同的完整 hit/accent/don-ka 流水线和候选排序，并按当前逐小节 `ResolutionPlan` 删除不可精确表达的点，因此 AI 不会看到无法合法返回的细分 salience。prompt 明确要求先消费 strong-transient、transient、rhythmic-skeleton、structure-highlight，再考虑 weak-evidence 或短连接点；instrument 与原始 audio channel 降为乐句、motif、段落和邻近支持上下文，不再直接决定 note tick。
+
 ## 8.4 AI 校验
 
 在 AI sanitize/quality gate 中增加：
@@ -654,6 +656,8 @@ AI payload 建议发送：
 - note 与目标 resolution 可表示性。
 
 首轮 report-only，确认指标与人工试听一致后再进入 repair。
+
+当前 8.5 新增 `ai-salience-validation-v1` 首轮 report-only 诊断。每次成功解析并通过现有硬门控的 AI 结果都会记录普通 note 数、目标 resolution 可表达 note 数、可靠候选及 strong-transient 覆盖、最长连续强瞬态漏响应、无任何 salience 候选支持的 note 数/比例、首尾静音 note 数，以及最多 16 个无支持、漏可靠和漏强瞬态示例。该结果同时写入返回的 AI output、成功 attempt 和需要持久化的 `ai_attempts*.json`，但 `report_only=true`，不会消耗内容修复次数或改变当前 AI 接受/回退语义；非法 canonical tick、目标 resolution 不可表达和首尾静音违规仍由既有硬校验阻断。
 
 ## 8.5 退出条件
 
@@ -670,7 +674,7 @@ AI payload 建议发送：
 - [x] 8.2 让规则普通 note 优先跟随可靠 salience
 - [x] 8.3 限制无证据补点和连续弱证据铺点
 - [x] 8.4 全程验证 course、density、NPS、occupancy 与静音约束
-- [ ] 8.5 将紧凑 salience 输入接入 AI prompt 与校验
+- [x] 8.5 将紧凑 salience 输入接入 AI prompt 与校验
 - [ ] 8.6 执行 Phase 2 阶段验收
 
 ---

@@ -16,6 +16,7 @@ from tja_ai_chartgen.features.resolution import (
     output_resolution_for_analysis_bar,
     output_resolution_for_bar,
 )
+from tja_ai_chartgen.features.salience_candidates import build_salience_candidate_bars
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.tja.event_encoder import EventEncodingError, encode_chart_bar_events
 from tja_ai_chartgen.tja.model import (
@@ -43,6 +44,10 @@ DEFAULT_AI_TRANSPORT_RETRIES = 3
 MAX_AI_TRANSPORT_RETRIES = 5
 MIN_AI_REQUEST_TIMEOUT = 1.0
 MAX_AI_REQUEST_TIMEOUT = 600.0
+AI_SALIENCE_VALIDATION_VERSION = "ai-salience-validation-v1"
+SALIENCE_VALIDATION_EXAMPLE_LIMIT = 16
+
+
 class AiOutputRepairError(RuntimeError):
     def __init__(self, message: str, output: dict[str, Any]) -> None:
         super().__init__(message)
@@ -172,12 +177,14 @@ def generate_chart_bars_with_ai(
         except json.JSONDecodeError as error:
             issues = [f"output must be valid JSON: {error.msg}"]
         else:
+            salience_validation = build_ai_salience_validation_report(bars, analysis)
             attempts.append(
                 {
                     "attempt": attempt_index + 1,
                     "status": "ok",
                     "content": content,
                     "data": data,
+                    "salience_validation": salience_validation,
                 }
             )
             output = _build_ai_output(
@@ -192,6 +199,7 @@ def generate_chart_bars_with_ai(
                 fallback_reason=None,
                 final=data,
                 api_key=resolved_api_key,
+                salience_validation=salience_validation,
             )
             should_write_attempts = any(
                 attempt.get("status") == "invalid" for attempt in attempts
@@ -210,6 +218,7 @@ def generate_chart_bars_with_ai(
                     fallback_reason=None,
                     final=data,
                     api_key=resolved_api_key,
+                    salience_validation=salience_validation,
                 )
             return bars, output
 
@@ -350,6 +359,119 @@ def sanitize_ai_bars(
     if issues:
         raise ValueError("AI chart failed defensive validation: " + "; ".join(issues))
     return sanitized
+
+
+def build_ai_salience_validation_report(
+    bars: list[ChartBar],
+    analysis: SongAnalysis,
+) -> dict[str, Any]:
+    """生成首轮仅报告的 AI/salience 对齐诊断，不参与 repair gate。"""
+    candidate_bars = build_salience_candidate_bars(
+        analysis.bars,
+        resolution_plan=analysis.resolution_plan,
+    )
+    silent_indexes = edge_silence_indexes(analysis.bars)
+    normal_note_count = 0
+    representable_note_count = 0
+    unsupported_notes: list[list[int]] = []
+    missed_reliable: list[list[int]] = []
+    missed_strong: list[list[int]] = []
+    reliable_candidate_count = 0
+    reliable_candidate_hit_count = 0
+    strong_transient_count = 0
+    strong_transient_hit_count = 0
+    silent_bar_note_count = 0
+    longest_strong_transient_miss_run = 0
+    current_strong_transient_miss_run = 0
+
+    for position, (feature_bar, candidates) in enumerate(
+        zip(analysis.bars, candidate_bars, strict=True)
+    ):
+        chart_bar = bars[position] if position < len(bars) else None
+        selected_grids: set[int] = set()
+        if chart_bar is not None:
+            if position in silent_indexes:
+                silent_bar_note_count += chart_activity_count(chart_bar.notes)
+            normal_note_count += sum(note in "1234" for note in chart_bar.notes)
+            expected_resolution = output_resolution_for_analysis_bar(analysis, position)
+            if len(chart_bar.notes) == expected_resolution:
+                step = feature_bar.grids_per_bar // expected_resolution
+                selected_grids = {
+                    grid * step
+                    for grid, note in enumerate(chart_bar.notes)
+                    if note in "1234"
+                }
+                representable_note_count += len(selected_grids)
+
+        candidate_grids = {candidate.grid for candidate in candidates}
+        unsupported_notes.extend(
+            [position + 1, grid]
+            for grid in sorted(selected_grids - candidate_grids)
+        )
+
+        for candidate in candidates:
+            if not candidate.reliable:
+                continue
+            reliable_candidate_count += 1
+            matched = candidate.grid in selected_grids
+            if matched:
+                reliable_candidate_hit_count += 1
+            elif len(missed_reliable) < SALIENCE_VALIDATION_EXAMPLE_LIMIT:
+                missed_reliable.append([position + 1, candidate.grid])
+
+            if candidate.kind != "strong-transient":
+                continue
+            strong_transient_count += 1
+            if matched:
+                strong_transient_hit_count += 1
+                current_strong_transient_miss_run = 0
+            else:
+                current_strong_transient_miss_run += 1
+                longest_strong_transient_miss_run = max(
+                    longest_strong_transient_miss_run,
+                    current_strong_transient_miss_run,
+                )
+                if len(missed_strong) < SALIENCE_VALIDATION_EXAMPLE_LIMIT:
+                    missed_strong.append([position + 1, candidate.grid])
+
+    unsupported_note_count = len(unsupported_notes)
+    unrepresentable_note_count = normal_note_count - representable_note_count
+    return {
+        "schema": AI_SALIENCE_VALIDATION_VERSION,
+        "report_only": True,
+        "normal_note_count": normal_note_count,
+        "representable_note_count": representable_note_count,
+        "unrepresentable_note_count": unrepresentable_note_count,
+        "reliable_candidate_count": reliable_candidate_count,
+        "reliable_candidate_hit_count": reliable_candidate_hit_count,
+        "reliable_candidate_coverage": _ratio(
+            reliable_candidate_hit_count,
+            reliable_candidate_count,
+            empty=1.0,
+        ),
+        "strong_transient_count": strong_transient_count,
+        "strong_transient_hit_count": strong_transient_hit_count,
+        "strong_transient_coverage": _ratio(
+            strong_transient_hit_count,
+            strong_transient_count,
+            empty=1.0,
+        ),
+        "longest_strong_transient_miss_run": longest_strong_transient_miss_run,
+        "unsupported_note_count": unsupported_note_count,
+        "unsupported_note_ratio": _ratio(
+            unsupported_note_count,
+            normal_note_count,
+            empty=0.0,
+        ),
+        "silent_bar_note_count": silent_bar_note_count,
+        "unsupported_note_examples": unsupported_notes[:SALIENCE_VALIDATION_EXAMPLE_LIMIT],
+        "missed_reliable_examples": missed_reliable,
+        "missed_strong_transient_examples": missed_strong,
+    }
+
+
+def _ratio(numerator: int, denominator: int, *, empty: float) -> float:
+    return round(numerator / denominator if denominator else empty, 6)
 
 
 def _completion_with_transport_retries(
@@ -834,7 +956,8 @@ Required schema:
 
 Rules:
 - bars must contain exactly {len(analysis.bars)} item(s).
-- Use the canonical ticks, per-bar resolution, timing, density, and structure rules from the original input. Do not output a resolution.
+- Use the canonical ticks, per-bar resolution, timing, density, structure, and bar_salience from the original input. Do not output a resolution.
+- Prioritize reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight salience points. Keep unsupported hits rare and use only short supported connectors when density requires them.
 - Use only hits and long_notes; never return legacy notes or balloon_counts fields.
 - Normal hit notes are 1, 2, 3, or 4.
 - long_notes must be empty unless special_notes is true. Balloons require a positive balloon_count.
@@ -861,6 +984,7 @@ def _build_ai_output(
     fallback_reason: str | None,
     final: dict[str, Any] | None,
     api_key: str | None,
+    salience_validation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     output = {
         "model": model,
@@ -874,6 +998,8 @@ def _build_ai_output(
         "fallback_reason": fallback_reason,
         "final": final,
     }
+    if salience_validation is not None:
+        output["salience_validation"] = salience_validation
     return _redact_sensitive_value(output, api_key)
 
 
@@ -891,6 +1017,7 @@ def _write_attempt_log(
     fallback_reason: str | None,
     final: dict[str, Any] | None,
     api_key: str | None,
+    salience_validation: dict[str, Any] | None = None,
 ) -> None:
     if path is None:
         return
@@ -909,6 +1036,7 @@ def _write_attempt_log(
                 fallback_reason=fallback_reason,
                 final=final,
                 api_key=api_key,
+                salience_validation=salience_validation,
             ),
             ensure_ascii=False,
             indent=2,

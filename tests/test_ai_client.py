@@ -16,6 +16,7 @@ from tja_ai_chartgen.ai.client import (
     AiOutputRepairError,
     _compact_repair_issues,
     AiProviderError,
+    build_ai_salience_validation_report,
     generate_chart_bars_with_ai,
     sanitize_ai_bars,
 )
@@ -150,7 +151,24 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density_policy"]["quality_average_min_per_16_grid_bar"] == 6.5
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
-    assert payload["schema"] == "tja-ai-chartgen-compact-v4"
+    assert payload["schema"] == "tja-ai-chartgen-compact-v5"
+    assert payload["rhythmic_salience_feature_version"] == "rhythmic-salience-v1"
+    salience_bar_columns = payload["legend"]["salience_bar_columns"]
+    salience_point_columns = payload["legend"]["salience_point_columns"]
+    salience_bar = payload["bar_salience"][0]
+    salience_points = salience_bar[salience_bar_columns.index("points")]
+    assert salience_bar[salience_bar_columns.index("bar_confidence")] == 900
+    assert salience_bar[salience_bar_columns.index("fallback_reason")] is None
+    assert [point[salience_point_columns.index("grid")] for point in salience_points] == [
+        0,
+        12,
+        24,
+        36,
+    ]
+    assert all(
+        point[salience_point_columns.index("kind")] == "strong-transient"
+        for point in salience_points
+    )
     assert len(payload["reference_windows"]) == 3
     assert "reference_window_bar_columns" in payload["legend"]
     bar_columns = payload["legend"]["bar_columns"]
@@ -211,6 +229,43 @@ def test_compact_bar_projects_audio_detail_to_playable_output_slots():
     assert compact_bar[columns.index("accent_grids")] == [0]
     assert compact_bar[columns.index("beat_events")] == [[0, 1], [12, 2], [24, 3], [36, 4]]
     assert compact_bar[columns.index("downbeat_grid")] == 0
+
+
+def test_compact_salience_only_includes_exactly_representable_points():
+    analysis = _analysis()
+    bar = analysis.bars[0].model_copy(
+        update={
+            "onset_grids": [1, 3, 12],
+            "grid_features": [
+                GridFeature(grid=1, onset=True, strength=1.0),
+                GridFeature(grid=3, onset=True, strength=0.8),
+                GridFeature(grid=12, onset=True, strength=0.7),
+            ],
+        }
+    )
+    analysis = analysis.model_copy(update={"bars": [bar]})
+
+    payload = build_chart_generation_payload(analysis, "Oni", 10, "technical")
+
+    bar_columns = payload["legend"]["salience_bar_columns"]
+    point_columns = payload["legend"]["salience_point_columns"]
+    points = payload["bar_salience"][0][bar_columns.index("points")]
+    grids = [point[point_columns.index("grid")] for point in points]
+    assert 1 not in grids
+    assert {3, 12}.issubset(grids)
+    assert all(grid % 3 == 0 for grid in grids)
+    assert all(
+        isinstance(point[point_columns.index(field)], int)
+        for point in points
+        for field in (
+            "hit",
+            "accent",
+            "don_preference",
+            "ka_preference",
+            "sustained_activity",
+            "confidence",
+        )
+    )
 
 
 def test_build_chart_generation_payload_includes_compact_structure_plan():
@@ -422,6 +477,37 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "1010101010101010" in prompt
     assert "target_hits is more important than merely satisfying min_hits" in prompt
     assert "density_policy.quality_average_min_per_16_grid_bar" in prompt
+    assert "Prefer reliable strong-transient, transient, rhythmic-skeleton" in prompt
+    assert "Keep unsupported hits rare" in prompt
+    assert "not to choose exact note ticks" in prompt
+
+
+def test_build_ai_salience_validation_report_is_report_only_and_compact():
+    notes = list("0" * 16)
+    notes[0] = "1"
+    notes[2] = "2"
+    notes[4] = "1"
+
+    report = build_ai_salience_validation_report(
+        [ChartBar(index=0, notes="".join(notes))],
+        _analysis(),
+    )
+
+    assert report["schema"] == "ai-salience-validation-v1"
+    assert report["report_only"] is True
+    assert report["normal_note_count"] == 3
+    assert report["representable_note_count"] == 3
+    assert report["unrepresentable_note_count"] == 0
+    assert report["reliable_candidate_count"] == 4
+    assert report["reliable_candidate_hit_count"] == 2
+    assert report["reliable_candidate_coverage"] == 0.5
+    assert report["strong_transient_coverage"] == 0.5
+    assert report["longest_strong_transient_miss_run"] == 2
+    assert report["unsupported_note_count"] == 1
+    assert report["unsupported_note_ratio"] == 0.333333
+    assert report["unsupported_note_examples"] == [[1, 6]]
+    assert report["missed_reliable_examples"] == [[1, 24], [1, 36]]
+    assert report["silent_bar_note_count"] == 0
 
 
 def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
@@ -440,6 +526,9 @@ def test_generate_chart_bars_with_ai_parses_litellm_dict_response(monkeypatch):
 
     assert raw["final"] == payload
     assert raw["model"] == "fake/model"
+    assert raw["salience_validation"]["report_only"] is True
+    assert raw["salience_validation"]["reliable_candidate_coverage"] == 1.0
+    assert raw["attempts"][0]["salience_validation"] == raw["salience_validation"]
     assert bars == [ChartBar(index=0, notes="1000100010001000")]
 
 
@@ -724,6 +813,8 @@ def test_generate_chart_bars_with_ai_retries_transient_transport_once_without_co
     assert [attempt["transport_attempt"] for attempt in raw["transport_attempts"]] == [1, 2]
     assert raw["fallback_reason"] is None
     assert attempt_log_path.exists()
+    logged = json.loads(attempt_log_path.read_text(encoding="utf-8"))
+    assert logged["salience_validation"] == raw["salience_validation"]
 
 
 def test_generate_chart_bars_with_ai_stops_after_transport_retries_are_exhausted(
@@ -902,6 +993,8 @@ def test_generate_chart_bars_with_ai_repairs_legacy_notes_schema(monkeypatch):
     assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
     assert "legacy notes schema" in raw["attempts"][0]["issues"][0]
     assert "Fix the output" in captured_messages[1][-1]["content"]
+    assert "bar_salience from the original input" in captured_messages[1][-1]["content"]
+    assert "Keep unsupported hits rare" in captured_messages[1][-1]["content"]
 
 
 def test_generate_chart_bars_with_ai_writes_invalid_attempt_log(tmp_path, monkeypatch):

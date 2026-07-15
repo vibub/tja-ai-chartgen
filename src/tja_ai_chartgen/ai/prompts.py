@@ -5,6 +5,11 @@ from tja_ai_chartgen.ai.examples import get_reference_examples_prompt
 from tja_ai_chartgen.ai.reference_windows import get_reference_windows_payload
 from tja_ai_chartgen.features.density import density_hint_payload
 from tja_ai_chartgen.features.resolution import output_resolution_for_analysis_bar
+from tja_ai_chartgen.features.salience import (
+    RHYTHMIC_SALIENCE_FEATURE_VERSION,
+    build_don_ka_salience,
+)
+from tja_ai_chartgen.features.salience_candidates import rank_bar_salience_candidates
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.rules.styles import get_style_template
 from tja_ai_chartgen.tja.model import BarFeature, SongAnalysis
@@ -63,6 +68,17 @@ AUDIO_CHANNEL_COLUMNS = [
     "accompaniment_onset",
 ]
 BEAT_EVENT_COLUMNS = ["grid", "beat"]
+SALIENCE_BAR_COLUMNS = ["bar_confidence", "fallback_reason", "points"]
+SALIENCE_POINT_COLUMNS = [
+    "grid",
+    "hit",
+    "accent",
+    "don_preference",
+    "ka_preference",
+    "sustained_activity",
+    "confidence",
+    "kind",
+]
 INSTRUMENT_BAR_COLUMNS = [
     "vocal_activity",
     "vocal_presence_ratio",
@@ -157,9 +173,10 @@ def build_chart_generation_payload(
     if density == "auto":
         density_target = _auto_density_target(level)
     forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
+    compact_salience = _compact_salience_bars(analysis)
 
     payload = {
-        "schema": "tja-ai-chartgen-compact-v4",
+        "schema": "tja-ai-chartgen-compact-v5",
         "legend": {
             "bool": "0=false, 1=true",
             "bar_columns": BAR_COLUMNS,
@@ -167,6 +184,9 @@ def build_chart_generation_payload(
             "audio_channel_scale": "-1=present with unknown strength; 0=absent; 1..1000=normalized strength",
             "audio_channel_positions": "channel index i maps to canonical tick i*allowed_tick_step",
             "beat_event_columns": BEAT_EVENT_COLUMNS,
+            "salience_bar_columns": SALIENCE_BAR_COLUMNS,
+            "salience_point_columns": SALIENCE_POINT_COLUMNS,
+            "salience_scale": "0..1000=normalized strength/confidence; kind is the ranked evidence class",
             "instrument_bar_columns": INSTRUMENT_BAR_COLUMNS,
             "bar_density_hint_columns": BAR_DENSITY_HINT_COLUMNS,
             "bar_structure_columns": BAR_STRUCTURE_COLUMNS,
@@ -194,6 +214,8 @@ def build_chart_generation_payload(
             quality_density=_quality_density(density, course, level),
         ),
         "special_notes": special_notes,
+        "rhythmic_salience_feature_version": RHYTHMIC_SALIENCE_FEATURE_VERSION,
+        "bar_salience": compact_salience,
         "spectral_feature_version": analysis.spectral_feature_version,
         "spectral_analysis_status": analysis.spectral_analysis_status,
         "instrument_feature_version": analysis.instrument_feature_version,
@@ -277,9 +299,9 @@ Rules:
 19. Let the chart's style and music decide the don/ka mix, but avoid outputs where nearly all normal 1/2 notes are 1. Use some 2 notes for offbeat responses, back-half answers, syncopated hits, or phrase-end fills.
 20. When translated to four equal positions, useful rhythmic cells include 1020, 1200, 1012, 1210, 1122, 1221, 1022, and 2012, but do not force a fixed ratio.
 21. Avoid long all-don streams such as 1010101010101010 unless the input clearly describes a very plain stamina passage; even then, vary later bars with occasional 2 notes.
-22. Decode audio_channels with legend.audio_channel_columns, audio_channel_scale, and audio_channel_positions. Each channel is projected onto the bar's playable output slots, so no evidence is sent at ticks the output resolution cannot represent. onset_strength marks playable attacks; activity preserves sustained musical sound such as vocals, guitar, strings, piano, or pads. If activity is high but onsets are sparse, this is not a rest; place a simple beat/downbeat skeleton rather than leaving the bar empty.
-23. Grid 0 is the barline and primary downbeat candidate. In normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 even when onset=0, unless the bar is a pickup, song-start silence, song-end silence, or intentionally syncopated rest.
-24. Prefer stronger accents and downbeats for 1/3 notes, use 2/4 for lighter offbeat responses, and leave weak empty grids as 0 unless density or sustained activity asks for more.
+22. Decode bar_salience with legend.salience_bar_columns and legend.salience_point_columns. Its sparse points are already filtered to ticks exactly representable at the bar's output_resolution. Prefer reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight points before weak-evidence points or unsupported style connectors.
+23. hit is the primary placement score. confidence and bar_confidence determine how strongly to trust it. Use accent only as soft emphasis evidence, and don_preference/ka_preference only as soft color evidence; style and playability still decide the final 1/2/3/4 note.
+24. Meet density targets by adding supported connections around salience points, not by filling arbitrary empty ticks. Keep unsupported hits rare, avoid long unsupported streams, and leave weak empty grids as 0. High sustained_activity without transient points may justify only a simple beat/downbeat skeleton. Grid 0 is the barline and primary downbeat candidate; in normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 only when salience or a justified skeleton supports it.
 25. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
 26. Do not place big notes 3/4 inside dense streams. If a passage has 3 or more consecutive playable hits, use normal 1/2 notes in the stream instead of 3/4.
 27. Avoid multiple big notes in one bar unless the bar is intentionally sparse; high/max density should increase 1/2 stream density, not big-note frequency.
@@ -294,8 +316,8 @@ Rules:
 36. Breakdown lowers load but is not silence when activity remains present; keep a simple beat/downbeat skeleton.
 37. Repeated section_id values should retain a recognizable base motif, with controlled later-song variation rather than exact copying.
 38. Do not create a fill merely because a bar number is divisible by 4 or 8; require fill_candidate_score and the musical context.
-39. In audio_channels, treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence; onset, accents, playability, and motif design remain authoritative. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes, build-ups, peaks, breakdowns, and fills without forcing a note on every spectral change.
-40. Decode bar_instruments with legend.instrument_bar_columns. In audio_channels, drum attacks are strong soft evidence for placements and accents; bass attacks are weaker downbeat/don evidence. Use vocals for phrase entrances, breaths, call-and-response, and cadences, but never map every syllable to a hit. Use reliable guitar, piano/keyboard, strings, brass, woodwind, synth, and organ labels for motifs and section contrast. Ignore low-confidence labels, and never let instrument semantics override silence, density, speed, occupancy, resolution, or playability constraints.
+39. Decode audio_channels with legend.audio_channel_columns, audio_channel_scale, and audio_channel_positions only as supporting context around bar_salience. Treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes without forcing a note on every spectral change.
+40. Decode bar_instruments with legend.instrument_bar_columns for phrase, motif, and section context, not to choose exact note ticks. Do not map instrument names, stems, vocals, or syllables directly to hits. Ignore low-confidence labels, and never let instrument semantics override salience, silence, density, speed, occupancy, resolution, or playability constraints.
 
 Input:
 {json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}
@@ -307,6 +329,39 @@ Output schema:
   ]
 }}
 """.strip()
+
+
+def _compact_salience_bars(analysis: SongAnalysis) -> list[list[Any]]:
+    salience_bars = build_don_ka_salience(analysis.bars)
+    compact: list[list[Any]] = []
+    for position, (bar, salience) in enumerate(
+        zip(analysis.bars, salience_bars, strict=True)
+    ):
+        candidates = rank_bar_salience_candidates(
+            bar,
+            salience,
+            output_resolution=output_resolution_for_analysis_bar(analysis, position),
+        )
+        compact.append(
+            [
+                _compact_unit(salience.confidence),
+                salience.fallback_reason,
+                [
+                    [
+                        candidate.grid,
+                        _compact_unit(candidate.point.hit),
+                        _compact_unit(candidate.point.accent),
+                        _compact_unit(candidate.point.don_preference),
+                        _compact_unit(candidate.point.ka_preference),
+                        _compact_unit(candidate.point.sustained_activity),
+                        _compact_unit(candidate.point.confidence),
+                        candidate.kind,
+                    ]
+                    for candidate in candidates
+                ],
+            ]
+        )
+    return compact
 
 
 def _compact_bar_structures(analysis: SongAnalysis) -> list[list[Any]]:
