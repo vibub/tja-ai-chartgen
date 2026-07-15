@@ -701,7 +701,7 @@ AI payload 建议发送：
 | 9.2 咚咔软映射 | 已完成 | don/ka salience 对频带攻击增加绝对门槛：高置信低频攻击提高咚倾向，高频攻击先给基础咔倾向，再由 percussive ratio 和受限 brightness 证据校准；全曲 brightness 不再能单独制造强咔偏好。fallback 已移除频带到字符的直接硬映射，改为 style 基础票、统一 salience 偏好和弱 bass 证据的确定性软评分，并将最终普通咚咔单色串限制为最多 4 个且跨小节生效。 | `pytest tests/test_rhythmic_salience.py tests/test_fallback_generator.py tests/test_chart_quality.py -q` 覆盖频带门槛、混合频带中性、percussive 增益、brightness 门控、style 回退、统一偏好消费和跨小节单色串。 |
 | 9.3 Fill burst 检测 | 已完成 | `BarRhythmicSalience` 新增 bar-level burst score/confidence/range/reasons 契约；`build_burst_salience()` 在完整 hit/accent/don-ka salience 后检测后半小节 onset 密度跃升、spectral flux 爆发、percussive ratio 上升和前段稳定对比，phrase end/cadence 与后继 section/peak/drop 只能增强已存在的节奏 burst，不能单独制造候选。检测兼容 4/4、3/4、6/8 canonical grid，并在真实 `fill_burst_120.wav` 上只命中第 4、8 小节的后半 burst。特殊音符消费留给 9.4。 | `pytest tests/test_rhythmic_salience.py tests/test_audio_pipeline_integration.py::test_fill_burst_fixture_detects_only_expected_late_bar_bursts -q` 覆盖契约、可靠性门控、结构增强、无 burst phrase end、复拍号与真实 fixture。 |
 | 9.4 特殊音符响应 | 已完成 | fallback 与 AI 统一要求可靠 burst salience 才能生成 long note，并把 burst canonical range 精确投影到当前输出 resolution；滚奏/气球的起止 tick 被限制在该范围内，过短范围、低/中 density、静音和不可表达格点均保持普通 note。结构 fill candidate 只能增强类型选择，不能替代纯节奏 burst 门控；AI compact payload 升级为 v6，并由内容校验拒绝范围外、过短或同小节多个 long note。 | `pytest tests/test_rhythmic_salience.py tests/test_fallback_generator.py tests/test_ai_client.py tests/test_audio_pipeline_integration.py::test_fill_burst_fixture_detects_only_expected_late_bar_bursts tests/test_cli_generate.py::test_generate_with_special_notes_outputs_balloon_header -q` 覆盖范围投影、无 burst 拒绝、无结构 fill 候选的纯节奏 burst、滚奏/气球、AI repair、真实 fixture 与 TJA 输出。 |
-| 9.5 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
+| 9.5 阶段退出条件 | 已完成 | 新增 `phase-three-acceptance-v1` 禁网双跑验收：对 17 个 fixture/68 张规则谱面锁定 Phase 2 强 onset/downbeat 响应不退化，并执行 accent、don/ka、burst 和特殊音符行为矩阵；真实 `fill_burst_120.wav` 只在第 4、8 小节检测并消费可靠 burst。Windows smoke 同时改用固定提交的 `setup-ffmpeg` action，避免 Chocolatey 源临时 499 导致与代码无关的构建失败。 | `python tools/verify_phase_three.py`，PASS；accent response 1.0，18 个大音符且 0 相邻违规；低频→咚 0.75、高频→咔 1.0、ka ratio 0.615385、最长单色串 4；72 个特殊音符配置产生 36 个滚奏/36 个气球、最短 0.583333 秒、0 违规；禁网双跑稳定。 |
 
 ## 9.1 重音
 
@@ -755,13 +755,15 @@ AI payload 建议发送：
 - 无 burst 的 phrase end 不机械生成 fill；
 - 特殊音符数量和持续时间保持可解释。
 
+当前 `phase-three-acceptance-v1` 已将这些条件固化为可重复验收：复用 `chart-alignment-v1` 与 Phase 2 已提交结果比较 strong onset/downbeat recall；行为矩阵覆盖统一 accent 候选、course 大音符上限、相邻大音符、低/高频 don/ka 响应、跨小节单色串，以及 4/4、3/4、6/8 的全部 9 档 resolution、4 个 course 共 72 个滚奏/气球配置。验收在禁用 socket 连接时双跑，另对真实 `fill_burst_120.wav` 验证 ground truth 第 4、8 小节与可靠 burst、最终特殊音符严格一致。结果持久化为 `tests/fixtures/audio/phase_three_acceptance.json` 和 `.md`。
+
 ## Phase 3 任务划分列表
 
 - [x] 9.1 将 downbeat、强 onset 和结构变化统一为重音候选
 - [x] 9.2 使用频带与 percussive 证据校准 don/ka 软倾向
 - [x] 9.3 建立纯节奏 fill burst 检测
 - [x] 9.4 让滚奏和气球响应可靠 burst salience
-- [ ] 9.5 执行 Phase 3 阶段验收
+- [x] 9.5 执行 Phase 3 阶段验收
 
 ---
 
@@ -1554,9 +1556,9 @@ Phase 4 和 Phase 5 可以在 Phase 2–3 期间独立推进，但核心 salienc
 
 | 里程碑 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
-| Milestone A：自动对齐基线 | 未开始 | 尚未完成 Phase 0。 | 尚未执行里程碑验收。 |
-| Milestone B：节奏显著性 v1 | 未开始 | 尚未完成 Phase 1。 | 尚未执行里程碑验收。 |
-| Milestone C：规则谱面对齐 | 未开始 | 尚未完成 Phase 2–3。 | 尚未执行里程碑验收。 |
+| Milestone A：自动对齐基线 | 已完成 | Phase 0 已建立 17 个合成 fixture、ground truth、音频/谱面对齐 baseline、禁网双跑和隐私扫描。 | `phase-zero-acceptance-v1` PASS：35 个产物可重复重建，17 个音频/68 张谱面 benchmark 稳定且匹配提交基线。 |
+| Milestone B：节奏显著性 v1 | 已完成 | Phase 1 已建立 canonical hit/accent/don-ka salience、置信度/reason 契约和稀疏输出。 | `phase-one-acceptance-v1` PASS：peak precision 0.999、recall 0.989，0 canonical/静音/契约违规。 |
+| Milestone C：规则谱面对齐 | 已完成 | Phase 2–3 已完成 salience 候选消费、无证据补点约束、统一重音、don/ka 软映射、fill burst 与特殊音符消费。 | `phase-two-acceptance-v1` 与 `phase-three-acceptance-v1` 均 PASS；Phase 3 禁网双跑覆盖 17 个 fixture、68 张谱面和 72 个特殊音符配置。 |
 | Milestone D：节拍仲裁 v2 | 未开始 | 尚未完成 Phase 4。 | 尚未执行里程碑验收。 |
 | Milestone E：轻量声部增强 | 未开始 | 尚未完成 Phase 5。 | 尚未执行里程碑验收。 |
 | Milestone F：质量报告与消费者收敛 | 未开始 | 尚未完成 Phase 6–7。 | 尚未执行里程碑验收。 |

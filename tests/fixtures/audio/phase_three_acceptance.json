@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "acceptance_version": "phase-three-acceptance-v1",
+  "phase": "Phase 3",
+  "passed": true,
+  "fixture_count": 17,
+  "chart_count": 68,
+  "checks": {
+    "deterministic_offline_acceptance": {
+      "passed": true,
+      "network_blocked": true,
+      "chart_runs_stable": true,
+      "behavior_runs_stable": true,
+      "fill_runs_stable": true,
+      "run_count": 2
+    },
+    "strong_downbeat_and_cadence_response": {
+      "passed": true,
+      "baseline_strong_recall": 0.973077,
+      "current_strong_recall": 0.973077,
+      "baseline_downbeat_recall": 0.982456,
+      "current_downbeat_recall": 0.982456,
+      "accent_response_rate": 1.0,
+      "cadence_response_count": 16
+    },
+    "accent_playability": {
+      "passed": true,
+      "big_note_count": 18,
+      "adjacent_big_note_violation_count": 0,
+      "course_limit_violations": []
+    },
+    "don_ka_balance": {
+      "passed": true,
+      "evidence_note_count": 64,
+      "low_attack_note_count": 32,
+      "low_attack_don_count": 24,
+      "low_attack_don_response_rate": 0.75,
+      "high_attack_note_count": 32,
+      "high_attack_ka_count": 32,
+      "high_attack_ka_response_rate": 1.0,
+      "don_count": 40,
+      "ka_count": 64,
+      "ka_ratio": 0.615385,
+      "longest_monochrome_run": 4
+    },
+    "fill_burst_fixture_alignment": {
+      "passed": true,
+      "fixture": "fill_burst_120.wav",
+      "expected_burst_indexes": [
+        3,
+        7
+      ],
+      "reliable_burst_indexes": [
+        3,
+        7
+      ],
+      "special_note_indexes": [
+        3,
+        7
+      ],
+      "late_range_count": 2,
+      "special_note_durations_seconds": [
+        0.75,
+        0.75
+      ]
+    },
+    "no_mechanical_phrase_end_fill": {
+      "passed": true,
+      "no_burst_special_note_count": 0
+    },
+    "special_note_explainability": {
+      "passed": true,
+      "configuration_count": 72,
+      "drumroll_count": 36,
+      "balloon_count": 36,
+      "minimum_duration_seconds": 0.583333,
+      "violation_count": 0,
+      "violation_examples": []
+    }
+  },
+  "phase_two_summary": {
+    "chart_count": 68,
+    "note_count": 3295,
+    "note_onset": {
+      "reference_count": 2796,
+      "estimated_count": 3295,
+      "true_positive_count": 2103,
+      "false_positive_count": 1192,
+      "false_negative_count": 693,
+      "precision": 0.63824,
+      "recall": 0.752146,
+      "f1": 0.690527,
+      "mean_absolute_error_seconds": 0.019354,
+      "max_absolute_error_seconds": 0.049743
+    },
+    "strong_onset_response": {
+      "reference_count": 520,
+      "estimated_count": 3295,
+      "true_positive_count": 506,
+      "false_positive_count": 2789,
+      "false_negative_count": 14,
+      "precision": 0.153566,
+      "recall": 0.973077,
+      "f1": 0.265269,
+      "mean_absolute_error_seconds": 0.017029,
+      "max_absolute_error_seconds": 0.049743
+    },
+    "downbeat_response": {
+      "reference_count": 456,
+      "estimated_count": 3295,
+      "true_positive_count": 448,
+      "false_positive_count": 2847,
+      "false_negative_count": 8,
+      "precision": 0.135964,
+      "recall": 0.982456,
+      "f1": 0.23887,
+      "mean_absolute_error_seconds": 0.020863,
+      "max_absolute_error_seconds": 0.052316
+    },
+    "fill_onset_response": {
+      "reference_count": 32,
+      "estimated_count": 28,
+      "true_positive_count": 22,
+      "false_positive_count": 6,
+      "false_negative_count": 10,
+      "precision": 0.785714,
+      "recall": 0.6875,
+      "f1": 0.733333,
+      "mean_absolute_error_seconds": 0.028766,
+      "max_absolute_error_seconds": 0.03174
+    },
+    "evidenced_note_count": 3145,
+    "unsupported_note_count": 150,
+    "unsupported_note_ratio": 0.045524,
+    "silent_violation_count": 60,
+    "silent_violation_ratio": 0.018209,
+    "deterministic_chart_count": 68,
+    "deterministic_rate": 1.0
+  },
+  "current_chart_summary": {
+    "chart_count": 68,
+    "note_count": 3295,
+    "note_onset": {
+      "reference_count": 2796,
+      "estimated_count": 3295,
+      "true_positive_count": 2103,
+      "false_positive_count": 1192,
+      "false_negative_count": 693,
+      "precision": 0.63824,
+      "recall": 0.752146,
+      "f1": 0.690527,
+      "mean_absolute_error_seconds": 0.01938,
+      "max_absolute_error_seconds": 0.049743
+    },
+    "strong_onset_response": {
+      "reference_count": 520,
+      "estimated_count": 3295,
+      "true_positive_count": 506,
+      "false_positive_count": 2789,
+      "false_negative_count": 14,
+      "precision": 0.153566,
+      "recall": 0.973077,
+      "f1": 0.265269,
+      "mean_absolute_error_seconds": 0.017029,
+      "max_absolute_error_seconds": 0.049743
+    },
+    "downbeat_response": {
+      "reference_count": 456,
+      "estimated_count": 3295,
+      "true_positive_count": 448,
+      "false_positive_count": 2847,
+      "false_negative_count": 8,
+      "precision": 0.135964,
+      "recall": 0.982456,
+      "f1": 0.23887,
+      "mean_absolute_error_seconds": 0.020863,
+      "max_absolute_error_seconds": 0.052316
+    },
+    "fill_onset_response": {
+      "reference_count": 32,
+      "estimated_count": 28,
+      "true_positive_count": 22,
+      "false_positive_count": 6,
+      "false_negative_count": 10,
+      "precision": 0.785714,
+      "recall": 0.6875,
+      "f1": 0.733333,
+      "mean_absolute_error_seconds": 0.028766,
+      "max_absolute_error_seconds": 0.03174
+    },
+    "evidenced_note_count": 3145,
+    "unsupported_note_count": 150,
+    "unsupported_note_ratio": 0.045524,
+    "silent_violation_count": 60,
+    "silent_violation_ratio": 0.018209,
+    "deterministic_chart_count": 68,
+    "deterministic_rate": 1.0
+  },
+  "behavior_matrix": {
+    "schema_version": 1,
+    "matrix_version": "phase-three-behavior-matrix-v1",
+    "passed": true,
+    "accent": {
+      "accent_candidate_count": 12,
+      "accent_hit_count": 48,
+      "accent_response_rate": 1.0,
+      "big_note_count": 18,
+      "cadence_response_count": 16,
+      "adjacent_big_note_violation_count": 0,
+      "course_limit_violations": []
+    },
+    "color": {
+      "evidence_note_count": 64,
+      "low_attack_note_count": 32,
+      "low_attack_don_count": 24,
+      "low_attack_don_response_rate": 0.75,
+      "high_attack_note_count": 32,
+      "high_attack_ka_count": 32,
+      "high_attack_ka_response_rate": 1.0,
+      "don_count": 40,
+      "ka_count": 64,
+      "ka_ratio": 0.615385,
+      "longest_monochrome_run": 4
+    },
+    "special_notes": {
+      "passed": true,
+      "configuration_count": 72,
+      "meter_count": 3,
+      "resolution_count": 9,
+      "course_count": 4,
+      "drumroll_count": 36,
+      "balloon_count": 36,
+      "no_burst_special_note_count": 0,
+      "minimum_duration_seconds": 0.583333,
+      "maximum_duration_seconds": 0.833333,
+      "violation_count": 0,
+      "violation_counts": {},
+      "violation_examples": []
+    }
+  },
+  "fill_fixture_evidence": {
+    "fixture": "fill_burst_120.wav",
+    "expected_burst_indexes": [
+      3,
+      7
+    ],
+    "reliable_burst_indexes": [
+      3,
+      7
+    ],
+    "special_note_indexes": [
+      3,
+      7
+    ],
+    "late_range_count": 2,
+    "special_note_durations_seconds": [
+      0.75,
+      0.75
+    ],
+    "passed": true
+  }
+}
