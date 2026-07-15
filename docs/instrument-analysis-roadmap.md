@@ -250,7 +250,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 | 6.3 扩展合成节奏类型 | 已完成 | 新增 8 个 WAV，覆盖切分、真正弱起、低频主拍/高频反拍、持续 harmonic 背景、短 fill burst、3/4、6/8 和半速/倍速歧义；fixture 总数增至 17。 | 2026-07-15：`pytest tests/test_audio_fixture_ground_truth.py -v`，4 passed；完整重建逐字节一致。 |
 | 6.4 建立音频分析 benchmark | 已完成 | `audio-alignment-v2` 已覆盖全部 17 个 fixture，补齐频带、弱起、fill 与 resolution 指标，并同时生成机器可读 JSON baseline 和逐 fixture Markdown 报告。 | 2026-07-15：`python tools/benchmark_audio_fixtures.py`；`pytest tests/test_audio_benchmark.py -v`，9 passed。 |
 | 6.5 建立谱面对齐 baseline | 已完成 | `chart-alignment-v1` 已对全部 17 个 fixture 的 Easy 3、Normal 5、Hard 7、Oni 10 规则谱面计算 note/onset、强 onset、downbeat、无证据 note、静音违规、fill 响应和确定性指标，并生成 JSON/Markdown 基线。 | 2026-07-15：`python tools/benchmark_chart_alignment.py`；`pytest tests/test_chart_alignment_benchmark.py -v`，7 passed。 |
-| 6.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
+| 6.6 阶段退出条件 | 已完成 | `phase-zero-acceptance-v1` 已验证 fixture/ground truth 双重建、离线 benchmark、两类 baseline 完整性、同环境双运行稳定性和持久化隐私，全部退出条件通过。 | 2026-07-15：`python tools/verify_phase_zero.py`，PASS；`pytest tests/test_phase_zero_acceptance.py -v`，7 passed。 |
 
 ## 6.1 现有 fixture 盘点与复用结论
 
@@ -392,11 +392,17 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 
 ## 6.6 退出条件
 
-- fixture 与 ground truth 可以由同一脚本确定性重建；
-- benchmark 不访问网络；
-- onset、beat、downbeat、resolution 和谱面对齐都有修改前 baseline；
-- 同一环境重复运行结果稳定；
-- 不需要真实歌曲标题、路径、原始音频或人工标签进入仓库。
+- [x] fixture 与 ground truth 可以由同一脚本确定性重建；
+- [x] benchmark 不访问网络；
+- [x] onset、beat、downbeat、resolution 和谱面对齐都有修改前 baseline；
+- [x] 同一环境重复运行结果稳定；
+- [x] 不需要真实歌曲标题、路径、原始音频或人工标签进入仓库。
+
+阶段验收入口为 `python tools/verify_phase_zero.py`。`phase-zero-acceptance-v1` 会在两个独立临时目录中完整重建 fixture，将 17 个 WAV、17 个事件 JSON 和 ground truth schema 共 35 个产物逐字节与仓库版本比较；随后在屏蔽 `socket.connect` / `connect_ex` 的上下文中分别执行两次 `audio-alignment-v2` 和 `chart-alignment-v1`，确认 benchmark 不依赖网络且同一环境输出完全一致。
+
+验收还会检查两个已提交 baseline 的 schema、版本、ground-truth schema、17-fixture/68-chart 覆盖范围和默认关闭 BeatNet 的离线路径，并递归扫描持久化 JSON，拒绝标题、艺术家、API key、base URL、输入/输出绝对路径、URL 和未知音频引用。机器可读结果写入 `tests/fixtures/audio/phase_zero_acceptance.json`，人类可读结果写入 `phase_zero_acceptance.md`。
+
+2026-07-15 的正式验收结果为 **PASS**：35 个产物在两次独立重建中均无差异；两类 benchmark 各运行两次且结果稳定，并与当前提交 baseline 一致；531 个持久化字符串中没有发现真实歌曲身份、绝对路径、URL、服务凭证或未知音频引用。Phase 0 的五项退出条件全部满足，可以进入 Phase 1。
 
 ## Phase 0 任务划分列表
 
@@ -406,7 +412,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 - [x] 6.3 扩展切分、弱起、频带攻击、fill、3/4 和 6/8 fixture
 - [x] 6.4b 完善全部 fixture 的自动 benchmark 与基线报告
 - [x] 6.5 建立谱面对齐 baseline
-- [ ] 6.6 执行 Phase 0 阶段验收
+- [x] 6.6 执行 Phase 0 阶段验收
 
 ---
 

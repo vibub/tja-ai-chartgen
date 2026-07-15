@@ -44,11 +44,21 @@ pytest
 pytest tests/test_audio_pipeline_integration.py -v
 ```
 
-测试音频位于 `tests/fixtures/audio/`，完全由项目代码合成，不包含第三方录音或版权音乐。可以使用以下命令确定性重建：
+测试音频位于 `tests/fixtures/audio/`，完全由项目代码合成，不包含第三方录音或版权音乐。当前 17 个 fixture 及其事件 ground truth 可以使用以下命令确定性重建：
 
 ```bash
 python tests/fixtures/audio/rebuild_click_fixtures.py
 ```
+
+Phase 0 提供音频分析、谱面对齐和阶段验收三组离线命令：
+
+```bash
+python tools/benchmark_audio_fixtures.py
+python tools/benchmark_chart_alignment.py
+python tools/verify_phase_zero.py
+```
+
+`benchmark_audio_fixtures.py` 生成 `audio-alignment-v2` JSON/Markdown 基线，覆盖 onset、beat、downbeat、拍号、频带攻击、弱起、fill 和 ResolutionPlan；`benchmark_chart_alignment.py` 为 Easy 3、Normal 5、Hard 7、Oni 10 共 68 张规则谱面生成 `chart-alignment-v1` 基线。`verify_phase_zero.py` 会在临时目录中执行两次 fixture 重建，在禁用 socket 网络连接时重复运行两类 benchmark，并检查 baseline 的覆盖范围、稳定性和持久化隐私。详细指标和验收边界见 [谱面质量评测](docs/quality-evaluation.md) 与 [人声、乐器与节拍分析升级路线图](docs/instrument-analysis-roadmap.md)。
 
 ## 使用方式
 

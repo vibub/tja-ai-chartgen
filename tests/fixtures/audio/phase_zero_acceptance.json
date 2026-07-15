@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "acceptance_version": "phase-zero-acceptance-v1",
+  "phase": "Phase 0",
+  "passed": true,
+  "fixture_count": 17,
+  "checks": {
+    "fixture_ground_truth_rebuild": {
+      "passed": true,
+      "fixture_count": 17,
+      "audio_files": [
+        "band_attacks_120.wav",
+        "click_4_4.wav",
+        "click_4_4_leadin.wav",
+        "dense_180.wav",
+        "fill_burst_120.wav",
+        "harmonic_sparse_120.wav",
+        "meter_3_4_120.wav",
+        "meter_6_8_120.wav",
+        "mixed_120.wav",
+        "pickup_120.wav",
+        "sparse_120.wav",
+        "straight_120.wav",
+        "structure_build_up_120.wav",
+        "syncopated_120.wav",
+        "tempo_ambiguity_120.wav",
+        "transient_noise_intro_120.wav",
+        "triplet_120.wav"
+      ],
+      "artifact_count": 35,
+      "rebuild_count": 2,
+      "mismatches": []
+    },
+    "offline_benchmark_execution": {
+      "passed": true,
+      "socket_connections_blocked": true,
+      "audio_use_beatnet": false,
+      "chart_use_beatnet": false
+    },
+    "audio_analysis_baseline": {
+      "passed": true,
+      "schema_version": 2,
+      "benchmark_version": "audio-alignment-v2",
+      "fixture_count": 17,
+      "chart_count": null,
+      "run_count": 2,
+      "runs_stable": true,
+      "matches_committed_baseline": true
+    },
+    "chart_alignment_baseline": {
+      "passed": true,
+      "schema_version": 1,
+      "benchmark_version": "chart-alignment-v1",
+      "fixture_count": 17,
+      "chart_count": 68,
+      "run_count": 2,
+      "runs_stable": true,
+      "matches_committed_baseline": true
+    },
+    "repository_privacy": {
+      "passed": true,
+      "scanned_string_count": 531,
+      "forbidden_key_count": 0,
+      "forbidden_string_count": 0,
+      "unknown_audio_reference_count": 0,
+      "forbidden_keys": [],
+      "forbidden_strings": [],
+      "unknown_audio_references": []
+    }
+  }
+}

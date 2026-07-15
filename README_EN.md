@@ -29,6 +29,37 @@ tja-ai-chartgen prepare-instrument-models
 
 The preparation command downloads pinned Demucs `htdemucs` and AST AudioSet weights to `models/instrument-v1/` under the project root by default. `models/` is ignored by Git. Generation never downloads models implicitly and never writes separated stems into the output directory.
 
+## Development Verification
+
+Run the full test suite and code checks:
+
+```bash
+ruff check .
+pytest
+```
+
+The real-audio integration test converts a project-generated click track with ffmpeg, runs librosa analysis and bar-feature construction, and exports a TJA draft:
+
+```bash
+pytest tests/test_audio_pipeline_integration.py -v
+```
+
+The 17 audio fixtures and their event ground truth are generated entirely by project code and contain no third-party recordings or copyrighted music:
+
+```bash
+python tests/fixtures/audio/rebuild_click_fixtures.py
+```
+
+Phase 0 provides three offline commands for audio analysis, chart alignment, and final acceptance:
+
+```bash
+python tools/benchmark_audio_fixtures.py
+python tools/benchmark_chart_alignment.py
+python tools/verify_phase_zero.py
+```
+
+`benchmark_audio_fixtures.py` writes the `audio-alignment-v2` JSON/Markdown baseline for onset, beat, downbeat, meter, band attacks, pickup, fill, and ResolutionPlan behavior. `benchmark_chart_alignment.py` writes the `chart-alignment-v1` baseline for 68 Easy 3, Normal 5, Hard 7, and Oni 10 rule charts. `verify_phase_zero.py` rebuilds the fixtures twice in temporary directories, reruns both benchmarks with socket connections disabled, and checks baseline coverage, stability, and persisted-data privacy. See [Chart Quality Evaluation](docs/quality-evaluation.md) and the [Vocal, Instrument, and Beat Analysis Roadmap](docs/instrument-analysis-roadmap.md) for metric definitions and acceptance boundaries.
+
 ## Usage
 
 Check the installed CLI version:
