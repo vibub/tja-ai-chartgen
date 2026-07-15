@@ -8,6 +8,7 @@ from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.density import build_density_hints
 from tja_ai_chartgen.features.resolution import build_resolution_plan
+from tja_ai_chartgen.features.salience import build_burst_salience, is_reliable_burst
 from tja_ai_chartgen.features.structure import analyze_song_structure
 from tja_ai_chartgen.generation import (
     build_analysis_notices,
@@ -187,6 +188,32 @@ def test_real_audio_pipeline(
     assert f"WAVE:{ogg_path.name}" in written_text
     assert "#START" in written_text
     assert "#END" in written_text
+
+
+def test_fill_burst_fixture_detects_only_expected_late_bar_bursts(tmp_path: Path):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required for the fill burst integration test")
+
+    fixture_path = FIXTURE_DIR / "fill_burst_120.wav"
+    ogg_path = convert_to_ogg(fixture_path, tmp_path / "fill_burst_120.ogg")
+    raw = analyze_audio(ogg_path)
+    structured_bars = analyze_song_structure(build_bar_features(raw)).bars
+
+    burst_bars = build_burst_salience(structured_bars)
+    reliable_indexes = [
+        position
+        for position, salience in enumerate(burst_bars)
+        if is_reliable_burst(salience)
+    ]
+
+    assert reliable_indexes == [3, 7]
+    for position in reliable_indexes:
+        salience = burst_bars[position]
+        assert salience.burst_start_grid is not None
+        assert salience.burst_end_grid is not None
+        assert salience.burst_start_grid >= structured_bars[position].grids_per_bar // 2
+        assert salience.burst_end_grid > salience.burst_start_grid
+        assert "burst:onset-density" in salience.burst_reasons
 
 
 def test_missing_instrument_models_fall_back_without_blocking_real_audio_generation(

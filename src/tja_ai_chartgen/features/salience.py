@@ -26,6 +26,10 @@ COLOR_ATTACK_GATE = 0.35
 PERCUSSIVE_COLOR_GATE = 0.35
 COLOR_PREFERENCE_CAP = 0.75
 MAX_STRONG_COLOR_RUN = 3
+BURST_SALIENCE_THRESHOLD = 0.40
+BURST_CONFIDENCE_THRESHOLD = 0.50
+BURST_FLUX_GATE = 0.35
+BURST_GRID_EVIDENCE_GATE = 0.25
 SALIENCE_FALLBACK_EDGE_SILENCE = "edge-silence"
 SALIENCE_FALLBACK_SILENT_BAR = "silent-bar"
 SALIENCE_FALLBACK_NO_EVIDENCE = "no-rhythmic-evidence"
@@ -372,6 +376,153 @@ def build_bar_don_ka_salience(
     """计算单小节咚咔倾向；最终配色仍由 style 和生成器决定。"""
     base = accent_salience or build_bar_accent_salience(bar)
     return _balance_don_ka_runs([_apply_bar_don_ka_salience(bar, base)])[0]
+
+
+def build_burst_salience(bars: list[BarFeature]) -> list[BarRhythmicSalience]:
+    """在完整 hit/accent/don-ka salience 上检测小节后半段纯节奏 burst。"""
+    bases = build_don_ka_salience(bars)
+    return [
+        build_bar_burst_salience(
+            bar,
+            salience=base,
+            previous_bar=bars[position - 1] if position > 0 else None,
+            next_bar=bars[position + 1] if position + 1 < len(bars) else None,
+        )
+        for position, (bar, base) in enumerate(zip(bars, bases, strict=True))
+    ]
+
+
+def build_bar_burst_salience(
+    bar: BarFeature,
+    *,
+    salience: BarRhythmicSalience | None = None,
+    previous_bar: BarFeature | None = None,
+    next_bar: BarFeature | None = None,
+) -> BarRhythmicSalience:
+    """检测后半小节 onset/flux 爆发；结构上下文只能增强已有节奏 burst。"""
+    base = salience or build_bar_don_ka_salience(bar)
+    if not base.points or bar.grids_per_bar <= 1 or is_silent_bar(bar):
+        return base
+
+    evidence = build_canonical_rhythmic_evidence(bar)
+    midpoint = bar.grids_per_bar // 2
+    first_half = evidence[:midpoint]
+    second_half = evidence[midpoint:]
+    first_onsets = sum(item.onset for item in first_half)
+    second_onsets = sum(item.onset for item in second_half)
+    first_rate = first_onsets / max(1, len(first_half))
+    second_rate = second_onsets / max(1, len(second_half))
+    onset_support = min(1.0, second_onsets / 4)
+    density_cue = _unit_value(
+        max(0.0, second_rate - first_rate) / max(second_rate, 1 / bar.grids_per_bar)
+        * onset_support
+    )
+
+    first_flux = max((item.spectral_flux for item in first_half), default=0.0)
+    second_flux = max((item.spectral_flux for item in second_half), default=0.0)
+    flux_cue = _unit_value(
+        max(0.0, second_flux - max(first_flux, BURST_FLUX_GATE * 0.5))
+        / max(1.0 - BURST_FLUX_GATE * 0.5, 0.01)
+    )
+    burst_grids = [
+        item.grid
+        for item in second_half
+        if item.onset or item.spectral_flux >= BURST_GRID_EVIDENCE_GATE
+    ]
+    burst_support = min(1.0, len(burst_grids) / 4)
+    rhythmic_core = second_onsets >= 3 and density_cue >= 0.20
+    rhythmic_core = rhythmic_core or (
+        len(burst_grids) >= 2
+        and second_flux >= BURST_FLUX_GATE
+        and flux_cue >= 0.20
+    )
+    if not rhythmic_core:
+        return base
+
+    percussive_cue = (
+        _unit_value(
+            max(0.0, bar.percussive_ratio - previous_bar.percussive_ratio) / 0.6
+        )
+        if previous_bar is not None
+        else 0.0
+    )
+    previous_onset_rate = (
+        len(previous_bar.onset_grids) / max(1, previous_bar.grids_per_bar)
+        if previous_bar is not None
+        else first_rate
+    )
+    contrast_cue = _unit_value(
+        max(0.0, second_rate - max(first_rate, previous_onset_rate))
+        / max(second_rate, 1 / bar.grids_per_bar)
+    )
+
+    reasons: list[str] = []
+    if density_cue > 0:
+        reasons.append("burst:onset-density")
+    if flux_cue > 0:
+        reasons.append("burst:spectral-flux")
+    if percussive_cue > 0:
+        reasons.append("burst:percussive-rise")
+    if contrast_cue > 0:
+        reasons.append("burst:stable-contrast")
+
+    context_bonus = 0.0
+    if bar.phrase_position in {"phrase_end", "song_end"}:
+        context_bonus += 0.06 + bar.boundary_confidence * 0.04
+        reasons.append("burst:phrase-end")
+    if bar.transition_role == "cadence":
+        context_bonus += 0.05 + bar.transition_confidence * 0.03
+        reasons.append("burst:cadence")
+    if next_bar is not None:
+        if (
+            bar.section_id is not None
+            and next_bar.section_id is not None
+            and bar.section_id != next_bar.section_id
+        ):
+            context_bonus += 0.05
+            reasons.append("burst:next-section")
+        if next_bar.transition_role in {"peak", "drop"}:
+            context_bonus += 0.05
+            reasons.append("burst:next-highlight")
+
+    if not burst_grids:
+        return base
+
+    channel_count = sum(
+        cue > 0.0 for cue in (density_cue, flux_cue, percussive_cue, contrast_cue)
+    )
+    confidence = _unit_value(
+        burst_support * 0.40
+        + max(density_cue, flux_cue) * 0.35
+        + min(1.0, channel_count / 3) * 0.25
+    )
+    score = _unit_value(
+        density_cue * 0.40
+        + flux_cue * 0.25
+        + percussive_cue * 0.15
+        + contrast_cue * 0.10
+        + burst_support * 0.10
+        + context_bonus
+    )
+    return base.model_copy(
+        update={
+            "burst_score": round(score, 6),
+            "burst_confidence": round(confidence, 6),
+            "burst_start_grid": min(burst_grids),
+            "burst_end_grid": max(burst_grids),
+            "burst_reasons": reasons,
+        }
+    )
+
+
+def is_reliable_burst(salience: BarRhythmicSalience) -> bool:
+    """统一判断 burst 是否足以供后续 fill/特殊音符阶段消费。"""
+    return (
+        salience.burst_score >= BURST_SALIENCE_THRESHOLD
+        and salience.burst_confidence >= BURST_CONFIDENCE_THRESHOLD
+        and salience.burst_start_grid is not None
+        and salience.burst_end_grid is not None
+    )
 
 
 def _apply_bar_don_ka_salience(

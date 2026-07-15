@@ -5,11 +5,14 @@ from tja_ai_chartgen.features.salience import (
     RHYTHMIC_SALIENCE_FEATURE_VERSION,
     build_accent_salience,
     build_bar_accent_salience,
+    build_bar_burst_salience,
+    build_bar_don_ka_salience,
     build_bar_hit_salience,
+    build_burst_salience,
     build_canonical_rhythmic_evidence,
     build_don_ka_salience,
-    build_bar_don_ka_salience,
     build_hit_salience,
+    is_reliable_burst,
 )
 from tja_ai_chartgen.tja.model import (
     BarFeature,
@@ -60,14 +63,34 @@ def test_rhythmic_salience_models_serialize_compact_sparse_points():
     }
 
 
+def test_rhythmic_salience_serializes_bar_burst_contract():
+    salience = BarRhythmicSalience(
+        burst_score=0.72,
+        burst_confidence=0.81,
+        burst_start_grid=24,
+        burst_end_grid=42,
+        burst_reasons=["burst:onset-density", "burst:spectral-flux"],
+    )
+
+    assert salience.model_dump(exclude_defaults=True) == {
+        "burst_score": 0.72,
+        "burst_confidence": 0.81,
+        "burst_start_grid": 24,
+        "burst_end_grid": 42,
+        "burst_reasons": ["burst:onset-density", "burst:spectral-flux"],
+    }
+
+
 def test_rhythmic_salience_defaults_are_independent():
     first = BarRhythmicSalience()
     second = BarRhythmicSalience()
 
     first.points.append(RhythmicSaliencePoint(grid=0))
     first.points[0].reasons.append("beat")
+    first.burst_reasons.append("burst:onset-density")
 
     assert second.points == []
+    assert second.burst_reasons == []
 
 
 def test_rhythmic_salience_rejects_invalid_ranges():
@@ -79,6 +102,10 @@ def test_rhythmic_salience_rejects_invalid_ranges():
         BarRhythmicSalience(active_ratio=-0.01)
     with pytest.raises(ValidationError):
         BarRhythmicSalience(onset_evidence_count=-1)
+    with pytest.raises(ValidationError):
+        BarRhythmicSalience(burst_score=1.01)
+    with pytest.raises(ValidationError):
+        BarRhythmicSalience(burst_start_grid=-1)
 
 
 def test_canonical_rhythmic_evidence_aligns_all_base_channels():
@@ -687,6 +714,184 @@ def test_don_ka_salience_breaks_long_strong_monochrome_runs():
     ]
     assert "color:balance" in salience.points[3].reasons
     assert all(point.don_preference <= 0.75 for point in salience.points)
+
+
+def test_burst_salience_detects_late_onset_flux_and_percussive_rise():
+    bars = [
+        BarFeature(
+            index=0,
+            start_time=0.0,
+            end_time=2.0,
+            energy=0.5,
+            grids_per_bar=48,
+            onset_grids=[0, 12, 24, 36],
+            percussive_ratio=0.2,
+            section_id="section-a",
+        ),
+        BarFeature(
+            index=1,
+            start_time=2.0,
+            end_time=4.0,
+            energy=0.8,
+            grids_per_bar=48,
+            onset_grids=[0, 12, 24, 30, 36, 42],
+            percussive_ratio=0.8,
+            phrase_position="phrase_end",
+            boundary_confidence=0.9,
+            transition_role="cadence",
+            transition_confidence=0.9,
+            section_id="section-a",
+            spectral_grid_features=[
+                SpectralGridFeature(grid=30, spectral_flux=0.9),
+                SpectralGridFeature(grid=42, spectral_flux=0.8),
+            ],
+        ),
+        BarFeature(
+            index=2,
+            start_time=4.0,
+            end_time=6.0,
+            energy=0.9,
+            grids_per_bar=48,
+            onset_grids=[0, 12, 24, 36],
+            transition_role="peak",
+            section_id="section-b",
+        ),
+    ]
+
+    burst = build_burst_salience(bars)[1]
+
+    assert is_reliable_burst(burst)
+    assert burst.burst_score > 0.8
+    assert burst.burst_confidence > 0.8
+    assert burst.burst_start_grid == 24
+    assert burst.burst_end_grid == 42
+    assert burst.burst_reasons == [
+        "burst:onset-density",
+        "burst:spectral-flux",
+        "burst:percussive-rise",
+        "burst:stable-contrast",
+        "burst:phrase-end",
+        "burst:cadence",
+        "burst:next-section",
+        "burst:next-highlight",
+    ]
+
+
+def test_burst_salience_accepts_flux_burst_when_onset_detector_is_sparse():
+    previous = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.4,
+        grids_per_bar=48,
+        onset_grids=[0, 12, 24, 36],
+        percussive_ratio=0.2,
+    )
+    burst_bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.6,
+        grids_per_bar=48,
+        onset_grids=[0],
+        percussive_ratio=0.8,
+        spectral_grid_features=[
+            SpectralGridFeature(grid=30, spectral_flux=0.9),
+            SpectralGridFeature(grid=42, spectral_flux=0.8),
+        ],
+    )
+
+    burst = build_bar_burst_salience(burst_bar, previous_bar=previous)
+
+    assert is_reliable_burst(burst)
+    assert burst.burst_start_grid == 30
+    assert burst.burst_end_grid == 42
+    assert "burst:spectral-flux" in burst.burst_reasons
+    assert "burst:percussive-rise" in burst.burst_reasons
+    assert "burst:onset-density" not in burst.burst_reasons
+
+
+def test_burst_salience_detects_strong_onset_density_without_structure_context():
+    previous = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.5,
+        grids_per_bar=48,
+        onset_grids=[0, 12, 24, 36],
+    )
+    burst_bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.7,
+        grids_per_bar=48,
+        onset_grids=[0, 12, 24, 28, 32, 36, 40, 44],
+    )
+
+    burst = build_bar_burst_salience(burst_bar, previous_bar=previous)
+
+    assert is_reliable_burst(burst)
+    assert burst.burst_start_grid == 24
+    assert burst.burst_end_grid == 44
+    assert "burst:onset-density" in burst.burst_reasons
+    assert "burst:stable-contrast" in burst.burst_reasons
+    assert not any("phrase" in reason for reason in burst.burst_reasons)
+
+
+@pytest.mark.parametrize("time_signature", ["3/4", "6/8"])
+def test_burst_salience_supports_compact_meter_canonical_grids(
+    time_signature: str,
+):
+    previous = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=1.5,
+        energy=0.5,
+        time_signature=time_signature,
+        grids_per_bar=36,
+        onset_grids=[0, 9, 18, 27],
+    )
+    burst_bar = BarFeature(
+        index=1,
+        start_time=1.5,
+        end_time=3.0,
+        energy=0.8,
+        time_signature=time_signature,
+        grids_per_bar=36,
+        onset_grids=[0, 9, 18, 21, 24, 27, 30, 33],
+    )
+
+    burst = build_bar_burst_salience(burst_bar, previous_bar=previous)
+
+    assert is_reliable_burst(burst)
+    assert burst.burst_start_grid == 18
+    assert burst.burst_end_grid == 33
+
+
+def test_burst_salience_does_not_promote_phrase_end_without_rhythmic_burst():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.6,
+        grids_per_bar=48,
+        onset_grids=[0, 12, 24, 36],
+        phrase_position="phrase_end",
+        boundary_confidence=1.0,
+        transition_role="cadence",
+        transition_confidence=1.0,
+        percussive_ratio=0.9,
+    )
+
+    burst = build_bar_burst_salience(bar)
+
+    assert not is_reliable_burst(burst)
+    assert burst.burst_score == 0.0
+    assert burst.burst_confidence == 0.0
+    assert burst.burst_start_grid is None
+    assert burst.burst_end_grid is None
+    assert burst.burst_reasons == []
 
 
 def test_salience_absolute_gates_reject_weak_noise():

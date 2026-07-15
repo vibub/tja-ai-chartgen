@@ -46,6 +46,11 @@ class BarRhythmicSalience(BaseModel):
     onset_evidence_count: int = Field(default=0, ge=0)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     fallback_reason: str | None = None
+    burst_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    burst_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    burst_start_grid: int | None = Field(default=None, ge=0)
+    burst_end_grid: int | None = Field(default=None, ge=0)
+    burst_reasons: list[str] = Field(default_factory=list)
 
 
 class InstrumentBarFeature(BaseModel):
