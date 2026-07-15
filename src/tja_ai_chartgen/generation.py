@@ -162,7 +162,7 @@ def build_song_analysis(
         for phrase in structure.phrases
     ]
     return SongAnalysis(
-        analysis_schema_version=6,
+        analysis_schema_version=7,
         beatnet_analysis_status=raw.beatnet_analysis_status,
         beatnet_analysis_reason=raw.beatnet_analysis_reason,
         spectral_feature_version=raw.spectral.feature_version,
@@ -188,6 +188,7 @@ def build_song_analysis(
         offset=raw.offset,
         time_signature=raw.time_signature,
         analyzer=raw.analyzer,
+        tempo_candidates=raw.tempo_candidates,
         tempo_analysis=raw.tempo_analysis,
         bars=bars,
     )

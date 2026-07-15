@@ -145,7 +145,7 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.time_signature == "3/4"
     assert len(analysis.bars) == 2
     assert all(bar.time_signature == "3/4" for bar in analysis.bars)
-    assert analysis.analysis_schema_version == 6
+    assert analysis.analysis_schema_version == 7
     assert analysis.spectral_feature_version == "spectral-v1"
     assert analysis.spectral_analysis_status == "complete"
     assert analysis.instrument_feature_version is None
@@ -227,7 +227,7 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
             },
         )
     ]
-    assert analysis.analysis_schema_version == 6
+    assert analysis.analysis_schema_version == 7
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "complete"
     assert analysis.instrument_demucs_model == "htdemucs"

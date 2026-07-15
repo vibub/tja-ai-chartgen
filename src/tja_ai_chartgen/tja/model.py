@@ -138,6 +138,21 @@ class BarFeature(BaseModel):
         return self.activity_grids
 
 
+class TempoMeterCandidate(BaseModel):
+    source: str
+    bpm: float = Field(gt=0.0)
+    offset: float
+    time_signature: str
+    beat_times: list[float] = Field(default_factory=list)
+    downbeat_times: list[float] = Field(default_factory=list)
+    onset_support: float = Field(default=0.0, ge=0.0, le=1.0)
+    time_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    interval_stability: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    accepted: bool = False
+    reason: str | None = None
+
+
 class TempoAnalysisDecision(BaseModel):
     fallback_source: str
     selected_source: str
@@ -230,6 +245,7 @@ class SongAnalysis(BaseModel):
     offset: float
     time_signature: str = "4/4"
     analyzer: str = "unknown"
+    tempo_candidates: list[TempoMeterCandidate] = Field(default_factory=list)
     tempo_analysis: TempoAnalysisDecision | None = None
     bars: list[BarFeature]
 

@@ -18,7 +18,13 @@ from tja_ai_chartgen.audio.analyze import (
     normalize_bpm,
 )
 from tja_ai_chartgen.features.bars import build_bar_features
-from tja_ai_chartgen.tja.model import ChartBar, ChartMetadata, TempoAnalysisDecision, TjaChart
+from tja_ai_chartgen.tja.model import (
+    ChartBar,
+    ChartMetadata,
+    TempoAnalysisDecision,
+    TempoMeterCandidate,
+    TjaChart,
+)
 from tja_ai_chartgen.tja.writer import render_tja
 
 
@@ -460,6 +466,14 @@ def test_analyze_audio_keeps_librosa_baseline_when_onset_grid_is_rejected(tmp_pa
     assert raw.tempo_analysis.accepted is False
     assert raw.tempo_analysis.reason == "insufficient_onsets"
     assert raw.tempo_analysis.selected_source == "librosa"
+    assert [candidate.source for candidate in raw.tempo_candidates] == [
+        "librosa",
+        "librosa+onset-grid",
+    ]
+    assert raw.tempo_candidates[0].accepted is True
+    assert raw.tempo_candidates[0].reason == "baseline"
+    assert raw.tempo_candidates[1].accepted is False
+    assert raw.tempo_candidates[1].reason == "insufficient_onsets"
 
 
 def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
@@ -493,6 +507,16 @@ def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
     assert updated.tempo_analysis.accepted is False
     assert updated.tempo_analysis.reason == "insufficient_onsets"
     assert updated.tempo_analysis.selected_source == "beatnet"
+    assert [candidate.source for candidate in updated.tempo_candidates] == [
+        "beatnet",
+        "beatnet+onset-grid",
+    ]
+    assert updated.tempo_candidates[0].accepted is True
+    assert updated.tempo_candidates[0].time_signature == "3/4"
+    assert updated.tempo_candidates[0].downbeat_times == [0.25, 1.75]
+    assert updated.tempo_candidates[0].interval_stability == 1.0
+    assert updated.tempo_candidates[1].accepted is False
+    assert updated.tempo_candidates[1].reason == "insufficient_onsets"
 
 
 def test_merge_beatnet_output_uses_four_four_grid_when_two_beat_meter_is_unsupported():
@@ -653,6 +677,24 @@ def test_merge_beatnet_output_refines_timing_with_onset_grid():
         duration=8.0,
         offset=0.1,
         sample_rate=1_000,
+        tempo_candidates=[
+            TempoMeterCandidate(
+                source="librosa",
+                bpm=120,
+                offset=0.1,
+                time_signature="4/4",
+                accepted=True,
+                reason="baseline",
+            ),
+            TempoMeterCandidate(
+                source="librosa+onset-grid",
+                bpm=120,
+                offset=0.2,
+                time_signature="4/4",
+                accepted=True,
+                reason="accepted",
+            ),
+        ],
     )
 
     updated = merge_beatnet_output(
@@ -673,6 +715,17 @@ def test_merge_beatnet_output_refines_timing_with_onset_grid():
     assert updated.tempo_analysis is not None
     assert updated.tempo_analysis.accepted is True
     assert updated.tempo_analysis.selected_source == "onset-grid"
+    assert [candidate.source for candidate in updated.tempo_candidates] == [
+        "librosa",
+        "librosa+onset-grid",
+        "beatnet",
+        "beatnet+onset-grid",
+    ]
+    assert updated.tempo_candidates[3].accepted is True
+    assert updated.tempo_candidates[3].bpm == 120
+    assert updated.tempo_candidates[3].offset == 0.2
+    assert updated.tempo_candidates[3].onset_support >= 0.95
+    assert updated.tempo_candidates[3].confidence >= 0.95
 
 
 def test_merge_beatnet_output_keeps_raw_when_output_is_empty():

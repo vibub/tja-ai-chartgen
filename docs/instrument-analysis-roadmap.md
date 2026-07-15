@@ -781,7 +781,7 @@ AI payload 建议发送：
 
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
-| 10.1 建立统一节拍候选 | 部分完成 | 已有 librosa、onset-grid 和 BeatNet 结果，尚未统一建模。 | 现有 audio analyze 测试可复用。 |
+| 10.1 建立统一节拍候选 | 已完成 | 新增 `TempoMeterCandidate`，统一持久化 librosa、librosa+onset-grid、BeatNet、BeatNet+onset-grid 的 BPM、offset、拍号、beat/downbeat、onset 支持、覆盖率、间隔稳定性、置信度与局部接受状态；旧 `TempoAnalysisDecision` 继续兼容。 | `pytest tests/test_audio_analyze.py tests/test_generation.py tests/test_cli_generate.py -q`；`pytest tests/test_audio_pipeline_integration.py -q`。 |
 | 10.2 定义候选证据 | 部分完成 | onset-grid 已记录支持率、onset 数、覆盖率和次佳候选；尚未覆盖 BeatNet meter/downbeat。 | 现有置信度拒绝测试可复用。 |
 | 10.3 实现候选仲裁 | 部分完成 | 已有低置信 onset-grid 拒绝和 BeatNet 异常 fallback；尚未实现候选间择优。 | 尚未执行综合 benchmark。 |
 | 10.4 支持部分采用 | 未开始 | 尚未实现保留 BPM 但采用 BeatNet meter/downbeat。 | 尚未执行。 |
@@ -814,6 +814,8 @@ class TempoMeterCandidate(BaseModel):
 - librosa + onset-grid；
 - BeatNet；
 - BeatNet + onset-grid。
+
+当前实现将候选保存在 `AudioAnalysisRaw.tempo_candidates`，并通过 `SongAnalysis.tempo_candidates` 写入 `analysis_schema_version=7` 的 `analysis.json`。`accepted` 只表示候选通过自身现有合法性或 onset-grid 门控，不代表已经完成候选间仲裁；最终择优和部分采用仍由 10.3、10.4 完成。旧分析缺少该字段时按空列表兼容读取。
 
 ## 10.2 证据
 
@@ -870,7 +872,7 @@ class TempoMeterCandidate(BaseModel):
 
 ## Phase 4 任务划分列表
 
-- [ ] 10.1 将 librosa、onset-grid 和 BeatNet 统一为节拍候选模型
+- [x] 10.1 将 librosa、onset-grid 和 BeatNet 统一为节拍候选模型
 - [ ] 10.2 定义 onset、downbeat、meter、稳定性和速度别名证据
 - [ ] 10.3 实现候选评分、拒绝、择优和 ambiguity 决策
 - [ ] 10.4 支持保留原 BPM、仅采用 BeatNet meter/downbeat

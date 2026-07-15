@@ -72,6 +72,13 @@ def test_real_audio_pipeline(
     assert raw.tempo_analysis.normalized_support >= 0.85
     assert raw.tempo_analysis.onset_count >= 12
     assert raw.tempo_analysis.time_coverage >= 0.75
+    assert [candidate.source for candidate in raw.tempo_candidates] == [
+        "librosa",
+        "librosa+onset-grid",
+    ]
+    assert raw.tempo_candidates[0].accepted is True
+    assert raw.tempo_candidates[1].accepted is True
+    assert raw.tempo_candidates[1].onset_support >= 0.85
     assert raw.spectral.status == "complete"
     assert raw.spectral.feature_version == "spectral-v1"
     assert raw.spectral.frame_count == len(raw.spectral.spectral_flux_envelope)
@@ -98,6 +105,7 @@ def test_real_audio_pipeline(
         bpm=raw.bpm,
         offset=raw.offset,
         analyzer=raw.analyzer,
+        tempo_candidates=raw.tempo_candidates,
         tempo_analysis=raw.tempo_analysis,
         bars=features,
     )
@@ -110,11 +118,16 @@ def test_real_audio_pipeline(
     assert serialized_analysis["instrument_analysis_status"] == "unavailable"
     assert serialized_analysis["tempo_analysis"]["accepted"] is True
     assert serialized_analysis["tempo_analysis"]["fallback_source"] == "librosa"
+    assert [candidate["source"] for candidate in serialized_analysis["tempo_candidates"]] == [
+        "librosa",
+        "librosa+onset-grid",
+    ]
     assert serialized_analysis["bars"][0]["rms_dbfs"] is not None
     assert serialized_analysis["bars"][0]["sustained_activity_ratio"] is not None
 
     legacy_analysis = serialized_analysis.copy()
     legacy_analysis.pop("analyzer")
+    legacy_analysis.pop("tempo_candidates")
     legacy_analysis.pop("tempo_analysis")
     legacy_analysis.pop("spectral_feature_version")
     legacy_analysis.pop("spectral_analysis_status")
@@ -146,6 +159,7 @@ def test_real_audio_pipeline(
         bar.pop("instrument")
     restored_legacy = SongAnalysis.model_validate(legacy_analysis)
     assert restored_legacy.analyzer == "unknown"
+    assert restored_legacy.tempo_candidates == []
     assert restored_legacy.tempo_analysis is None
     assert restored_legacy.spectral_feature_version is None
     assert restored_legacy.spectral_analysis_status == "unavailable"
@@ -254,7 +268,7 @@ def test_missing_instrument_models_fall_back_without_blocking_real_audio_generat
         instrument_model_dir=tmp_path / "missing-models",
     )
 
-    assert analysis.analysis_schema_version == 6
+    assert analysis.analysis_schema_version == 7
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "fallback"
     assert analysis.instrument_analysis_reason == "missing-model:manifest"

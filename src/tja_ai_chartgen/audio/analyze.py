@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw
 from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw, extract_spectral_features
-from tja_ai_chartgen.tja.model import TempoAnalysisDecision
+from tja_ai_chartgen.tja.model import TempoAnalysisDecision, TempoMeterCandidate
 
 
 MIN_DETECTED_BPM = 89.0
@@ -79,6 +79,7 @@ class AudioAnalysisRaw(BaseModel):
     beat_numbers: list[int] = Field(default_factory=list)
     time_signature: str = "4/4"
     analyzer: str = "librosa"
+    tempo_candidates: list[TempoMeterCandidate] = Field(default_factory=list)
     tempo_analysis: TempoAnalysisDecision | None = None
     beatnet_analysis_status: str = "unavailable"
     beatnet_analysis_reason: str | None = None
@@ -525,6 +526,73 @@ def _regular_beat_times(offset: float, bpm: float, duration: float) -> list[floa
     return beat_times
 
 
+def _candidate_time_coverage(beat_times: list[float], duration: float) -> float:
+    if len(beat_times) < 2 or duration <= 0:
+        return 0.0
+    span = max(0.0, max(beat_times) - min(beat_times))
+    return round(min(1.0, span / duration), 6)
+
+
+def _candidate_interval_stability(beat_times: list[float]) -> float:
+    intervals = np.asarray(
+        [
+            later - earlier
+            for earlier, later in zip(beat_times, beat_times[1:], strict=False)
+            if later > earlier
+        ],
+        dtype=float,
+    )
+    if intervals.size < 2:
+        return 0.0
+    median_interval = float(np.median(intervals))
+    if median_interval <= 0:
+        return 0.0
+    relative_deviation = float(np.mean(np.abs(intervals - median_interval))) / median_interval
+    return round(max(0.0, min(1.0, 1.0 - relative_deviation)), 6)
+
+
+def _tempo_candidate(
+    *,
+    source: str,
+    bpm: float,
+    offset: float,
+    time_signature: str,
+    beat_times: list[float],
+    downbeat_times: list[float] | None = None,
+    onset_support: float = 0.0,
+    time_coverage: float,
+    confidence: float = 0.0,
+    accepted: bool,
+    reason: str | None,
+) -> TempoMeterCandidate:
+    normalized_beats = [round(float(value), 6) for value in beat_times]
+    normalized_downbeats = [round(float(value), 6) for value in downbeat_times or []]
+    return TempoMeterCandidate(
+        source=source,
+        bpm=round(float(bpm), 3),
+        offset=round(float(offset), 6),
+        time_signature=time_signature,
+        beat_times=normalized_beats,
+        downbeat_times=normalized_downbeats,
+        onset_support=round(max(0.0, min(1.0, float(onset_support))), 6),
+        time_coverage=round(max(0.0, min(1.0, float(time_coverage))), 6),
+        interval_stability=_candidate_interval_stability(normalized_beats),
+        confidence=round(max(0.0, min(1.0, float(confidence))), 6),
+        accepted=accepted,
+        reason=reason,
+    )
+
+
+def _replace_tempo_candidates(
+    existing: list[TempoMeterCandidate],
+    additions: list[TempoMeterCandidate],
+) -> list[TempoMeterCandidate]:
+    replacement_sources = {candidate.source for candidate in additions}
+    return [
+        candidate for candidate in existing if candidate.source not in replacement_sources
+    ] + additions
+
+
 def _regular_beat_numbers(beat_count: int, time_signature: str) -> list[int]:
     beats_per_bar = 3 if time_signature in {"3/4", "6/8"} else 4
     return [(index % beats_per_bar) + 1 for index in range(beat_count)]
@@ -535,6 +603,26 @@ def _nearest_regular_time(reference: float, phase: float, interval: float) -> fl
         return reference
     step = round((reference - phase) / interval)
     return round(phase + (step * interval), 6)
+
+
+def _project_downbeats_to_regular_grid(
+    downbeat_references: list[float],
+    beat_times: list[float],
+    offset: float,
+    bpm: float,
+) -> list[float]:
+    if bpm <= 0 or not beat_times:
+        return []
+    beat_interval = 60.0 / bpm
+    beat_time_set = set(beat_times)
+    return sorted(
+        {
+            projected
+            for reference in downbeat_references
+            if (projected := _nearest_regular_time(reference, offset, beat_interval))
+            in beat_time_set
+        }
+    )
 
 
 def _weights_from_raw_onsets(raw: AudioAnalysisRaw) -> list[float]:
@@ -622,9 +710,35 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         fallback_bpm=tempo_value,
         duration=duration,
     )
+    librosa_candidate = _tempo_candidate(
+        source="librosa",
+        bpm=bpm,
+        offset=offset,
+        time_signature="4/4",
+        beat_times=[float(value) for value in beat_times],
+        time_coverage=_candidate_time_coverage(
+            [float(value) for value in beat_times],
+            duration,
+        ),
+        accepted=True,
+        reason="baseline",
+    )
+    onset_grid_beat_times = _regular_beat_times(estimate.offset, estimate.bpm, duration)
+    onset_grid_candidate = _tempo_candidate(
+        source="librosa+onset-grid",
+        bpm=estimate.bpm,
+        offset=estimate.offset,
+        time_signature="4/4",
+        beat_times=onset_grid_beat_times,
+        onset_support=estimate.normalized_support,
+        time_coverage=estimate.time_coverage,
+        confidence=estimate.normalized_support,
+        accepted=estimate.accepted,
+        reason=estimate.reason,
+    )
     if estimate.accepted:
         bpm, offset = estimate.bpm, estimate.offset
-        beat_times = _regular_beat_times(offset, bpm, duration)
+        beat_times = onset_grid_beat_times
         analyzer = "librosa+onset-grid"
 
     raw = AudioAnalysisRaw(
@@ -639,6 +753,7 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         sample_rate=int(sr),
         hop_length=hop_length,
         analyzer=analyzer,
+        tempo_candidates=[librosa_candidate, onset_grid_candidate],
         tempo_analysis=estimate.to_decision("librosa"),
         spectral=spectral,
     )
@@ -800,6 +915,28 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         pulse_bpm = 60.0 / float(np.mean(positive_intervals))
         bpm = _beatnet_quarter_note_bpm(pulse_bpm, time_signature)
 
+    expected_meter_size = {"3/4": 3, "4/4": 4, "6/8": 6}[time_signature]
+    beatnet_downbeat_references = (
+        [
+            time
+            for time, number in zip(beatnet_beat_times, beatnet_beat_numbers, strict=True)
+            if number == 1
+        ]
+        if max(beatnet_beat_numbers) == expected_meter_size
+        else []
+    )
+    beatnet_candidate = _tempo_candidate(
+        source="beatnet",
+        bpm=bpm,
+        offset=offset,
+        time_signature=time_signature,
+        beat_times=beatnet_beat_times,
+        downbeat_times=beatnet_downbeat_references,
+        time_coverage=_candidate_time_coverage(beatnet_beat_times, raw.duration),
+        accepted=True,
+        reason="valid-output",
+    )
+
     estimate = _estimate_tempo_and_offset_from_onsets(
         raw.onset_times,
         _weights_from_raw_onsets(raw),
@@ -809,6 +946,26 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         duration=raw.duration,
     )
     estimate = _keep_compound_meter_quarter_note_tempo(estimate, bpm, time_signature)
+    refined_beat_times = _regular_beat_times(estimate.offset, estimate.bpm, raw.duration)
+    refined_downbeat_times = _project_downbeats_to_regular_grid(
+        beatnet_downbeat_references,
+        refined_beat_times,
+        estimate.offset,
+        estimate.bpm,
+    )
+    refined_candidate = _tempo_candidate(
+        source="beatnet+onset-grid",
+        bpm=estimate.bpm,
+        offset=estimate.offset,
+        time_signature=time_signature,
+        beat_times=refined_beat_times,
+        downbeat_times=refined_downbeat_times,
+        onset_support=estimate.normalized_support,
+        time_coverage=estimate.time_coverage,
+        confidence=estimate.normalized_support,
+        accepted=estimate.accepted,
+        reason=estimate.reason,
+    )
     if estimate.accepted:
         bpm, offset = estimate.bpm, estimate.offset
 
@@ -817,21 +974,18 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         return raw
 
     beat_numbers = _regular_beat_numbers(len(beat_times), time_signature)
-    beat_interval = 60.0 / bpm
-    expected_meter_size = {"3/4": 3, "4/4": 4, "6/8": 6}[time_signature]
-    beatnet_downbeats = (
-        [
-            _nearest_regular_time(time, offset, beat_interval)
-            for time, number in zip(beatnet_beat_times, beatnet_beat_numbers, strict=True)
+    downbeat_times = _project_downbeats_to_regular_grid(
+        beatnet_downbeat_references,
+        beat_times,
+        offset,
+        bpm,
+    )
+    if not downbeat_times:
+        downbeat_times = [
+            time
+            for time, number in zip(beat_times, beat_numbers, strict=True)
             if number == 1
         ]
-        if max(beatnet_beat_numbers) == expected_meter_size
-        else []
-    )
-    beat_time_set = set(beat_times)
-    downbeat_times = sorted({time for time in beatnet_downbeats if time in beat_time_set})
-    if not downbeat_times:
-        downbeat_times = [time for time, number in zip(beat_times, beat_numbers, strict=True) if number == 1]
 
     return raw.model_copy(
         update={
@@ -842,6 +996,10 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
             "time_signature": time_signature,
             "bpm": bpm,
             "analyzer": "beatnet+librosa+onset-grid" if estimate.accepted else "beatnet",
+            "tempo_candidates": _replace_tempo_candidates(
+                raw.tempo_candidates,
+                [beatnet_candidate, refined_candidate],
+            ),
             "tempo_analysis": estimate.to_decision("beatnet"),
         }
     )
