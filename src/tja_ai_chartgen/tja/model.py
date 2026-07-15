@@ -29,6 +29,25 @@ class InstrumentGridFeature(BaseModel):
     accompaniment_onset: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
+class RhythmicSaliencePoint(BaseModel):
+    grid: int = Field(ge=0)
+    hit: float = Field(default=0.0, ge=0.0, le=1.0)
+    accent: float = Field(default=0.0, ge=0.0, le=1.0)
+    don_preference: float = Field(default=0.0, ge=0.0, le=1.0)
+    ka_preference: float = Field(default=0.0, ge=0.0, le=1.0)
+    sustained_activity: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    reasons: list[str] = Field(default_factory=list)
+
+
+class BarRhythmicSalience(BaseModel):
+    points: list[RhythmicSaliencePoint] = Field(default_factory=list)
+    active_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    onset_evidence_count: int = Field(default=0, ge=0)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    fallback_reason: str | None = None
+
+
 class InstrumentBarFeature(BaseModel):
     vocal_activity: float = Field(default=0.0, ge=0.0, le=1.0)
     vocal_presence_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
