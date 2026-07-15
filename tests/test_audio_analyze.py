@@ -12,11 +12,14 @@ from tja_ai_chartgen.audio.analyze import (
     _regular_beat_times,
     analyze_audio,
     apply_analysis_overrides,
+    enrich_tempo_candidates_with_instruments,
     enhance_with_beatnet,
     estimate_time_signature,
     merge_beatnet_output,
     normalize_bpm,
 )
+from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw, StemActivityFrame
+from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw
 from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.tja.model import (
     ChartBar,
@@ -517,6 +520,92 @@ def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
     assert updated.tempo_candidates[0].interval_stability == 1.0
     assert updated.tempo_candidates[1].accepted is False
     assert updated.tempo_candidates[1].reason == "insufficient_onsets"
+
+
+def test_merge_beatnet_output_records_meter_downbeat_and_alias_evidence():
+    onset_strengths = [0.0] * 40
+    low_onsets = [0.0] * 40
+    percussive_ratios = [0.0] * 40
+    for index in (2, 18, 32):
+        onset_strengths[index] = 1.0
+        low_onsets[index] = 0.8
+        percussive_ratios[index] = 0.7
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=[0.25 + index * 0.5 for index in range(7)],
+        onset_times=[0.25 + index * 0.5 for index in range(7)],
+        onset_strengths=onset_strengths,
+        duration=3.25,
+        offset=0.25,
+        sample_rate=100,
+        hop_length=10,
+        spectral=SpectralAnalysisRaw(
+            feature_version="spectral-v1",
+            status="complete",
+            frame_count=40,
+            low_onset_envelope=low_onsets,
+            percussive_ratio_envelope=percussive_ratios,
+        ),
+    )
+
+    updated = merge_beatnet_output(
+        raw,
+        [
+            [0.25, 1],
+            [0.75, 2],
+            [1.25, 3],
+            [1.75, 1],
+            [2.25, 2],
+            [2.75, 3],
+            [3.25, 1],
+        ],
+    )
+
+    candidate = updated.tempo_candidates[0]
+    evidence = candidate.evidence
+    assert candidate.onset_support == 1.0
+    assert evidence.onset_count == 7
+    assert evidence.interval_count == 6
+    assert evidence.mean_interval_seconds == 0.5
+    assert evidence.interval_coefficient_of_variation == 0.0
+    assert evidence.beat_number_completeness == 1.0
+    assert evidence.meter_stability == 1.0
+    assert evidence.meter_length_score == 1.0
+    assert evidence.downbeat_onset_support == 1.0
+    assert evidence.downbeat_low_frequency_support == 0.8
+    assert evidence.downbeat_percussive_support == 0.7
+    assert evidence.downbeat_support == pytest.approx(0.87)
+    assert evidence.double_tempo_support == 1.0
+    assert evidence.tempo_alias == "double"
+
+
+def test_enrich_tempo_candidates_uses_drum_and_bass_only_as_auxiliary_evidence():
+    candidate = TempoMeterCandidate(
+        source="beatnet",
+        bpm=120,
+        offset=0.25,
+        time_signature="3/4",
+        beat_times=[0.25, 0.75, 1.25, 1.75],
+        downbeat_times=[0.25, 1.75, 10.0],
+        accepted=True,
+    )
+    instruments = InstrumentAnalysisRaw(
+        feature_version="instrument-v1",
+        status="complete",
+        stem_frames=[
+            StemActivityFrame(time=0.2, drum_onset=0.9, bass_onset=0.6),
+            StemActivityFrame(time=0.3, drum_onset=0.7, bass_onset=0.5),
+            StemActivityFrame(time=1.7, drum_onset=0.8, bass_onset=0.4),
+            StemActivityFrame(time=1.8, drum_onset=0.6, bass_onset=0.3),
+        ],
+    )
+
+    enriched = enrich_tempo_candidates_with_instruments([candidate], instruments)
+
+    assert enriched[0].evidence.auxiliary_drum_onset_support == 0.85
+    assert enriched[0].evidence.auxiliary_bass_onset_support == 0.55
+    assert enriched[0].confidence == candidate.confidence
+    assert enriched[0].accepted == candidate.accepted
 
 
 def test_merge_beatnet_output_uses_four_four_grid_when_two_beat_meter_is_unsupported():

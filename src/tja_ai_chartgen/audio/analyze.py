@@ -13,7 +13,11 @@ from pydantic import BaseModel, Field
 
 from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw
 from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw, extract_spectral_features
-from tja_ai_chartgen.tja.model import TempoAnalysisDecision, TempoMeterCandidate
+from tja_ai_chartgen.tja.model import (
+    TempoAnalysisDecision,
+    TempoMeterCandidate,
+    TempoMeterEvidence,
+)
 
 
 MIN_DETECTED_BPM = 89.0
@@ -551,6 +555,263 @@ def _candidate_interval_stability(beat_times: list[float]) -> float:
     return round(max(0.0, min(1.0, 1.0 - relative_deviation)), 6)
 
 
+def _candidate_onset_support(
+    onset_times: list[float],
+    weights: list[float],
+    *,
+    bpm: float,
+    offset: float,
+) -> float:
+    if bpm <= 0 or len(onset_times) != len(weights):
+        return 0.0
+    try:
+        onset_array = np.asarray(onset_times, dtype=float)
+        weight_array = np.asarray(weights, dtype=float)
+    except (TypeError, ValueError):
+        return 0.0
+    if onset_array.ndim != 1 or weight_array.ndim != 1 or onset_array.shape != weight_array.shape:
+        return 0.0
+    valid = np.isfinite(onset_array) & np.isfinite(weight_array) & (weight_array > 0)
+    onset_array = onset_array[valid]
+    weight_array = weight_array[valid]
+    total_weight = float(np.sum(weight_array))
+    if onset_array.size == 0 or total_weight <= 0:
+        return 0.0
+
+    interval = 60.0 / bpm
+    phases = np.mod(onset_array - offset, interval)
+    beat_distances = np.minimum(phases, interval - phases)
+    offbeat_distances = np.abs(phases - (interval * 0.5))
+    beat_support = np.clip(1.0 - (beat_distances / PHASE_WINDOW_SECONDS), 0.0, 1.0)
+    offbeat_support = 0.5 * np.clip(
+        1.0 - (offbeat_distances / PHASE_WINDOW_SECONDS),
+        0.0,
+        1.0,
+    )
+    support = np.maximum(beat_support, offbeat_support)
+    return round(float(np.sum(weight_array * support) / total_weight), 6)
+
+
+def _candidate_interval_statistics(
+    beat_times: list[float],
+) -> tuple[int, float | None, float | None]:
+    intervals = np.asarray(
+        [
+            later - earlier
+            for earlier, later in zip(beat_times, beat_times[1:], strict=False)
+            if later > earlier
+        ],
+        dtype=float,
+    )
+    if intervals.size == 0:
+        return 0, None, None
+    mean_interval = float(np.mean(intervals))
+    if mean_interval <= 0:
+        return int(intervals.size), None, None
+    coefficient = float(np.std(intervals) / mean_interval)
+    return int(intervals.size), round(mean_interval, 6), round(coefficient, 6)
+
+
+def _beat_number_completeness(beat_numbers: list[int], time_signature: str) -> float:
+    expected_size = {"3/4": 3, "4/4": 4, "6/8": 6}[time_signature]
+    if len(beat_numbers) < 2:
+        return 0.0
+    valid_ratio = sum(1 <= number <= expected_size for number in beat_numbers) / len(beat_numbers)
+    matching_transitions = sum(
+        later == (earlier % expected_size) + 1
+        for earlier, later in zip(beat_numbers, beat_numbers[1:], strict=False)
+        if 1 <= earlier <= expected_size
+    )
+    transition_ratio = matching_transitions / (len(beat_numbers) - 1)
+    return round(valid_ratio * transition_ratio, 6)
+
+
+def _meter_stability(beat_numbers: list[int], time_signature: str) -> float:
+    expected_size = {"3/4": 3, "4/4": 4, "6/8": 6}[time_signature]
+    downbeat_indexes = [index for index, number in enumerate(beat_numbers) if number == 1]
+    if len(downbeat_indexes) < 2:
+        return 0.0
+    cycles = [
+        beat_numbers[start:end]
+        for start, end in zip(downbeat_indexes, downbeat_indexes[1:], strict=False)
+    ]
+    expected_cycle = list(range(1, expected_size + 1))
+    return round(sum(cycle == expected_cycle for cycle in cycles) / len(cycles), 6)
+
+
+def _meter_length_score(
+    downbeat_times: list[float],
+    *,
+    bpm: float,
+    time_signature: str,
+) -> float:
+    if bpm <= 0 or len(downbeat_times) < 2:
+        return 0.0
+    quarter_notes = 3 if time_signature in {"3/4", "6/8"} else 4
+    expected_length = quarter_notes * 60.0 / bpm
+    intervals = [
+        later - earlier
+        for earlier, later in zip(downbeat_times, downbeat_times[1:], strict=False)
+        if later > earlier
+    ]
+    if not intervals or expected_length <= 0:
+        return 0.0
+    scores = [max(0.0, 1.0 - abs(value - expected_length) / expected_length) for value in intervals]
+    return round(float(np.mean(scores)), 6)
+
+
+def _envelope_support_at_times(
+    times: list[float],
+    envelope: list[float],
+    *,
+    sample_rate: int | None,
+    hop_length: int,
+    normalize: bool = False,
+) -> float:
+    if not times or not envelope or not sample_rate or sample_rate <= 0 or hop_length <= 0:
+        return 0.0
+    values = np.asarray(envelope, dtype=float)
+    if values.ndim != 1 or values.size == 0:
+        return 0.0
+    values = np.clip(np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0), 0.0, None)
+    if normalize:
+        maximum = float(np.max(values, initial=0.0))
+        if maximum <= 0:
+            return 0.0
+        values = values / maximum
+    supports: list[float] = []
+    for time in times:
+        center = round(time * sample_rate / hop_length)
+        start = max(0, center - 1)
+        end = min(values.size, center + 2)
+        if start < end:
+            supports.append(float(np.max(values[start:end], initial=0.0)))
+    return round(float(np.mean(supports)), 6) if supports else 0.0
+
+
+def _tempo_alias(
+    onset_support: float,
+    half_tempo_support: float,
+    double_tempo_support: float,
+) -> str:
+    if onset_support < 0.5:
+        return "none"
+    threshold = onset_support * MAX_ONSET_GRID_RUNNER_UP_RATIO
+    half_supported = half_tempo_support >= threshold
+    double_supported = double_tempo_support >= threshold
+    if half_supported and double_supported:
+        return "both"
+    if half_supported:
+        return "half"
+    if double_supported:
+        return "double"
+    return "none"
+
+
+def _tempo_meter_evidence(
+    *,
+    bpm: float,
+    offset: float,
+    time_signature: str,
+    beat_times: list[float],
+    downbeat_times: list[float],
+    onset_times: list[float],
+    onset_weights: list[float],
+    onset_strengths: list[float],
+    spectral: SpectralAnalysisRaw,
+    sample_rate: int | None,
+    hop_length: int,
+    beat_numbers: list[int] | None = None,
+    onset_support: float | None = None,
+    runner_up_bpm: float | None = None,
+    runner_up_support: float | None = None,
+) -> tuple[float, TempoMeterEvidence]:
+    measured_onset_support = (
+        _candidate_onset_support(onset_times, onset_weights, bpm=bpm, offset=offset)
+        if onset_support is None
+        else round(max(0.0, min(1.0, onset_support)), 6)
+    )
+    half_tempo_support = _candidate_onset_support(
+        onset_times,
+        onset_weights,
+        bpm=bpm / 2.0,
+        offset=offset,
+    )
+    double_tempo_support = _candidate_onset_support(
+        onset_times,
+        onset_weights,
+        bpm=bpm * 2.0,
+        offset=offset,
+    )
+    interval_count, mean_interval, interval_coefficient = _candidate_interval_statistics(
+        beat_times
+    )
+    downbeat_onset_support = _envelope_support_at_times(
+        downbeat_times,
+        onset_strengths,
+        sample_rate=sample_rate,
+        hop_length=hop_length,
+        normalize=True,
+    )
+    downbeat_low_support = _envelope_support_at_times(
+        downbeat_times,
+        spectral.low_onset_envelope,
+        sample_rate=sample_rate,
+        hop_length=hop_length,
+    )
+    downbeat_percussive_support = _envelope_support_at_times(
+        downbeat_times,
+        spectral.percussive_ratio_envelope,
+        sample_rate=sample_rate,
+        hop_length=hop_length,
+    )
+    downbeat_support = round(
+        (downbeat_onset_support * 0.45)
+        + (downbeat_low_support * 0.35)
+        + (downbeat_percussive_support * 0.2),
+        6,
+    )
+    comparison_support = (
+        runner_up_support
+        if runner_up_support is not None
+        else max(half_tempo_support, double_tempo_support)
+    )
+    evidence = TempoMeterEvidence(
+        onset_count=sum(
+            np.isfinite(time) and np.isfinite(weight) and time >= 0 and weight > 0
+            for time, weight in zip(onset_times, onset_weights, strict=False)
+        ),
+        runner_up_bpm=runner_up_bpm,
+        runner_up_support=runner_up_support,
+        onset_support_margin=round(measured_onset_support - comparison_support, 6),
+        interval_count=interval_count,
+        mean_interval_seconds=mean_interval,
+        interval_coefficient_of_variation=interval_coefficient,
+        beat_number_completeness=_beat_number_completeness(
+            beat_numbers or [],
+            time_signature,
+        ),
+        meter_stability=_meter_stability(beat_numbers or [], time_signature),
+        downbeat_onset_support=downbeat_onset_support,
+        downbeat_low_frequency_support=downbeat_low_support,
+        downbeat_percussive_support=downbeat_percussive_support,
+        downbeat_support=downbeat_support,
+        meter_length_score=_meter_length_score(
+            downbeat_times,
+            bpm=bpm,
+            time_signature=time_signature,
+        ),
+        half_tempo_support=half_tempo_support,
+        double_tempo_support=double_tempo_support,
+        tempo_alias=_tempo_alias(
+            measured_onset_support,
+            half_tempo_support,
+            double_tempo_support,
+        ),
+    )
+    return measured_onset_support, evidence
+
+
 def _tempo_candidate(
     *,
     source: str,
@@ -561,6 +822,7 @@ def _tempo_candidate(
     downbeat_times: list[float] | None = None,
     onset_support: float = 0.0,
     time_coverage: float,
+    evidence: TempoMeterEvidence | None = None,
     confidence: float = 0.0,
     accepted: bool,
     reason: str | None,
@@ -577,6 +839,7 @@ def _tempo_candidate(
         onset_support=round(max(0.0, min(1.0, float(onset_support))), 6),
         time_coverage=round(max(0.0, min(1.0, float(time_coverage))), 6),
         interval_stability=_candidate_interval_stability(normalized_beats),
+        evidence=evidence or TempoMeterEvidence(),
         confidence=round(max(0.0, min(1.0, float(confidence))), 6),
         accepted=accepted,
         reason=reason,
@@ -623,6 +886,70 @@ def _project_downbeats_to_regular_grid(
             in beat_time_set
         }
     )
+
+
+def _instrument_support_at_times(
+    times: list[float],
+    instruments: InstrumentAnalysisRaw,
+    field: str,
+) -> float | None:
+    if not times or not instruments.stem_frames:
+        return None
+    frame_times = np.asarray([frame.time for frame in instruments.stem_frames], dtype=float)
+    frame_values = np.asarray(
+        [max(0.0, min(1.0, float(getattr(frame, field)))) for frame in instruments.stem_frames],
+        dtype=float,
+    )
+    frame_intervals = np.diff(frame_times)
+    positive_intervals = frame_intervals[frame_intervals > 0]
+    tolerance = (
+        max(0.05, float(np.median(positive_intervals)) * 1.5)
+        if positive_intervals.size
+        else 0.1
+    )
+    supports: list[float] = []
+    for time in times:
+        insertion = int(np.searchsorted(frame_times, time, side="left"))
+        nearest_candidates = [
+            index
+            for index in (insertion - 1, insertion)
+            if 0 <= index < frame_times.size
+        ]
+        if not nearest_candidates:
+            continue
+        nearest = min(nearest_candidates, key=lambda index: abs(frame_times[index] - time))
+        if abs(frame_times[nearest] - time) > tolerance:
+            continue
+        start = max(0, nearest - 1)
+        end = min(frame_values.size, nearest + 2)
+        supports.append(float(np.max(frame_values[start:end], initial=0.0)))
+    return round(float(np.mean(supports)), 6) if supports else None
+
+
+def enrich_tempo_candidates_with_instruments(
+    candidates: list[TempoMeterCandidate],
+    instruments: InstrumentAnalysisRaw,
+) -> list[TempoMeterCandidate]:
+    if instruments.status not in {"complete", "partial"} or not instruments.stem_frames:
+        return candidates
+    enriched: list[TempoMeterCandidate] = []
+    for candidate in candidates:
+        evidence = candidate.evidence.model_copy(
+            update={
+                "auxiliary_drum_onset_support": _instrument_support_at_times(
+                    candidate.downbeat_times,
+                    instruments,
+                    "drum_onset",
+                ),
+                "auxiliary_bass_onset_support": _instrument_support_at_times(
+                    candidate.downbeat_times,
+                    instruments,
+                    "bass_onset",
+                ),
+            }
+        )
+        enriched.append(candidate.model_copy(update={"evidence": evidence}))
+    return enriched
 
 
 def _weights_from_raw_onsets(raw: AudioAnalysisRaw) -> list[float]:
@@ -702,13 +1029,32 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
     bpm = normalize_bpm(tempo_value)
     offset = float(beat_times[0]) if beat_times else 0.0
     analyzer = "librosa"
+    onset_weights = _onset_weights(
+        onset_times_list,
+        onset_env,
+        sample_rate=int(sr),
+        hop_length=hop_length,
+    )
     estimate = _estimate_tempo_and_offset_from_onsets(
         onset_times_list,
-        _onset_weights(onset_times_list, onset_env, sample_rate=int(sr), hop_length=hop_length),
+        onset_weights,
         y,
         sample_rate=int(sr),
         fallback_bpm=tempo_value,
         duration=duration,
+    )
+    librosa_onset_support, librosa_evidence = _tempo_meter_evidence(
+        bpm=bpm,
+        offset=offset,
+        time_signature="4/4",
+        beat_times=[float(value) for value in beat_times],
+        downbeat_times=[],
+        onset_times=onset_times_list,
+        onset_weights=onset_weights,
+        onset_strengths=[float(value) for value in onset_env.tolist()],
+        spectral=spectral,
+        sample_rate=int(sr),
+        hop_length=hop_length,
     )
     librosa_candidate = _tempo_candidate(
         source="librosa",
@@ -716,22 +1062,41 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         offset=offset,
         time_signature="4/4",
         beat_times=[float(value) for value in beat_times],
+        onset_support=librosa_onset_support,
         time_coverage=_candidate_time_coverage(
             [float(value) for value in beat_times],
             duration,
         ),
+        evidence=librosa_evidence,
         accepted=True,
         reason="baseline",
     )
     onset_grid_beat_times = _regular_beat_times(estimate.offset, estimate.bpm, duration)
+    onset_grid_support, onset_grid_evidence = _tempo_meter_evidence(
+        bpm=estimate.bpm,
+        offset=estimate.offset,
+        time_signature="4/4",
+        beat_times=onset_grid_beat_times,
+        downbeat_times=[],
+        onset_times=onset_times_list,
+        onset_weights=onset_weights,
+        onset_strengths=[float(value) for value in onset_env.tolist()],
+        spectral=spectral,
+        sample_rate=int(sr),
+        hop_length=hop_length,
+        onset_support=estimate.normalized_support,
+        runner_up_bpm=estimate.runner_up_bpm,
+        runner_up_support=estimate.runner_up_support,
+    )
     onset_grid_candidate = _tempo_candidate(
         source="librosa+onset-grid",
         bpm=estimate.bpm,
         offset=estimate.offset,
         time_signature="4/4",
         beat_times=onset_grid_beat_times,
-        onset_support=estimate.normalized_support,
+        onset_support=onset_grid_support,
         time_coverage=estimate.time_coverage,
+        evidence=onset_grid_evidence,
         confidence=estimate.normalized_support,
         accepted=estimate.accepted,
         reason=estimate.reason,
@@ -925,6 +1290,21 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         if max(beatnet_beat_numbers) == expected_meter_size
         else []
     )
+    onset_weights = _weights_from_raw_onsets(raw)
+    beatnet_onset_support, beatnet_evidence = _tempo_meter_evidence(
+        bpm=bpm,
+        offset=offset,
+        time_signature=time_signature,
+        beat_times=beatnet_beat_times,
+        downbeat_times=beatnet_downbeat_references,
+        onset_times=raw.onset_times,
+        onset_weights=onset_weights,
+        onset_strengths=raw.onset_strengths,
+        spectral=raw.spectral,
+        sample_rate=raw.sample_rate,
+        hop_length=raw.hop_length,
+        beat_numbers=beatnet_beat_numbers,
+    )
     beatnet_candidate = _tempo_candidate(
         source="beatnet",
         bpm=bpm,
@@ -932,14 +1312,16 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         time_signature=time_signature,
         beat_times=beatnet_beat_times,
         downbeat_times=beatnet_downbeat_references,
+        onset_support=beatnet_onset_support,
         time_coverage=_candidate_time_coverage(beatnet_beat_times, raw.duration),
+        evidence=beatnet_evidence,
         accepted=True,
         reason="valid-output",
     )
 
     estimate = _estimate_tempo_and_offset_from_onsets(
         raw.onset_times,
-        _weights_from_raw_onsets(raw),
+        onset_weights,
         np.asarray([], dtype=float),
         sample_rate=raw.sample_rate or 0,
         fallback_bpm=bpm,
@@ -953,6 +1335,23 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         estimate.offset,
         estimate.bpm,
     )
+    refined_onset_support, refined_evidence = _tempo_meter_evidence(
+        bpm=estimate.bpm,
+        offset=estimate.offset,
+        time_signature=time_signature,
+        beat_times=refined_beat_times,
+        downbeat_times=refined_downbeat_times,
+        onset_times=raw.onset_times,
+        onset_weights=onset_weights,
+        onset_strengths=raw.onset_strengths,
+        spectral=raw.spectral,
+        sample_rate=raw.sample_rate,
+        hop_length=raw.hop_length,
+        beat_numbers=beatnet_beat_numbers,
+        onset_support=estimate.normalized_support,
+        runner_up_bpm=estimate.runner_up_bpm,
+        runner_up_support=estimate.runner_up_support,
+    )
     refined_candidate = _tempo_candidate(
         source="beatnet+onset-grid",
         bpm=estimate.bpm,
@@ -960,8 +1359,9 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         time_signature=time_signature,
         beat_times=refined_beat_times,
         downbeat_times=refined_downbeat_times,
-        onset_support=estimate.normalized_support,
+        onset_support=refined_onset_support,
         time_coverage=estimate.time_coverage,
+        evidence=refined_evidence,
         confidence=estimate.normalized_support,
         accepted=estimate.accepted,
         reason=estimate.reason,

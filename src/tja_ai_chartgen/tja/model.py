@@ -138,6 +138,28 @@ class BarFeature(BaseModel):
         return self.activity_grids
 
 
+class TempoMeterEvidence(BaseModel):
+    onset_count: int = Field(default=0, ge=0)
+    runner_up_bpm: float | None = Field(default=None, gt=0.0)
+    runner_up_support: float | None = Field(default=None, ge=0.0, le=1.0)
+    onset_support_margin: float = Field(default=0.0, ge=-1.0, le=1.0)
+    interval_count: int = Field(default=0, ge=0)
+    mean_interval_seconds: float | None = Field(default=None, gt=0.0)
+    interval_coefficient_of_variation: float | None = Field(default=None, ge=0.0)
+    beat_number_completeness: float = Field(default=0.0, ge=0.0, le=1.0)
+    meter_stability: float = Field(default=0.0, ge=0.0, le=1.0)
+    downbeat_onset_support: float = Field(default=0.0, ge=0.0, le=1.0)
+    downbeat_low_frequency_support: float = Field(default=0.0, ge=0.0, le=1.0)
+    downbeat_percussive_support: float = Field(default=0.0, ge=0.0, le=1.0)
+    downbeat_support: float = Field(default=0.0, ge=0.0, le=1.0)
+    meter_length_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    half_tempo_support: float = Field(default=0.0, ge=0.0, le=1.0)
+    double_tempo_support: float = Field(default=0.0, ge=0.0, le=1.0)
+    tempo_alias: str = "none"
+    auxiliary_drum_onset_support: float | None = Field(default=None, ge=0.0, le=1.0)
+    auxiliary_bass_onset_support: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class TempoMeterCandidate(BaseModel):
     source: str
     bpm: float = Field(gt=0.0)
@@ -148,6 +170,7 @@ class TempoMeterCandidate(BaseModel):
     onset_support: float = Field(default=0.0, ge=0.0, le=1.0)
     time_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
     interval_stability: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence: TempoMeterEvidence = Field(default_factory=TempoMeterEvidence)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     accepted: bool = False
     reason: str | None = None

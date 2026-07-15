@@ -21,6 +21,7 @@ from tja_ai_chartgen.tja.model import (
     ResolutionPlan,
     SongAnalysis,
     TempoAnalysisDecision,
+    TempoMeterCandidate,
 )
 
 
@@ -145,7 +146,7 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.time_signature == "3/4"
     assert len(analysis.bars) == 2
     assert all(bar.time_signature == "3/4" for bar in analysis.bars)
-    assert analysis.analysis_schema_version == 7
+    assert analysis.analysis_schema_version == 8
     assert analysis.spectral_feature_version == "spectral-v1"
     assert analysis.spectral_analysis_status == "complete"
     assert analysis.instrument_feature_version is None
@@ -177,6 +178,17 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
         onset_times=[],
         onset_strengths=[],
         sample_rate=22_050,
+        tempo_candidates=[
+            TempoMeterCandidate(
+                source="beatnet",
+                bpm=120,
+                offset=0.0,
+                time_signature="4/4",
+                beat_times=[0.0, 0.5, 1.0, 1.5],
+                downbeat_times=[0.0],
+                accepted=True,
+            )
+        ],
     )
     instrument_result = InstrumentAnalysisRaw(
         feature_version="instrument-v1",
@@ -184,7 +196,14 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
         demucs_model="htdemucs",
         classifier_model="ast",
         device="cpu",
-        stem_frames=[StemActivityFrame(time=0.5, vocals=0.7)],
+        stem_frames=[
+            StemActivityFrame(
+                time=0.0,
+                vocals=0.7,
+                drum_onset=0.8,
+                bass_onset=0.6,
+            )
+        ],
     )
     calls = []
     stages = []
@@ -227,12 +246,14 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
             },
         )
     ]
-    assert analysis.analysis_schema_version == 7
+    assert analysis.analysis_schema_version == 8
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "complete"
     assert analysis.instrument_demucs_model == "htdemucs"
     assert analysis.instrument_classifier_model == "ast"
     assert analysis.instrument_analysis_device == "cpu"
+    assert analysis.tempo_candidates[0].evidence.auxiliary_drum_onset_support == 0.8
+    assert analysis.tempo_candidates[0].evidence.auxiliary_bass_onset_support == 0.6
 
 
 def test_build_analysis_notices_reports_optional_analysis_fallbacks():

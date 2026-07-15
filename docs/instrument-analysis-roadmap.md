@@ -782,7 +782,7 @@ AI payload 建议发送：
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
 | 10.1 建立统一节拍候选 | 已完成 | 新增 `TempoMeterCandidate`，统一持久化 librosa、librosa+onset-grid、BeatNet、BeatNet+onset-grid 的 BPM、offset、拍号、beat/downbeat、onset 支持、覆盖率、间隔稳定性、置信度与局部接受状态；旧 `TempoAnalysisDecision` 继续兼容。 | `pytest tests/test_audio_analyze.py tests/test_generation.py tests/test_cli_generate.py -q`；`pytest tests/test_audio_pipeline_integration.py -q`。 |
-| 10.2 定义候选证据 | 部分完成 | onset-grid 已记录支持率、onset 数、覆盖率和次佳候选；尚未覆盖 BeatNet meter/downbeat。 | 现有置信度拒绝测试可复用。 |
+| 10.2 定义候选证据 | 已完成 | 新增 `TempoMeterEvidence`，统一记录有效 onset、次佳差距、interval 统计、BeatNet beat number 完整性、meter 稳定性、downbeat onset/低频/percussive 支持、小节长度合理性、半速/倍速解释力，以及可选 drum/bass 辅助支持；证据暂不改变最终仲裁。 | `pytest tests/test_audio_analyze.py tests/test_audio_pipeline_integration.py tests/test_generation.py tests/test_cli_generate.py -q`。 |
 | 10.3 实现候选仲裁 | 部分完成 | 已有低置信 onset-grid 拒绝和 BeatNet 异常 fallback；尚未实现候选间择优。 | 尚未执行综合 benchmark。 |
 | 10.4 支持部分采用 | 未开始 | 尚未实现保留 BPM 但采用 BeatNet meter/downbeat。 | 尚未执行。 |
 | 10.5 变速诊断 | 未开始 | 尚未记录固定 BPM 拟合误差和疑似 rubato。 | 尚未执行。 |
@@ -815,7 +815,7 @@ class TempoMeterCandidate(BaseModel):
 - BeatNet；
 - BeatNet + onset-grid。
 
-当前实现将候选保存在 `AudioAnalysisRaw.tempo_candidates`，并通过 `SongAnalysis.tempo_candidates` 写入 `analysis_schema_version=7` 的 `analysis.json`。`accepted` 只表示候选通过自身现有合法性或 onset-grid 门控，不代表已经完成候选间仲裁；最终择优和部分采用仍由 10.3、10.4 完成。旧分析缺少该字段时按空列表兼容读取。
+当前实现将候选保存在 `AudioAnalysisRaw.tempo_candidates`，并通过 `SongAnalysis.tempo_candidates` 写入当前 `analysis_schema_version=8` 的 `analysis.json`。`accepted` 只表示候选通过自身现有合法性或 onset-grid 门控，不代表已经完成候选间仲裁；最终择优和部分采用仍由 10.3、10.4 完成。旧分析缺少该字段时按空列表兼容读取。
 
 ## 10.2 证据
 
@@ -830,6 +830,8 @@ class TempoMeterCandidate(BaseModel):
 - 3/4、4/4、6/8 小节长度合理性；
 - 半速/倍速候选的解释力；
 - 可选 drum/bass onset 只能作为附加证据。
+
+当前 `TempoMeterEvidence` 具体持久化有效 onset 数、次佳 BPM/支持率、支持率差距、interval 数量/均值/变异系数、BeatNet beat number 完整性、完整 meter cycle 比例、downbeat 附近 onset/低频/percussive 及其组合支持、按四分音符 BPM 计算的小节长度合理性、half/double tempo 支持与 `none|half|double|both` 速度别名标签。启用 `instrument-v1` 时额外记录 downbeat 附近 drum/bass onset 均值，但不修改候选 confidence、accepted 或最终选择。`analysis_schema_version=8` 持久化这组 report-only 证据；10.3 才定义统一评分与拒绝阈值。
 
 ## 10.3 决策规则
 
@@ -873,7 +875,7 @@ class TempoMeterCandidate(BaseModel):
 ## Phase 4 任务划分列表
 
 - [x] 10.1 将 librosa、onset-grid 和 BeatNet 统一为节拍候选模型
-- [ ] 10.2 定义 onset、downbeat、meter、稳定性和速度别名证据
+- [x] 10.2 定义 onset、downbeat、meter、稳定性和速度别名证据
 - [ ] 10.3 实现候选评分、拒绝、择优和 ambiguity 决策
 - [ ] 10.4 支持保留原 BPM、仅采用 BeatNet meter/downbeat
 - [ ] 10.5 增加固定 BPM 拟合误差与疑似变速诊断

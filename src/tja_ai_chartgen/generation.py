@@ -6,7 +6,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
-from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw, analyze_audio, apply_analysis_overrides
+from tja_ai_chartgen.audio.analyze import (
+    AudioAnalysisRaw,
+    analyze_audio,
+    apply_analysis_overrides,
+    enrich_tempo_candidates_with_instruments,
+)
 from tja_ai_chartgen.audio.convert import convert_to_ogg
 from tja_ai_chartgen.audio.instrument_models import resolve_instrument_model_dir
 from tja_ai_chartgen.audio.instruments import AST_WINDOW_SECONDS, analyze_instruments
@@ -145,7 +150,15 @@ def build_song_analysis(
             analysis_hop_length=raw.hop_length,
             max_duration=_instrument_analysis_duration(raw, max_bars),
         )
-        raw = raw.model_copy(update={"instruments": instrument_result})
+        raw = raw.model_copy(
+            update={
+                "instruments": instrument_result,
+                "tempo_candidates": enrich_tempo_candidates_with_instruments(
+                    raw.tempo_candidates,
+                    instrument_result,
+                ),
+            }
+        )
 
     _report_stage(stage_callback, "features")
     structure = analyze_song_structure(build_bar_features(raw, max_bars=max_bars))
@@ -162,7 +175,7 @@ def build_song_analysis(
         for phrase in structure.phrases
     ]
     return SongAnalysis(
-        analysis_schema_version=7,
+        analysis_schema_version=8,
         beatnet_analysis_status=raw.beatnet_analysis_status,
         beatnet_analysis_reason=raw.beatnet_analysis_reason,
         spectral_feature_version=raw.spectral.feature_version,

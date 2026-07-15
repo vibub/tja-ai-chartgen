@@ -122,6 +122,11 @@ def test_real_audio_pipeline(
         "librosa",
         "librosa+onset-grid",
     ]
+    onset_grid_evidence = serialized_analysis["tempo_candidates"][1]["evidence"]
+    assert onset_grid_evidence["onset_count"] >= 12
+    assert onset_grid_evidence["interval_count"] > 0
+    assert 0.0 <= onset_grid_evidence["double_tempo_support"] <= 1.0
+    assert onset_grid_evidence["tempo_alias"] in {"none", "half", "double", "both"}
     assert serialized_analysis["bars"][0]["rms_dbfs"] is not None
     assert serialized_analysis["bars"][0]["sustained_activity_ratio"] is not None
 
@@ -268,7 +273,7 @@ def test_missing_instrument_models_fall_back_without_blocking_real_audio_generat
         instrument_model_dir=tmp_path / "missing-models",
     )
 
-    assert analysis.analysis_schema_version == 7
+    assert analysis.analysis_schema_version == 8
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "fallback"
     assert analysis.instrument_analysis_reason == "missing-model:manifest"
