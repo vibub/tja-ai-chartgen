@@ -614,3 +614,156 @@ def test_don_ka_salience_breaks_long_strong_monochrome_runs():
     ]
     assert "color:balance" in salience.points[3].reasons
     assert all(point.don_preference <= 0.75 for point in salience.points)
+
+
+def test_salience_absolute_gates_reject_weak_noise():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.07,
+        grids_per_bar=48,
+        beat_grids=[0, 12, 24, 36],
+        grid_features=[
+            GridFeature(grid=0, activity=0.07, beat=1, downbeat=True),
+            GridFeature(grid=7, onset=True, strength=0.07),
+        ],
+        spectral_grid_features=[
+            SpectralGridFeature(grid=19, high_onset_strength=0.11)
+        ],
+    )
+
+    salience = build_bar_hit_salience(bar)
+
+    assert salience.points == []
+    assert salience.confidence == 0.0
+    assert salience.fallback_reason == "no-rhythmic-evidence"
+
+
+def test_salience_confidence_rewards_consistent_transient_evidence():
+    onset_only = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        grids_per_bar=48,
+        grid_features=[GridFeature(grid=8, onset=True, strength=0.7)],
+    )
+    corroborated = onset_only.model_copy(
+        update={
+            "grid_features": [
+                GridFeature(grid=8, onset=True, strength=0.7, activity=0.6)
+            ],
+            "spectral_grid_features": [
+                SpectralGridFeature(
+                    grid=8,
+                    low_onset_strength=0.8,
+                    spectral_flux=0.7,
+                )
+            ],
+        }
+    )
+
+    onset_salience = build_bar_hit_salience(onset_only)
+    corroborated_salience = build_bar_hit_salience(corroborated)
+
+    assert corroborated_salience.points[0].confidence > onset_salience.points[0].confidence
+    assert corroborated_salience.confidence > onset_salience.confidence
+    assert corroborated_salience.fallback_reason is None
+
+
+def test_salience_song_percentile_rewards_stronger_global_peaks():
+    weak = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.4,
+        grids_per_bar=48,
+        grid_features=[GridFeature(grid=8, onset=True, strength=0.4)],
+    )
+    strong = BarFeature(
+        index=2,
+        start_time=4.0,
+        end_time=6.0,
+        energy=0.4,
+        grids_per_bar=48,
+        grid_features=[GridFeature(grid=8, onset=True, strength=0.9)],
+    )
+
+    independent_weak = build_bar_hit_salience(weak).points[0].confidence
+    independent_strong = build_bar_hit_salience(strong).points[0].confidence
+    combined = build_hit_salience([weak, strong])
+    weak_boost = combined[0].points[0].confidence - independent_weak
+    strong_boost = combined[1].points[0].confidence - independent_strong
+
+    assert weak_boost > 0.0
+    assert strong_boost > weak_boost
+
+
+def test_salience_marks_barely_gated_transient_as_low_confidence():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.0,
+        grids_per_bar=48,
+        spectral_grid_features=[
+            SpectralGridFeature(grid=10, high_onset_strength=0.12)
+        ],
+    )
+
+    salience = build_bar_hit_salience(bar)
+
+    assert salience.points[0].grid == 10
+    assert salience.points[0].confidence > 0.0
+    assert salience.confidence < 0.45
+    assert salience.fallback_reason == "low-confidence"
+
+
+def test_salience_marks_beat_only_output_as_stable_fallback():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.7,
+        grids_per_bar=48,
+        beat_grids=[0, 12, 24, 36],
+        downbeat_grid=0,
+    )
+
+    salience = build_bar_hit_salience(bar)
+
+    assert [point.grid for point in salience.points] == [0, 12, 24, 36]
+    assert all(point.confidence > 0.0 for point in salience.points)
+    assert salience.fallback_reason == "beat-skeleton-only"
+
+
+def test_salience_preserves_stable_silence_reasons_through_full_pipeline():
+    edge = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.0,
+    )
+    active = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        grid_features=[GridFeature(grid=8, onset=True, strength=0.8)],
+    )
+    digital_silence = BarFeature(
+        index=2,
+        start_time=4.0,
+        end_time=6.0,
+        energy=0.0,
+        phrase_position="song_end",
+    )
+
+    salience = build_don_ka_salience([edge, active, digital_silence])
+
+    assert build_bar_hit_salience(edge).fallback_reason == "silent-bar"
+    assert salience[0].fallback_reason == "edge-silence"
+    assert salience[0].confidence == 0.0
+    assert salience[1].fallback_reason is None
+    assert salience[2].fallback_reason == "edge-silence"

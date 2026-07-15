@@ -12,12 +12,21 @@ from tja_ai_chartgen.tja.model import (
 
 RHYTHMIC_SALIENCE_FEATURE_VERSION = "rhythmic-salience-v1"
 ACTIVE_GRID_THRESHOLD = 0.08
+ABSOLUTE_ONSET_GATE = 0.08
+ABSOLUTE_SPECTRAL_GATE = 0.12
+ABSOLUTE_BEAT_DRIVE_GATE = 0.08
 HIT_OUTPUT_THRESHOLD = 0.02
 SPECTRAL_EVIDENCE_THRESHOLD = 0.05
 ACCENT_OUTPUT_THRESHOLD = 0.15
+MIN_USABLE_BAR_CONFIDENCE = 0.45
 COLOR_DOMINANCE_MARGIN = 0.12
 COLOR_PREFERENCE_CAP = 0.75
 MAX_STRONG_COLOR_RUN = 3
+SALIENCE_FALLBACK_EDGE_SILENCE = "edge-silence"
+SALIENCE_FALLBACK_SILENT_BAR = "silent-bar"
+SALIENCE_FALLBACK_NO_EVIDENCE = "no-rhythmic-evidence"
+SALIENCE_FALLBACK_BEAT_ONLY = "beat-skeleton-only"
+SALIENCE_FALLBACK_LOW_CONFIDENCE = "low-confidence"
 STRUCTURE_HIT_MULTIPLIERS = {
     "build_up": 1.04,
     "peak": 1.08,
@@ -137,8 +146,15 @@ def build_canonical_rhythmic_evidence(
 def build_hit_salience(bars: list[BarFeature]) -> list[BarRhythmicSalience]:
     """为一组小节生成 hit salience，并将首尾静音小节强制归零。"""
     silent_indexes = edge_silence_indexes(bars)
+    global_transient_reference = _global_transient_reference(
+        [bar for position, bar in enumerate(bars) if position not in silent_indexes]
+    )
     return [
-        build_bar_hit_salience(bar, force_silent=position in silent_indexes)
+        build_bar_hit_salience(
+            bar,
+            force_silent=position in silent_indexes,
+            global_transient_reference=global_transient_reference,
+        )
         for position, bar in enumerate(bars)
     ]
 
@@ -147,6 +163,7 @@ def build_bar_hit_salience(
     bar: BarFeature,
     *,
     force_silent: bool = False,
+    global_transient_reference: float | None = None,
 ) -> BarRhythmicSalience:
     """融合基础瞬态与节拍骨架，不让持续 activity 单独制造 hit。"""
     evidence = build_canonical_rhythmic_evidence(bar)
@@ -154,8 +171,10 @@ def build_bar_hit_salience(
         item.onset or _spectral_strength(item) >= SPECTRAL_EVIDENCE_THRESHOLD
         for item in evidence
     )
-    if force_silent or (is_silent_bar(bar) and not has_transient_evidence):
-        return BarRhythmicSalience()
+    if force_silent:
+        return BarRhythmicSalience(fallback_reason=SALIENCE_FALLBACK_EDGE_SILENCE)
+    if is_silent_bar(bar) and not has_transient_evidence:
+        return BarRhythmicSalience(fallback_reason=SALIENCE_FALLBACK_SILENT_BAR)
 
     spectral_peaks = _spectral_peak_grids(evidence)
     role_multiplier = STRUCTURE_HIT_MULTIPLIERS.get(bar.transition_role, 1.0)
@@ -187,26 +206,62 @@ def build_bar_hit_salience(
                 grid=item.grid,
                 hit=round(hit, 6),
                 sustained_activity=round(item.activity, 6),
+                confidence=round(
+                    _point_confidence(
+                        item,
+                        spectral_strength,
+                        evidence,
+                        bar_energy=bar.energy,
+                        global_transient_reference=global_transient_reference,
+                    ),
+                    6,
+                ),
                 reasons=reasons,
             )
         )
 
     active_grid_count = sum(item.activity >= ACTIVE_GRID_THRESHOLD for item in evidence)
+    active_ratio = active_grid_count / len(evidence)
     onset_evidence_count = sum(item.onset for item in evidence)
+    point_grids = {point.grid for point in points}
+    transient_point_count = sum(
+        item.grid in point_grids
+        and (
+            _effective_onset_strength(item) >= ABSOLUTE_ONSET_GATE
+            or (
+                item.grid in spectral_peaks
+                and _spectral_strength(item) >= ABSOLUTE_SPECTRAL_GATE
+            )
+        )
+        for item in evidence
+    )
+    confidence = _bar_confidence(
+        points,
+        active_ratio=active_ratio,
+        transient_point_count=transient_point_count,
+    )
     return BarRhythmicSalience(
         points=points,
-        active_ratio=round(active_grid_count / len(evidence), 6),
+        active_ratio=round(active_ratio, 6),
         onset_evidence_count=onset_evidence_count,
+        confidence=round(confidence, 6),
+        fallback_reason=_bar_fallback_reason(
+            points,
+            transient_point_count=transient_point_count,
+            confidence=confidence,
+        ),
     )
 
 
 def build_accent_salience(bars: list[BarFeature]) -> list[BarRhythmicSalience]:
     """在 hit salience 上补充歌曲上下文中的 accent salience。"""
     silent_indexes = edge_silence_indexes(bars)
+    hit_results = build_hit_salience(bars)
     results: list[BarRhythmicSalience] = []
-    for position, bar in enumerate(bars):
+    for position, (bar, hit_salience) in enumerate(
+        zip(bars, hit_results, strict=True)
+    ):
         force_silent = position in silent_indexes
-        hit_salience = build_bar_hit_salience(bar, force_silent=force_silent)
         results.append(
             build_bar_accent_salience(
                 bar,
@@ -227,7 +282,9 @@ def build_bar_accent_salience(
 ) -> BarRhythmicSalience:
     """只为已有 hit 候选计算 accent，不直接决定大音符。"""
     if force_silent:
-        return BarRhythmicSalience()
+        return hit_salience or BarRhythmicSalience(
+            fallback_reason=SALIENCE_FALLBACK_EDGE_SILENCE
+        )
     base = hit_salience or build_bar_hit_salience(bar)
     if not base.points:
         return base
@@ -534,13 +591,152 @@ def _spectral_strength(item: CanonicalRhythmicEvidencePoint) -> float:
     return max(band_attack, item.spectral_flux * 0.8)
 
 
+def _point_confidence(
+    item: CanonicalRhythmicEvidencePoint,
+    spectral_strength: float,
+    evidence: list[CanonicalRhythmicEvidencePoint],
+    *,
+    bar_energy: float,
+    global_transient_reference: float | None,
+) -> float:
+    onset_strength = _effective_onset_strength(item)
+    onset_confidence = (
+        0.45 + onset_strength * 0.45
+        if onset_strength >= ABSOLUTE_ONSET_GATE
+        else 0.0
+    )
+    spectral_confidence = (
+        0.30 + spectral_strength * 0.45
+        if spectral_strength >= ABSOLUTE_SPECTRAL_GATE
+        else 0.0
+    )
+    drive = max(item.activity, _unit_value(bar_energy))
+    beat_confidence = (
+        0.20 + drive * 0.25
+        if (item.beat is not None or item.downbeat)
+        and drive >= ABSOLUTE_BEAT_DRIVE_GATE
+        else 0.0
+    )
+    confidence = max(onset_confidence, spectral_confidence, beat_confidence)
+    if onset_confidence > 0 and spectral_confidence > 0:
+        confidence += 0.10
+    if item.activity >= ACTIVE_GRID_THRESHOLD:
+        confidence += 0.05
+    confidence += _local_transient_margin(item.grid, evidence) * 0.10
+    transient_strength = max(onset_strength, spectral_strength)
+    if global_transient_reference is not None and global_transient_reference > 0:
+        confidence += min(1.0, transient_strength / global_transient_reference) * 0.05
+    return _unit_value(confidence)
+
+
+def _global_transient_reference(bars: list[BarFeature]) -> float | None:
+    strengths: list[float] = []
+    for bar in bars:
+        evidence = build_canonical_rhythmic_evidence(bar)
+        spectral_peaks = _spectral_peak_grids(evidence)
+        for item in evidence:
+            onset_strength = _effective_onset_strength(item)
+            if onset_strength >= ABSOLUTE_ONSET_GATE:
+                strengths.append(onset_strength)
+            spectral_strength = _spectral_strength(item)
+            if (
+                item.grid in spectral_peaks
+                and spectral_strength >= ABSOLUTE_SPECTRAL_GATE
+            ):
+                strengths.append(spectral_strength)
+    if not strengths:
+        return None
+    return _percentile(strengths, 0.75)
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = _unit_value(quantile) * (len(ordered) - 1)
+    lower = int(position)
+    upper = min(len(ordered) - 1, lower + 1)
+    fraction = position - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def _local_transient_margin(
+    grid: int,
+    evidence: list[CanonicalRhythmicEvidencePoint],
+) -> float:
+    current = evidence[grid]
+    current_strength = max(
+        _effective_onset_strength(current),
+        _spectral_strength(current),
+    )
+    neighbor_strengths = [0.0]
+    if grid > 0:
+        neighbor_strengths.append(
+            max(
+                _effective_onset_strength(evidence[grid - 1]),
+                _spectral_strength(evidence[grid - 1]),
+            )
+        )
+    if grid + 1 < len(evidence):
+        neighbor_strengths.append(
+            max(
+                _effective_onset_strength(evidence[grid + 1]),
+                _spectral_strength(evidence[grid + 1]),
+            )
+        )
+    return _unit_value(current_strength - max(neighbor_strengths))
+
+
+def _bar_confidence(
+    points: list[RhythmicSaliencePoint],
+    *,
+    active_ratio: float,
+    transient_point_count: int,
+) -> float:
+    if not points:
+        return 0.0
+    mean_point_confidence = sum(point.confidence for point in points) / len(points)
+    transient_ratio = transient_point_count / len(points)
+    event_support = min(1.0, transient_point_count / 4)
+    active_support = min(1.0, active_ratio / 0.25)
+    return _unit_value(
+        mean_point_confidence * 0.65
+        + transient_ratio * 0.15
+        + event_support * 0.10
+        + active_support * 0.10
+    )
+
+
+def _bar_fallback_reason(
+    points: list[RhythmicSaliencePoint],
+    *,
+    transient_point_count: int,
+    confidence: float,
+) -> str | None:
+    if not points:
+        return SALIENCE_FALLBACK_NO_EVIDENCE
+    if transient_point_count == 0:
+        return SALIENCE_FALLBACK_BEAT_ONLY
+    if confidence < MIN_USABLE_BAR_CONFIDENCE:
+        return SALIENCE_FALLBACK_LOW_CONFIDENCE
+    return None
+
+
+def _effective_onset_strength(item: CanonicalRhythmicEvidencePoint) -> float:
+    if not item.onset:
+        return 0.0
+    return item.onset_strength if item.onset_strength > 0 else 0.65
+
+
 def _transient_hit_strength(
     item: CanonicalRhythmicEvidencePoint,
     spectral_strength: float,
 ) -> float:
-    onset_strength = item.onset_strength
-    if item.onset and onset_strength <= 0:
-        onset_strength = 0.65
+    onset_strength = _effective_onset_strength(item)
+    if onset_strength < ABSOLUTE_ONSET_GATE:
+        onset_strength = 0.0
+    if spectral_strength < ABSOLUTE_SPECTRAL_GATE:
+        spectral_strength = 0.0
     return max(onset_strength, spectral_strength * 0.75)
 
 
@@ -551,7 +747,7 @@ def _beat_skeleton_strength(
     if item.beat is None and not item.downbeat:
         return 0.0
     drive = max(item.activity, _unit_value(bar_energy))
-    if drive <= 0:
+    if drive < ABSOLUTE_BEAT_DRIVE_GATE:
         return 0.0
     base = 0.26 if item.downbeat else 0.20
     return base * drive
