@@ -585,7 +585,7 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 | 8.3 控制无证据补点 | 已完成 | fallback 将可靠 salience 之后的候选拆成有 onset/beat/activity/spectral/instrument 支持的弱证据与无证据格点，按 course 设置总弱补点和无证据子预算，连续弱 note 最多 2 个；sparse/breakdown 禁止无证据补点，纯活跃无格点证据时只保留最小 course 骨架。 | 2026-07-15：`pytest tests/test_fallback_generator.py tests/test_salience_candidates.py -q`，55 passed；`pytest`，550 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` 为 68/68 确定性，unsupported-note ratio 从 0.059857 降至 0.045524，note/onset precision 从 0.626266 升至 0.638240，strong/downbeat recall 保持 0.973077/0.982456。 |
 | 8.4 保留 course/density 约束 | 已完成 | 新增 `tests/test_phase_two_constraints.py`，以 4/4、3/4、6/8 的 16/24/48 与 12/18/36、四 course 和五档 density 组成完整矩阵，逐项验证输出长度、course/density 单调性、真实时间 NPS、legacy/实际 occupancy、跨 resolution 等价 hit 数，以及 silent/rest/sparse 硬上限。 | 2026-07-15：约束矩阵 6 passed，覆盖 360 个生成配置和 1080 个小节结果；`pytest`，556 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` 指标与 8.3 完全一致，68/68 确定性。 |
 | 8.5 接入 AI compact payload | 已完成 | AI payload 升级为 `tja-ai-chartgen-compact-v5`，逐小节发送仅含目标 resolution 可表达点的稀疏 salience，使用 0–1000 整数编码 hit/accent/don/ka/activity/confidence 和候选等级；成功 AI 结果生成 `ai-salience-validation-v1` 首轮 report-only 对齐诊断并持久化到 AI output/attempt sidecar。 | 2026-07-15：`pytest tests/test_ai_client.py tests/test_salience_candidates.py tests/test_rhythmic_salience.py tests/test_event_encoder.py -q`，107 passed；`pytest`，558 passed、1 deselected；`ruff check .`；`git diff --check`。 |
-| 8.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
+| 8.6 阶段退出条件 | 已完成 | 新增 `phase-two-acceptance-v1` 离线验收，禁网双跑 17 个 fixture/68 张规则谱面，对比 Phase 2 前 baseline，并执行 360 配置/1080 小节约束矩阵和规则/AI 共享 salience 指标契约检查。 | 2026-07-15：`python tools/verify_phase_two.py`，PASS；note/onset precision 0.626563→0.638240，unsupported ratio 0.059857→0.045524，strong/downbeat recall 提升到 0.973077/0.982456，静音违规 65→60，68/68 确定性，约束矩阵 0 违规。 |
 
 ## 8.1 候选选择原则
 
@@ -668,6 +668,10 @@ AI payload 建议发送：
 - 16/24/48 和 12/18/36 的等价节奏保持一致；
 - 规则与 AI 结果使用同一对齐指标。
 
+当前 8.6 已新增 `evaluation/phase_two_acceptance.py` 与 `tools/verify_phase_two.py`，形成 `phase-two-acceptance-v1` 持久化验收。工具在禁用 socket 连接时连续运行两次完整 `chart-alignment-v1`，要求结果逐值一致且 68/68 谱面确定；以仓库保留的 Phase 2 前 benchmark 为对照，锁定 note/onset precision 必须提高、unsupported-note ratio 必须下降、strong onset/downbeat recall 不得下降、静音违规不得增加，并检查 Easy/Normal/Hard/Oni 总 note 数单调。验收还独立执行与 8.4 相同边界的 360 配置/1080 小节矩阵，覆盖 NPS、occupancy、density/course 单调、16/24/48 与 12/18/36 等价性，以及 silent/rest/sparse；最后将规则谱面送入 AI 实际使用的 `ai-salience-validation-v1`，确认两类消费者共享同一组 report-only 对齐字段。结果写入 `tests/fixtures/audio/phase_two_acceptance.json` 和 `.md`。
+
+本次验收 PASS：note/onset precision 从 0.626563 提升到 0.638240，unsupported-note ratio 从 0.059857 降到 0.045524，strong onset recall 从 0.923077 提升到 0.973077，downbeat recall 从 0.934211 提升到 0.982456，静音违规从 65 降到 60；四难度 note 数为 360 < 605 < 1052 < 1278，约束矩阵 0 违规。AI salience 诊断继续保持 `report_only=true`，进入 repair 的阈值仍留给后续人工试听校准。
+
 ## Phase 2 任务划分列表
 
 - [x] 8.1 建立 salience 候选排序与可表达性过滤
@@ -675,7 +679,7 @@ AI payload 建议发送：
 - [x] 8.3 限制无证据补点和连续弱证据铺点
 - [x] 8.4 全程验证 course、density、NPS、occupancy 与静音约束
 - [x] 8.5 将紧凑 salience 输入接入 AI prompt 与校验
-- [ ] 8.6 执行 Phase 2 阶段验收
+- [x] 8.6 执行 Phase 2 阶段验收
 
 ---
 
