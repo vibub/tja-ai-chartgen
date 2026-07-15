@@ -42,6 +42,10 @@ class SalienceCandidate:
     score: float
     point: RhythmicSaliencePoint
 
+    @property
+    def reliable(self) -> bool:
+        return self.kind != "weak-evidence"
+
 
 def build_salience_candidate_bars(
     bars: list[BarFeature],

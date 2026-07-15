@@ -97,6 +97,62 @@ def test_spectral_attacks_prioritize_grids_and_inform_don_ka_coloring():
     assert notes[11] == "2"
 
 
+def test_reliable_salience_precedes_weaker_legacy_onset_score():
+    bar = _feature(
+        0,
+        energy=0.3,
+        onsets=[1],
+        strengths={1: 0.1},
+        downbeat=None,
+    ).model_copy(
+        update={
+            "spectral_grid_features": [
+                SpectralGridFeature(grid=3, high_onset_strength=1.0, spectral_flux=1.0),
+                SpectralGridFeature(grid=11, high_onset_strength=0.9, spectral_flux=0.9),
+            ]
+        }
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar], density="low", course="Easy", level=1
+    )[0].notes
+
+    assert _hit_grids(notes) == {3, 11}
+
+
+def test_fallback_only_prioritizes_salience_exactly_expressible_at_resolution():
+    bar = _feature(
+        0,
+        energy=0.3,
+        grids=48,
+        onsets=[7],
+        strengths={7: 1.0},
+        downbeat=None,
+    ).model_copy(
+        update={
+            "spectral_grid_features": [
+                SpectralGridFeature(grid=3, high_onset_strength=1.0, spectral_flux=1.0),
+                SpectralGridFeature(grid=9, high_onset_strength=0.9, spectral_flux=0.9),
+            ]
+        }
+    )
+    plan = ResolutionPlan(
+        canonical_grids_per_bar=48,
+        base_resolution=16,
+        bar_resolutions=[16],
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar],
+        density="low",
+        course="Easy",
+        level=1,
+        resolution_plan=plan,
+    )[0].notes
+
+    assert _hit_grids(notes) == {1, 3}
+
+
 def test_instrument_attacks_prioritize_drums_and_bass_with_soft_don_bias():
     bar = _feature(0, energy=0.3, downbeat=None).model_copy(
         update={

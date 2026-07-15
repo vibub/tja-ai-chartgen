@@ -3,6 +3,10 @@ from math import floor, isfinite
 
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.meter import get_meter_spec
+from tja_ai_chartgen.features.salience_candidates import (
+    SalienceCandidate,
+    build_salience_candidate_bars,
+)
 from tja_ai_chartgen.rules.styles import (
     StyleTemplate,
     get_style_template,
@@ -95,10 +99,15 @@ def generate_fallback_chart_bars(
     profile = _course_load_profile(course)
     template = get_style_template(style)
     density_hints = build_density_hints(bars)
+    salience_candidate_bars = build_salience_candidate_bars(
+        bars,
+        resolution_plan=resolution_plan,
+    )
     chart_bars: list[ChartBar] = []
     previous_was_special = False
     for position, bar in enumerate(bars):
         hint = density_hints[position]
+        salience_candidates = salience_candidate_bars[position]
         output_resolution = _resolution_for_bar(resolution_plan, bar, position)
         events: ChartBarEvents | None = None
         if hint.kind in {"silent", "rest"}:
@@ -123,6 +132,7 @@ def generate_fallback_chart_bars(
                 profile,
                 level,
                 output_resolution=output_resolution,
+                salience_candidates=salience_candidates,
             )
             previous_was_special = False
         chart_bars.append(
@@ -160,6 +170,7 @@ def _feature_driven_pattern(
         profile,
         level,
         output_resolution=output_resolution,
+        salience_candidates=build_salience_candidate_bars([bar])[0],
     )
     return encode_chart_bar_events(
         events,
@@ -178,6 +189,7 @@ def _feature_driven_events(
     level: int,
     *,
     output_resolution: int,
+    salience_candidates: list[SalienceCandidate],
 ) -> ChartBarEvents:
     grid_features = _project_grid_features(
         bar,
@@ -209,6 +221,7 @@ def _feature_driven_events(
         grid_features,
         target_hits,
         template,
+        salience_candidates=salience_candidates,
         spectral_features=spectral_features,
         instrument_features=instrument_features,
     )
@@ -463,11 +476,22 @@ def _select_hit_grids(
     target_hits: int,
     template: StyleTemplate,
     *,
+    salience_candidates: list[SalienceCandidate],
     spectral_features: dict[int, SpectralGridFeature],
     instrument_features: dict[int, InstrumentGridFeature],
 ) -> set[int]:
     selected: set[int] = set()
     remaining = {feature.grid: feature for feature in grid_features}
+    for candidate in salience_candidates:
+        if not candidate.reliable:
+            continue
+        if candidate.grid not in remaining:
+            continue
+        selected.add(candidate.grid)
+        del remaining[candidate.grid]
+        if len(selected) >= target_hits:
+            return selected
+
     while remaining and len(selected) < target_hits:
         best_grid = max(
             remaining,

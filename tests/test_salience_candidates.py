@@ -86,6 +86,14 @@ def test_salience_candidates_follow_evidence_priority_and_score_order():
         "structure-highlight",
         "weak-evidence",
     ]
+    assert [candidate.reliable for candidate in candidates] == [
+        True,
+        True,
+        True,
+        True,
+        True,
+        False,
+    ]
     assert candidates[0].score > candidates[1].score
 
 

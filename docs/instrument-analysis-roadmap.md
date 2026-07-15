@@ -581,7 +581,7 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
 | 8.1 建立 salience 候选排序 | 已完成 | 新增 `features/salience_candidates.py`，按可靠强瞬态、可靠普通瞬态、持续 beat/downbeat 骨架、结构 highlight、弱证据建立稳定优先级，并按当前 `ResolutionPlan` 精确过滤不可表达、越界和同格重复点。 | 2026-07-15：`pytest tests/test_salience_candidates.py tests/test_rhythmic_salience.py -q`，40 passed；`pytest`，541 passed、1 deselected；`ruff check .`；`python tools/verify_phase_one.py`，PASS。 |
-| 8.2 改进普通 note 选择 | 部分完成 | 当前 fallback 已使用 onset、beat、spectral 和 instrument 软证据；尚未统一使用 salience。 | 现有 fallback 测试可作为基线。 |
+| 8.2 改进普通 note 选择 | 已完成 | fallback 现在为全曲一次构建逐小节 salience 候选，普通 note 在旧 style/spectral/instrument 补点前优先消费可靠强瞬态、普通瞬态、持续 beat/downbeat 骨架和结构 highlight；弱证据仍交给后续旧评分补足目标负荷。 | 2026-07-15：`pytest tests/test_fallback_generator.py -q`，38 passed；`pytest`，543 passed、1 deselected；`ruff check .`；临时 `chart-alignment-v1` benchmark 为 68/68 确定性，strong onset recall 由 0.923077 提升到 0.973077，downbeat recall 由 0.934211 提升到 0.982456，unsupported-note ratio 保持 0.059857，四难度 note 数保持 360 < 608 < 1077 < 1313；aggregate note/onset precision 从 0.626563 轻微变化为 0.626266，留待 8.3 的弱证据补点约束继续优化。 |
 | 8.3 控制无证据补点 | 未开始 | 尚未实施统一指标和上限。 | 尚未执行。 |
 | 8.4 保留 course/density 约束 | 部分完成 | 当前已有 NPS、occupancy、density hint 和 silent/rest/sparse 硬约束。 | 现有四难度回归可复用。 |
 | 8.5 接入 AI compact payload | 未开始 | 尚未实施 salience payload。 | 尚未执行。 |
@@ -609,7 +609,9 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 - 长音与普通 note 冲突；
 - 同格点事件冲突。
 
-当前 8.1 已提供独立候选层：`build_salience_candidate_bars()` 复用完整 hit/accent/don-ka salience 流水线，并逐小节读取 `ResolutionPlan`；`rank_bar_salience_candidates()` 只保留无需量化即可由目标 resolution 表达的 canonical 点，以证据等级、综合分、置信度、hit/accent 和 grid 建立确定性顺序，同格重复点只保留排序最优项。style 连接点、最小骨架以及事件间隔、course/density/NPS/occupancy、长音冲突等选择期约束仍留给 8.2–8.4，不在候选层提前制造 note。
+当前 8.1 已提供独立候选层：`build_salience_candidate_bars()` 复用完整 hit/accent/don-ka salience 流水线，并逐小节读取 `ResolutionPlan`；`rank_bar_salience_candidates()` 只保留无需量化即可由目标 resolution 表达的 canonical 点，以证据等级、综合分、置信度、hit/accent 和 grid 建立确定性顺序，同格重复点只保留排序最优项。
+
+当前 8.2 已将该候选层接入规则普通 note：`generate_fallback_chart_bars()` 对整组小节只构建一次 salience，`_select_hit_grids()` 先按候选顺序消费除 `weak-evidence` 外的可靠点，达到原有 `target_hits` 后立即停止；候选不足时才沿用原有 onset/beat/style/spectral/instrument 评分补点。因此 density hint、course speed cap、occupancy、silent/rest/sparse、特殊音符路径和最终 hit 数目标保持原边界，且不可表达的强 onset 不会作为可靠候选抢占可表达 salience。弱证据比例、连续弱点和最小骨架限制仍属于 8.3。
 
 ## 8.2 无证据补点
 
@@ -661,7 +663,7 @@ AI payload 建议发送：
 ## Phase 2 任务划分列表
 
 - [x] 8.1 建立 salience 候选排序与可表达性过滤
-- [ ] 8.2 让规则普通 note 优先跟随可靠 salience
+- [x] 8.2 让规则普通 note 优先跟随可靠 salience
 - [ ] 8.3 限制无证据补点和连续弱证据铺点
 - [ ] 8.4 全程验证 course、density、NPS、occupancy 与静音约束
 - [ ] 8.5 将紧凑 salience 输入接入 AI prompt 与校验
