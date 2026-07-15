@@ -434,7 +434,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 | 7.2 统一 canonical 时间轴 | 已完成 | `build_canonical_rhythmic_evidence()` 现在把 onset/strength、activity、beat/downbeat 和稀疏 spectral attack/flux 合并到完整 canonical grid；兼容旧 `BarFeature` 字段与显式 `GridFeature`，重复频谱证据取最大值，越界证据稳定忽略。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖 48 格 4/4、36 格 6/8、旧字段回退、显式证据优先、重复/越界处理和活动值门控。 |
 | 7.3 定义 hit salience | 已完成 | `build_hit_salience()` / `build_bar_hit_salience()` 已融合 onset strength、局部 spectral 峰值、activity 门控的 beat/downbeat 骨架和 structure role 修正；强瞬态优先，activity 不会单独制造 hit，重复派生证据按最大值合并，数字静音与首尾静音强制归零。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖 off-beat onset 优先级、beat 骨架、activity-only 留白、邻近 spectral 合并、连续 onset 保留、结构修正、静音归零和确定性。 |
 | 7.4 定义 accent salience | 已完成 | `build_accent_salience()` / `build_bar_accent_salience()` 已在既有 hit 候选上融合 downbeat、onset 局部峰值、低频攻击、旧 accent hint、歌曲/段落/乐句起点、正向 energy delta 与 peak/cadence/fill 等结构修正；accent 不会独立制造 hit，也不直接决定大音符。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖 downbeat、onset 峰值、低频攻击、非低频 spectral 留白、section start、energy rise、cadence 修正、activity/structure-only 留白及 activity strength 不误判 onset。 |
-| 7.5 定义 don/ka 软倾向 | 部分完成 | 当前 fallback 已使用低频咚、高频咔弱证据；尚未形成统一字段。 | 现有 fallback spectral 测试可复用。 |
+| 7.5 定义 don/ka 软倾向 | 已完成 | `build_don_ka_salience()` / `build_bar_don_ka_salience()` 已在既有 hit/accent 点上统一生成 don/ka preference：低频主导与 downbeat 弱偏咚，高频主导、percussive brightness 与反拍弱偏咔；中频主导或频带混合保持中性，所有倾向设上限并对连续强单色提示做确定性软化，最终配色仍由 style 和生成器决定。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖低/高频主导、中频/混合中性、downbeat/offbeat、6/8 复拍子反拍、brightness 门控和连续单色平衡。 |
 | 7.6 定义置信度和 reason | 未开始 | 尚未实施。 | 尚未执行。 |
 | 7.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -555,7 +555,7 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 - [x] 7.2 统一 onset、activity、spectral、beat 的 canonical 时间轴
 - [x] 7.3 定义并实现 hit salience
 - [x] 7.4 定义并实现 accent salience
-- [ ] 7.5 定义并实现 don/ka 软倾向
+- [x] 7.5 定义并实现 don/ka 软倾向
 - [ ] 7.6 增加绝对门控、置信度和稳定 reason
 - [ ] 7.7 执行 Phase 1 阶段验收
 

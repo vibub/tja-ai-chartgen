@@ -7,6 +7,8 @@ from tja_ai_chartgen.features.salience import (
     build_bar_accent_salience,
     build_bar_hit_salience,
     build_canonical_rhythmic_evidence,
+    build_don_ka_salience,
+    build_bar_don_ka_salience,
     build_hit_salience,
 )
 from tja_ai_chartgen.tja.model import (
@@ -478,3 +480,137 @@ def test_accent_salience_does_not_create_hits_from_structure_or_activity():
 
     assert salience.points == []
     assert salience.active_ratio == 1.0
+
+
+def test_don_ka_salience_uses_dominant_frequency_and_keeps_mixed_evidence_neutral():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.0,
+        grids_per_bar=48,
+        spectral_grid_features=[
+            SpectralGridFeature(grid=4, low_onset_strength=0.9),
+            SpectralGridFeature(grid=16, high_onset_strength=0.8),
+            SpectralGridFeature(
+                grid=28,
+                low_onset_strength=0.8,
+                mid_onset_strength=0.9,
+                high_onset_strength=0.1,
+            ),
+        ],
+    )
+
+    salience = build_bar_don_ka_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[4].don_preference == 0.585
+    assert points[4].ka_preference == 0.0
+    assert points[4].reasons[-1] == "color:low"
+    assert points[16].don_preference == 0.0
+    assert points[16].ka_preference == 0.52
+    assert points[16].reasons[-1] == "color:high"
+    assert points[28].don_preference == 0.0
+    assert points[28].ka_preference == 0.0
+    assert not any(reason.startswith("color:") for reason in points[28].reasons)
+
+
+def test_don_ka_salience_uses_downbeat_and_offbeat_as_weak_position_cues():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        grids_per_bar=48,
+        beat_grids=[0, 12, 24, 36],
+        grid_features=[
+            GridFeature(grid=0, onset=True, strength=0.6, beat=1, downbeat=True),
+            GridFeature(grid=6, onset=True, strength=0.6),
+        ],
+    )
+
+    salience = build_bar_don_ka_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[0].don_preference == 0.28
+    assert points[0].ka_preference == 0.0
+    assert points[0].reasons[-1] == "color:downbeat"
+    assert points[6].don_preference == 0.0
+    assert points[6].ka_preference == 0.24
+    assert points[6].reasons[-1] == "color:offbeat"
+
+
+def test_don_ka_salience_supports_compound_meter_offbeats():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=3.5,
+        energy=0.5,
+        time_signature="6/8",
+        grids_per_bar=36,
+        beat_grids=[0, 18],
+        grid_features=[GridFeature(grid=9, onset=True, strength=0.7)],
+    )
+
+    salience = build_bar_don_ka_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[9].ka_preference == 0.24
+    assert points[9].reasons[-1] == "color:offbeat"
+
+
+def test_don_ka_salience_uses_brightness_only_with_dominant_high_attack():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.0,
+        grids_per_bar=48,
+        brightness=0.9,
+        percussive_ratio=0.8,
+        spectral_grid_features=[
+            SpectralGridFeature(grid=4, high_onset_strength=0.4),
+            SpectralGridFeature(
+                grid=20,
+                low_onset_strength=0.4,
+                mid_onset_strength=0.5,
+                high_onset_strength=0.4,
+            ),
+        ],
+    )
+
+    salience = build_bar_don_ka_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[4].ka_preference == 0.33
+    assert points[4].reasons[-2:] == ["color:high", "color:bright-percussive"]
+    assert points[20].ka_preference == 0.0
+    assert "color:bright-percussive" not in points[20].reasons
+
+
+def test_don_ka_salience_breaks_long_strong_monochrome_runs():
+    bars = [
+        BarFeature(
+            index=1,
+            start_time=2.0,
+            end_time=4.0,
+            energy=0.0,
+            grids_per_bar=48,
+            spectral_grid_features=[
+                SpectralGridFeature(grid=grid, low_onset_strength=0.9)
+                for grid in (2, 10, 20, 30, 40)
+            ],
+        )
+    ]
+
+    salience = build_don_ka_salience(bars)[0]
+
+    assert [point.don_preference for point in salience.points] == [
+        0.585,
+        0.585,
+        0.585,
+        0.32,
+        0.585,
+    ]
+    assert "color:balance" in salience.points[3].reasons
+    assert all(point.don_preference <= 0.75 for point in salience.points)

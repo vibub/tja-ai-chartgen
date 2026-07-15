@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.features.silence import edge_silence_indexes, is_silent_bar
 from tja_ai_chartgen.tja.model import (
     BarFeature,
@@ -14,6 +15,9 @@ ACTIVE_GRID_THRESHOLD = 0.08
 HIT_OUTPUT_THRESHOLD = 0.02
 SPECTRAL_EVIDENCE_THRESHOLD = 0.05
 ACCENT_OUTPUT_THRESHOLD = 0.15
+COLOR_DOMINANCE_MARGIN = 0.12
+COLOR_PREFERENCE_CAP = 0.75
+MAX_STRONG_COLOR_RUN = 3
 STRUCTURE_HIT_MULTIPLIERS = {
     "build_up": 1.04,
     "peak": 1.08,
@@ -282,6 +286,170 @@ def build_bar_accent_salience(
         )
 
     return base.model_copy(update={"points": points})
+
+
+def build_don_ka_salience(bars: list[BarFeature]) -> list[BarRhythmicSalience]:
+    """为已有 hit/accent 点增加咚咔软倾向，并限制连续强单色提示。"""
+    accent_results = build_accent_salience(bars)
+    results = [
+        _apply_bar_don_ka_salience(bar, accent_salience)
+        for bar, accent_salience in zip(bars, accent_results, strict=True)
+    ]
+    return _balance_don_ka_runs(results)
+
+
+def build_bar_don_ka_salience(
+    bar: BarFeature,
+    *,
+    accent_salience: BarRhythmicSalience | None = None,
+) -> BarRhythmicSalience:
+    """计算单小节咚咔倾向；最终配色仍由 style 和生成器决定。"""
+    base = accent_salience or build_bar_accent_salience(bar)
+    return _balance_don_ka_runs([_apply_bar_don_ka_salience(bar, base)])[0]
+
+
+def _apply_bar_don_ka_salience(
+    bar: BarFeature,
+    base: BarRhythmicSalience,
+) -> BarRhythmicSalience:
+    if not base.points:
+        return base
+
+    canonical_evidence = build_canonical_rhythmic_evidence(bar)
+    evidence = {item.grid: item for item in canonical_evidence}
+    spectral_peaks = _spectral_peak_grids(canonical_evidence)
+    offbeat_grids = _offbeat_grids(bar)
+    points: list[RhythmicSaliencePoint] = []
+    for point in base.points:
+        item = evidence[point.grid]
+        don_preference = 0.0
+        ka_preference = 0.0
+        color_reasons: list[str] = []
+
+        low_drive = item.low_onset_strength
+        mid_drive = item.mid_onset_strength
+        high_drive = item.high_onset_strength
+        low_dominant = (
+            item.grid in spectral_peaks
+            and low_drive >= SPECTRAL_EVIDENCE_THRESHOLD
+            and low_drive - max(mid_drive, high_drive) >= COLOR_DOMINANCE_MARGIN
+        )
+        high_dominant = (
+            item.grid in spectral_peaks
+            and high_drive >= SPECTRAL_EVIDENCE_THRESHOLD
+            and high_drive - max(low_drive, mid_drive) >= COLOR_DOMINANCE_MARGIN
+        )
+        if low_dominant:
+            don_preference = max(don_preference, low_drive * 0.65)
+            color_reasons.append("color:low")
+        elif high_dominant:
+            ka_preference = max(ka_preference, high_drive * 0.65)
+            color_reasons.append("color:high")
+
+        if item.downbeat:
+            don_preference = max(don_preference, 0.28)
+            color_reasons.append("color:downbeat")
+        if item.grid in offbeat_grids:
+            ka_preference = max(ka_preference, 0.24)
+            color_reasons.append("color:offbeat")
+
+        if (
+            high_dominant
+            and bar.brightness >= 0.55
+            and bar.percussive_ratio >= 0.45
+        ):
+            brightness_cue = 0.15 + bar.brightness * bar.percussive_ratio * 0.25
+            ka_preference = max(ka_preference, brightness_cue)
+            color_reasons.append("color:bright-percussive")
+
+        points.append(
+            point.model_copy(
+                update={
+                    "don_preference": round(
+                        min(COLOR_PREFERENCE_CAP, don_preference),
+                        6,
+                    ),
+                    "ka_preference": round(
+                        min(COLOR_PREFERENCE_CAP, ka_preference),
+                        6,
+                    ),
+                    "reasons": [*point.reasons, *color_reasons],
+                }
+            )
+        )
+    return base.model_copy(update={"points": points})
+
+
+def _offbeat_grids(bar: BarFeature) -> set[int]:
+    grid_count = bar.grids_per_bar
+    if grid_count <= 0:
+        return set()
+    beats = sorted({grid for grid in bar.beat_grids if 0 <= grid < grid_count})
+    if not beats:
+        meter = get_meter_spec(bar.time_signature)
+        beats = list(meter.beat_grids_for_resolution(grid_count))
+    if not beats:
+        return set()
+
+    offbeats: set[int] = set()
+    for index, grid in enumerate(beats):
+        next_grid = beats[index + 1] if index + 1 < len(beats) else beats[0] + grid_count
+        midpoint = round((grid + next_grid) / 2) % grid_count
+        if midpoint not in beats:
+            offbeats.add(midpoint)
+    return offbeats
+
+
+def _balance_don_ka_runs(
+    bars: list[BarRhythmicSalience],
+) -> list[BarRhythmicSalience]:
+    dominant_color: str | None = None
+    run_length = 0
+    balanced_bars: list[BarRhythmicSalience] = []
+    for bar in bars:
+        points: list[RhythmicSaliencePoint] = []
+        for point in bar.points:
+            current = _dominant_color_preference(point)
+            if current is None:
+                dominant_color = None
+                run_length = 0
+                points.append(point)
+                continue
+            if current == dominant_color:
+                run_length += 1
+            else:
+                dominant_color = current
+                run_length = 1
+            if run_length <= MAX_STRONG_COLOR_RUN:
+                points.append(point)
+                continue
+
+            field = "don_preference" if current == "don" else "ka_preference"
+            opponent = (
+                point.ka_preference if current == "don" else point.don_preference
+            )
+            softened = min(getattr(point, field), max(0.15, opponent + 0.08))
+            points.append(
+                point.model_copy(
+                    update={
+                        field: round(softened, 6),
+                        "reasons": [*point.reasons, "color:balance"],
+                    }
+                )
+            )
+            dominant_color = None
+            run_length = 0
+        balanced_bars.append(bar.model_copy(update={"points": points}))
+    return balanced_bars
+
+
+def _dominant_color_preference(point: RhythmicSaliencePoint) -> str | None:
+    difference = point.don_preference - point.ka_preference
+    if point.don_preference >= 0.35 and difference >= COLOR_DOMINANCE_MARGIN:
+        return "don"
+    if point.ka_preference >= 0.35 and -difference >= COLOR_DOMINANCE_MARGIN:
+        return "ka"
+    return None
 
 
 def _onset_peak_grids(
