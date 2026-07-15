@@ -30,7 +30,10 @@ def test_generate_fallback_chart_bars_outputs_valid_16_char_notes():
 
 
 def test_generate_fallback_chart_bars_density_controls_hit_count():
-    bars = [_feature(0, energy=0.95), _feature(1, energy=0.95)]
+    bars = [
+        _feature(0, energy=0.95, onsets=list(range(16))),
+        _feature(1, energy=0.95, onsets=list(range(16))),
+    ]
 
     low_bars = generate_fallback_chart_bars(bars, density="low")
     max_bars = generate_fallback_chart_bars(bars, density="max")
@@ -151,6 +154,82 @@ def test_fallback_only_prioritizes_salience_exactly_expressible_at_resolution():
     )[0].notes
 
     assert _hit_grids(notes) == {1, 3}
+
+
+@pytest.mark.parametrize(
+    ("course", "level", "expected_skeleton"),
+    [("Easy", 3, 1), ("Normal", 5, 2), ("Hard", 7, 2), ("Oni", 10, 3)],
+)
+def test_density_does_not_fill_active_bar_without_grid_evidence(
+    course: str,
+    level: int,
+    expected_skeleton: int,
+):
+    bar = _feature(0, energy=0.95, downbeat=None)
+
+    low = generate_fallback_chart_bars(
+        [bar], density="low", course=course, level=level
+    )[0]
+    maximum = generate_fallback_chart_bars(
+        [bar], density="max", course=course, level=level
+    )[0]
+
+    assert playable_hit_count(low.notes) == expected_skeleton
+    assert playable_hit_count(maximum.notes) == expected_skeleton
+
+
+def test_continuous_activity_cannot_create_long_weak_note_runs():
+    bar = _feature(0, energy=0.8, downbeat=None).model_copy(
+        update={
+            "grid_features": [
+                GridFeature(grid=grid, activity=0.8) for grid in range(16)
+            ]
+        }
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar], density="max", course="Oni", level=10
+    )[0].notes
+
+    assert playable_hit_count(notes) <= 8
+    assert _max_consecutive_hits(notes) <= 2
+
+
+def test_breakdown_limits_weak_activity_fill_to_minimal_skeleton():
+    bar = _feature(
+        0,
+        energy=0.8,
+        downbeat=None,
+        transition_role="breakdown",
+    ).model_copy(
+        update={
+            "grid_features": [
+                GridFeature(grid=grid, activity=0.8) for grid in range(16)
+            ]
+        }
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar], density="max", course="Oni", level=10
+    )[0].notes
+
+    assert playable_hit_count(notes) <= 2
+    assert _max_consecutive_hits(notes) <= 2
+
+
+def test_breakdown_without_grid_evidence_does_not_add_style_skeleton():
+    bar = _feature(
+        0,
+        energy=0.8,
+        downbeat=None,
+        transition_role="breakdown",
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar], density="max", course="Oni", level=10
+    )[0].notes
+
+    assert playable_hit_count(notes) == 0
 
 
 def test_instrument_attacks_prioritize_drums_and_bass_with_soft_don_bias():
@@ -714,3 +793,15 @@ def _feature(
 
 def _hit_grids(notes: str) -> set[int]:
     return {index for index, note in enumerate(notes) if note != "0"}
+
+
+def _max_consecutive_hits(notes: str) -> int:
+    maximum = 0
+    current = 0
+    for note in notes:
+        if note == "0":
+            current = 0
+            continue
+        current += 1
+        maximum = max(maximum, current)
+    return maximum

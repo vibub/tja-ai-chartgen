@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from math import floor, isfinite
+from math import ceil, floor, isfinite
 
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.meter import get_meter_spec
@@ -42,6 +42,28 @@ DENSITY_LOAD_MULTIPLIERS = {
     "high": 1.1,
     "max": 1.2,
 }
+WEAK_FILL_RATIOS = {
+    "easy": 0.45,
+    "normal": 0.5,
+    "hard": 0.55,
+    "oni": 0.6,
+}
+UNSUPPORTED_FILL_RATIOS = {
+    "easy": 0.1,
+    "normal": 0.12,
+    "hard": 0.15,
+    "oni": 0.2,
+}
+MINIMUM_SKELETON_HITS = {
+    "easy": 1,
+    "normal": 2,
+    "hard": 2,
+    "oni": 3,
+}
+MAX_CONSECUTIVE_WEAK_HITS = 2
+GRID_ACTIVITY_EVIDENCE_THRESHOLD = 0.18
+SPECTRAL_GRID_EVIDENCE_THRESHOLD = 0.25
+INSTRUMENT_GRID_EVIDENCE_THRESHOLD = 0.35
 
 
 @dataclass(frozen=True)
@@ -221,6 +243,9 @@ def _feature_driven_events(
         grid_features,
         target_hits,
         template,
+        hint=hint,
+        profile=profile,
+        output_resolution=output_resolution,
         salience_candidates=salience_candidates,
         spectral_features=spectral_features,
         instrument_features=instrument_features,
@@ -476,25 +501,114 @@ def _select_hit_grids(
     target_hits: int,
     template: StyleTemplate,
     *,
+    hint: BarDensityHint,
+    profile: CourseLoadProfile,
+    output_resolution: int,
     salience_candidates: list[SalienceCandidate],
     spectral_features: dict[int, SpectralGridFeature],
     instrument_features: dict[int, InstrumentGridFeature],
 ) -> set[int]:
     selected: set[int] = set()
     remaining = {feature.grid: feature for feature in grid_features}
+    reliable_grids: set[int] = set()
     for candidate in salience_candidates:
         if not candidate.reliable:
             continue
         if candidate.grid not in remaining:
             continue
         selected.add(candidate.grid)
+        reliable_grids.add(candidate.grid)
         del remaining[candidate.grid]
         if len(selected) >= target_hits:
             return selected
 
-    while remaining and len(selected) < target_hits:
+    weak_limit = _weak_fill_limit(bar, hint, profile, target_hits)
+    weak_salience_grids = {
+        candidate.grid for candidate in salience_candidates if not candidate.reliable
+    }
+    supported_grids = {
+        grid
+        for grid, feature in remaining.items()
+        if grid in weak_salience_grids
+        or _has_grid_evidence(
+            feature,
+            spectral_feature=spectral_features.get(grid),
+            instrument_feature=instrument_features.get(grid),
+        )
+    }
+    has_supported_evidence = bool(reliable_grids or supported_grids)
+    weak_added = _select_supplemental_grids(
+        bar,
+        remaining,
+        selected,
+        reliable_grids,
+        supported_grids,
+        limit=weak_limit,
+        target_hits=target_hits,
+        template=template,
+        output_resolution=output_resolution,
+        spectral_features=spectral_features,
+        instrument_features=instrument_features,
+    )
+
+    unsupported_limit = min(
+        weak_limit - weak_added,
+        _unsupported_fill_limit(
+            bar,
+            hint,
+            profile,
+            target_hits,
+            has_supported_evidence=has_supported_evidence,
+        ),
+    )
+    _select_supplemental_grids(
+        bar,
+        remaining,
+        selected,
+        reliable_grids,
+        set(remaining),
+        limit=unsupported_limit,
+        target_hits=target_hits,
+        template=template,
+        output_resolution=output_resolution,
+        spectral_features=spectral_features,
+        instrument_features=instrument_features,
+    )
+    return selected
+
+
+def _select_supplemental_grids(
+    bar: BarFeature,
+    remaining: dict[int, GridFeature],
+    selected: set[int],
+    reliable_grids: set[int],
+    candidate_grids: set[int],
+    *,
+    limit: int,
+    target_hits: int,
+    template: StyleTemplate,
+    output_resolution: int,
+    spectral_features: dict[int, SpectralGridFeature],
+    instrument_features: dict[int, InstrumentGridFeature],
+) -> int:
+    added = 0
+    step = bar.grids_per_bar // output_resolution
+    while candidate_grids and added < limit and len(selected) < target_hits:
+        eligible = {
+            grid
+            for grid in candidate_grids
+            if grid in remaining
+            and not _would_exceed_weak_run(
+                grid,
+                selected,
+                reliable_grids,
+                step=step,
+            )
+        }
+        if not eligible:
+            break
         best_grid = max(
-            remaining,
+            eligible,
             key=lambda grid: (
                 _grid_score(
                     bar,
@@ -503,13 +617,109 @@ def _select_hit_grids(
                     template,
                     spectral_feature=spectral_features.get(grid),
                     instrument_feature=instrument_features.get(grid),
-                ),
+                )
+                + _connection_score(grid, reliable_grids, step=step),
                 -grid,
             ),
         )
         selected.add(best_grid)
         del remaining[best_grid]
-    return selected
+        candidate_grids.remove(best_grid)
+        added += 1
+    return added
+
+
+def _weak_fill_limit(
+    bar: BarFeature,
+    hint: BarDensityHint,
+    profile: CourseLoadProfile,
+    target_hits: int,
+) -> int:
+    if target_hits <= 0:
+        return 0
+    if hint.kind == "sparse":
+        return min(target_hits, 2)
+    if bar.transition_role == "breakdown":
+        return min(target_hits, 2)
+    ratio = WEAK_FILL_RATIOS[profile.name.casefold()]
+    return min(target_hits, max(2, ceil(target_hits * ratio)))
+
+
+def _unsupported_fill_limit(
+    bar: BarFeature,
+    hint: BarDensityHint,
+    profile: CourseLoadProfile,
+    target_hits: int,
+    *,
+    has_supported_evidence: bool,
+) -> int:
+    if target_hits <= 0 or hint.kind == "sparse" or bar.transition_role == "breakdown":
+        return 0
+    course = profile.name.casefold()
+    limit = floor(target_hits * UNSUPPORTED_FILL_RATIOS[course])
+    if not has_supported_evidence and bar.energy >= 0.18:
+        limit = max(limit, MINIMUM_SKELETON_HITS[course])
+    return min(target_hits, limit)
+
+
+def _has_grid_evidence(
+    feature: GridFeature,
+    *,
+    spectral_feature: SpectralGridFeature | None,
+    instrument_feature: InstrumentGridFeature | None,
+) -> bool:
+    if (
+        feature.onset
+        or feature.accent
+        or feature.downbeat
+        or feature.beat is not None
+        or feature.activity >= GRID_ACTIVITY_EVIDENCE_THRESHOLD
+    ):
+        return True
+    if spectral_feature is not None and max(
+        spectral_feature.low_onset_strength,
+        spectral_feature.mid_onset_strength,
+        spectral_feature.high_onset_strength,
+        spectral_feature.spectral_flux,
+    ) >= SPECTRAL_GRID_EVIDENCE_THRESHOLD:
+        return True
+    return instrument_feature is not None and max(
+        instrument_feature.drum_onset,
+        instrument_feature.bass_onset,
+        instrument_feature.vocal_onset,
+        instrument_feature.accompaniment_onset,
+    ) >= INSTRUMENT_GRID_EVIDENCE_THRESHOLD
+
+
+def _would_exceed_weak_run(
+    grid: int,
+    selected: set[int],
+    reliable_grids: set[int],
+    *,
+    step: int,
+) -> bool:
+    weak_grids = selected - reliable_grids
+    run_length = 1
+    neighbor = grid - step
+    while neighbor in weak_grids:
+        run_length += 1
+        neighbor -= step
+    neighbor = grid + step
+    while neighbor in weak_grids:
+        run_length += 1
+        neighbor += step
+    return run_length > MAX_CONSECUTIVE_WEAK_HITS
+
+
+def _connection_score(grid: int, reliable_grids: set[int], *, step: int) -> float:
+    if not reliable_grids:
+        return 0.0
+    distance = min(abs(grid - reliable_grid) for reliable_grid in reliable_grids)
+    if distance <= step:
+        return 1.5
+    if distance <= step * 2:
+        return 0.75
+    return 0.0
 
 
 def _grid_score(
