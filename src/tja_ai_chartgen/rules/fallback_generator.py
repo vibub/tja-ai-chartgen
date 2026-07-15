@@ -71,6 +71,9 @@ BIG_NOTE_LIMITS = {
     "hard": 2,
     "oni": 2,
 }
+STYLE_COLOR_BIAS = 0.30
+COLOR_OVERRIDE_MARGIN = 0.05
+MAX_GENERATED_MONOCHROME_RUN = 4
 
 
 @dataclass(frozen=True)
@@ -135,6 +138,8 @@ def generate_fallback_chart_bars(
     chart_bars: list[ChartBar] = []
     previous_was_special = False
     previous_ended_with_big_note = False
+    previous_normal_color: str | None = None
+    previous_normal_color_run = 0
     for position, bar in enumerate(bars):
         hint = density_hints[position]
         salience_candidates = salience_candidate_bars[position]
@@ -164,6 +169,8 @@ def generate_fallback_chart_bars(
                 output_resolution=output_resolution,
                 salience_candidates=salience_candidates,
                 forbid_initial_big_note=previous_ended_with_big_note,
+                previous_normal_color=previous_normal_color,
+                previous_normal_color_run=previous_normal_color_run,
             )
             previous_was_special = False
         chart_bar = encode_chart_bar_events(
@@ -175,6 +182,11 @@ def generate_fallback_chart_bars(
         chart_bars.append(chart_bar)
         previous_ended_with_big_note = bool(
             chart_bar.notes and chart_bar.notes[-1] in {"3", "4"}
+        )
+        previous_normal_color, previous_normal_color_run = _ending_color_run(
+            chart_bar.notes,
+            previous_color=previous_normal_color,
+            previous_run=previous_normal_color_run,
         )
     return chart_bars
 
@@ -224,6 +236,8 @@ def _feature_driven_events(
     output_resolution: int,
     salience_candidates: list[SalienceCandidate],
     forbid_initial_big_note: bool = False,
+    previous_normal_color: str | None = None,
+    previous_normal_color_run: int = 0,
 ) -> ChartBarEvents:
     grid_features = _project_grid_features(
         bar,
@@ -275,15 +289,29 @@ def _feature_driven_events(
         if template.name == "performance"
         else set()
     )
+    candidates_by_grid = {candidate.grid: candidate for candidate in salience_candidates}
+    current_color = previous_normal_color
+    current_run = previous_normal_color_run
     hits: list[ChartHitEvent] = []
     for sequence_index, grid in enumerate(sorted(selected)):
         color = colors[sequence_index % len(colors)]
-        color = _spectral_color(color, spectral_features.get(grid))
-        color = _instrument_color(color, instrument_features.get(grid))
+        color = _salience_color(
+            color,
+            candidates_by_grid.get(grid),
+            instrument_features.get(grid),
+        )
         if template.name == "performance":
             color = "1" if color in {"1", "3"} else "2"
         if grid in big_note_grids:
             color = "3" if color in {"1", "3"} else "4"
+            current_color = None
+            current_run = 0
+        else:
+            color, current_color, current_run = _balance_generated_color(
+                color,
+                previous_color=current_color,
+                previous_run=current_run,
+            )
         hits.append(ChartHitEvent(tick=grid, note=color))
     return ChartBarEvents(index=bar.index, hits=hits)
 
@@ -814,36 +842,78 @@ def _grid_score(
     return score
 
 
-def _spectral_color(
+def _salience_color(
     color: str,
-    feature: SpectralGridFeature | None,
+    candidate: SalienceCandidate | None,
+    instrument_feature: InstrumentGridFeature | None,
 ) -> str:
-    if feature is None:
-        return color
-    low_drive = feature.low_onset_strength + feature.mid_onset_strength * 0.2
-    high_drive = feature.high_onset_strength + feature.mid_onset_strength * 0.1
-    if max(low_drive, high_drive) < 0.25 or abs(low_drive - high_drive) < 0.18:
-        return color
-    if low_drive > high_drive:
-        return "3" if color in {"3", "4"} else "1"
-    return "4" if color in {"3", "4"} else "2"
+    """将 style 作为基础票，再用统一软倾向校准咚咔。"""
+    base_color = "don" if color in {"1", "3"} else "ka"
+    don_score = STYLE_COLOR_BIAS if base_color == "don" else 0.0
+    ka_score = STYLE_COLOR_BIAS if base_color == "ka" else 0.0
+    if candidate is not None:
+        don_score += candidate.point.don_preference
+        ka_score += candidate.point.ka_preference
+    if instrument_feature is not None:
+        neutral_drive = max(
+            instrument_feature.drum_onset,
+            instrument_feature.vocal_onset,
+            instrument_feature.accompaniment_onset,
+        )
+        if (
+            instrument_feature.bass_onset >= 0.35
+            and instrument_feature.bass_onset >= neutral_drive - 0.1
+        ):
+            don_score += instrument_feature.bass_onset * 0.18
+
+    resolved = base_color
+    if don_score - ka_score >= COLOR_OVERRIDE_MARGIN:
+        resolved = "don"
+    elif ka_score - don_score >= COLOR_OVERRIDE_MARGIN:
+        resolved = "ka"
+    is_big = color in {"3", "4"}
+    if resolved == "don":
+        return "3" if is_big else "1"
+    return "4" if is_big else "2"
 
 
-def _instrument_color(
+def _balance_generated_color(
     color: str,
-    feature: InstrumentGridFeature | None,
-) -> str:
-    if feature is None:
-        return color
-    don_drive = feature.bass_onset
-    neutral_drive = max(
-        feature.drum_onset,
-        feature.vocal_onset,
-        feature.accompaniment_onset,
-    )
-    if don_drive < 0.35 or don_drive < neutral_drive - 0.1:
-        return color
-    return "3" if color in {"3", "4"} else "1"
+    *,
+    previous_color: str | None,
+    previous_run: int,
+) -> tuple[str, str | None, int]:
+    if color not in {"1", "2"}:
+        return color, None, 0
+    if color == previous_color and previous_run >= MAX_GENERATED_MONOCHROME_RUN:
+        color = "2" if color == "1" else "1"
+        return color, color, 1
+    if color == previous_color:
+        return color, color, previous_run + 1
+    return color, color, 1
+
+
+def _ending_color_run(
+    notes: str,
+    *,
+    previous_color: str | None,
+    previous_run: int,
+) -> tuple[str | None, int]:
+    color = previous_color
+    run = previous_run
+    for note in notes:
+        if note == "0":
+            continue
+        if note not in {"1", "2"}:
+            color = None
+            run = 0
+            continue
+        if note == color:
+            run += 1
+        else:
+            color = note
+            run = 1
+    return color, run
 
 
 def _effective_density(density: str, hint: BarDensityHint) -> str:

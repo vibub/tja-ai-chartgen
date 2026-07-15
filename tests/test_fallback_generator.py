@@ -9,7 +9,7 @@ from tja_ai_chartgen.tja.model import (
     ResolutionPlan,
     SpectralGridFeature,
 )
-from tja_ai_chartgen.tja.quality import playable_hit_count
+from tja_ai_chartgen.tja.quality import build_quality_report, playable_hit_count
 
 
 def test_generate_fallback_chart_bars_outputs_valid_16_char_notes():
@@ -98,6 +98,79 @@ def test_spectral_attacks_prioritize_grids_and_inform_don_ka_coloring():
     assert _hit_grids(notes) == {3, 11}
     assert notes[3] == "1"
     assert notes[11] == "2"
+
+
+def test_percussive_high_attack_can_softly_override_don_style_color():
+    base = _feature(0, energy=0.3, downbeat=None).model_copy(
+        update={
+            "brightness": 0.9,
+            "spectral_grid_features": [
+                SpectralGridFeature(
+                    grid=3,
+                    high_onset_strength=0.4,
+                    spectral_flux=1.0,
+                )
+            ],
+        }
+    )
+    harmonic = base.model_copy(update={"percussive_ratio": 0.0})
+    percussive = base.model_copy(update={"percussive_ratio": 0.8})
+
+    harmonic_notes = generate_fallback_chart_bars(
+        [harmonic],
+        style="stamina",
+        density="low",
+        course="Easy",
+        level=1,
+    )[0].notes
+    percussive_notes = generate_fallback_chart_bars(
+        [percussive],
+        style="stamina",
+        density="low",
+        course="Easy",
+        level=1,
+    )[0].notes
+
+    assert harmonic_notes[3] == "1"
+    assert percussive_notes[3] == "2"
+
+
+def test_final_coloring_limits_percussive_ka_runs_across_bars():
+    bars = [
+        _feature(
+            index,
+            energy=0.95,
+            onsets=list(range(16)),
+            strengths={grid: 1.0 for grid in range(16)},
+            downbeat=None,
+        ).model_copy(
+            update={
+                "brightness": 0.9,
+                "percussive_ratio": 0.9,
+                "spectral_grid_features": [
+                    SpectralGridFeature(
+                        grid=grid,
+                        high_onset_strength=0.9,
+                        spectral_flux=1.0,
+                    )
+                    for grid in range(16)
+                ],
+            }
+        )
+        for index in range(2)
+    ]
+
+    chart_bars = generate_fallback_chart_bars(
+        bars,
+        style="stamina",
+        density="max",
+        course="Oni",
+        level=10,
+    )
+    report = build_quality_report(chart_bars, bars)
+
+    assert 0.5 < report.ka_ratio < 1.0
+    assert report.longest_monochrome_run <= 4
 
 
 def test_reliable_salience_precedes_weaker_legacy_onset_score():

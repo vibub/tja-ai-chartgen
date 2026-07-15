@@ -530,11 +530,35 @@ def test_don_ka_salience_uses_dominant_frequency_and_keeps_mixed_evidence_neutra
     assert points[4].ka_preference == 0.0
     assert points[4].reasons[-1] == "color:low"
     assert points[16].don_preference == 0.0
-    assert points[16].ka_preference == 0.52
+    assert points[16].ka_preference == 0.44
     assert points[16].reasons[-1] == "color:high"
     assert points[28].don_preference == 0.0
     assert points[28].ka_preference == 0.0
     assert not any(reason.startswith("color:") for reason in points[28].reasons)
+
+
+def test_don_ka_salience_requires_confident_band_attack_for_color_bias():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.0,
+        grids_per_bar=48,
+        spectral_grid_features=[
+            SpectralGridFeature(grid=4, low_onset_strength=0.3),
+            SpectralGridFeature(grid=16, high_onset_strength=0.3),
+        ],
+    )
+
+    salience = build_bar_don_ka_salience(bar)
+
+    assert all(point.don_preference == 0.0 for point in salience.points)
+    assert all(point.ka_preference == 0.0 for point in salience.points)
+    assert not any(
+        reason.startswith("color:")
+        for point in salience.points
+        for reason in point.reasons
+    )
 
 
 def test_don_ka_salience_uses_downbeat_and_offbeat_as_weak_position_cues():
@@ -581,7 +605,7 @@ def test_don_ka_salience_supports_compound_meter_offbeats():
     assert points[9].reasons[-1] == "color:offbeat"
 
 
-def test_don_ka_salience_uses_brightness_only_with_dominant_high_attack():
+def test_don_ka_salience_calibrates_high_attack_with_percussive_brightness():
     bar = BarFeature(
         index=1,
         start_time=2.0,
@@ -604,10 +628,37 @@ def test_don_ka_salience_uses_brightness_only_with_dominant_high_attack():
     salience = build_bar_don_ka_salience(bar)
     points = {point.grid: point for point in salience.points}
 
-    assert points[4].ka_preference == 0.33
-    assert points[4].reasons[-2:] == ["color:high", "color:bright-percussive"]
+    assert points[4].ka_preference == 0.352
+    assert points[4].reasons[-3:] == [
+        "color:high",
+        "color:percussive-high",
+        "color:bright-percussive",
+    ]
     assert points[20].ka_preference == 0.0
     assert "color:bright-percussive" not in points[20].reasons
+
+
+def test_don_ka_salience_does_not_use_global_brightness_without_percussive_support():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.0,
+        grids_per_bar=48,
+        brightness=1.0,
+        percussive_ratio=0.0,
+        spectral_grid_features=[
+            SpectralGridFeature(grid=4, high_onset_strength=0.4),
+        ],
+    )
+
+    salience = build_bar_don_ka_salience(bar)
+    point = salience.points[0]
+
+    assert point.ka_preference == 0.22
+    assert point.reasons[-1] == "color:high"
+    assert "color:percussive-high" not in point.reasons
+    assert "color:bright-percussive" not in point.reasons
 
 
 def test_don_ka_salience_breaks_long_strong_monochrome_runs():

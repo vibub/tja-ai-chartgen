@@ -22,6 +22,8 @@ STRONG_ONSET_ACCENT_THRESHOLD = 0.55
 DOWNBEAT_ONSET_ACCENT_BOOST = 0.10
 MIN_USABLE_BAR_CONFIDENCE = 0.45
 COLOR_DOMINANCE_MARGIN = 0.12
+COLOR_ATTACK_GATE = 0.35
+PERCUSSIVE_COLOR_GATE = 0.35
 COLOR_PREFERENCE_CAP = 0.75
 MAX_STRONG_COLOR_RUN = 3
 SALIENCE_FALLBACK_EDGE_SILENCE = "edge-silence"
@@ -395,20 +397,29 @@ def _apply_bar_don_ka_salience(
         high_drive = item.high_onset_strength
         low_dominant = (
             item.grid in spectral_peaks
-            and low_drive >= SPECTRAL_EVIDENCE_THRESHOLD
+            and low_drive >= COLOR_ATTACK_GATE
             and low_drive - max(mid_drive, high_drive) >= COLOR_DOMINANCE_MARGIN
         )
         high_dominant = (
             item.grid in spectral_peaks
-            and high_drive >= SPECTRAL_EVIDENCE_THRESHOLD
+            and high_drive >= COLOR_ATTACK_GATE
             and high_drive - max(low_drive, mid_drive) >= COLOR_DOMINANCE_MARGIN
         )
         if low_dominant:
             don_preference = max(don_preference, low_drive * 0.65)
             color_reasons.append("color:low")
         elif high_dominant:
-            ka_preference = max(ka_preference, high_drive * 0.65)
+            ka_preference = max(ka_preference, high_drive * 0.55)
             color_reasons.append("color:high")
+            if bar.percussive_ratio >= PERCUSSIVE_COLOR_GATE:
+                percussive_cue = high_drive * (
+                    0.10 + bar.percussive_ratio * 0.20
+                )
+                ka_preference = min(
+                    COLOR_PREFERENCE_CAP,
+                    ka_preference + percussive_cue,
+                )
+                color_reasons.append("color:percussive-high")
 
         if item.downbeat:
             don_preference = max(don_preference, 0.28)
@@ -420,10 +431,13 @@ def _apply_bar_don_ka_salience(
         if (
             high_dominant
             and bar.brightness >= 0.55
-            and bar.percussive_ratio >= 0.45
+            and bar.percussive_ratio >= PERCUSSIVE_COLOR_GATE
         ):
-            brightness_cue = 0.15 + bar.brightness * bar.percussive_ratio * 0.25
-            ka_preference = max(ka_preference, brightness_cue)
+            brightness_cue = (bar.brightness - 0.55) * 0.08
+            ka_preference = min(
+                COLOR_PREFERENCE_CAP,
+                ka_preference + brightness_cue,
+            )
             color_reasons.append("color:bright-percussive")
 
         points.append(
