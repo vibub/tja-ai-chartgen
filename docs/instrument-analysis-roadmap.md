@@ -436,7 +436,7 @@ AST / EfficientAT / DyMN / OpenMIC / MERT / CLAP
 | 7.4 定义 accent salience | 已完成 | `build_accent_salience()` / `build_bar_accent_salience()` 已在既有 hit 候选上融合 downbeat、onset 局部峰值、低频攻击、旧 accent hint、歌曲/段落/乐句起点、正向 energy delta 与 peak/cadence/fill 等结构修正；accent 不会独立制造 hit，也不直接决定大音符。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖 downbeat、onset 峰值、低频攻击、非低频 spectral 留白、section start、energy rise、cadence 修正、activity/structure-only 留白及 activity strength 不误判 onset。 |
 | 7.5 定义 don/ka 软倾向 | 已完成 | `build_don_ka_salience()` / `build_bar_don_ka_salience()` 已在既有 hit/accent 点上统一生成 don/ka preference：低频主导与 downbeat 弱偏咚，高频主导、percussive brightness 与反拍弱偏咔；中频主导或频带混合保持中性，所有倾向设上限并对连续强单色提示做确定性软化，最终配色仍由 style 和生成器决定。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖低/高频主导、中频/混合中性、downbeat/offbeat、6/8 复拍子反拍、brightness 门控和连续单色平衡。 |
 | 7.6 定义置信度和 reason | 已完成 | hit salience 现使用 onset、spectral 和 beat drive 的绝对门控，避免微弱噪声仅因归一化后非零而形成候选；逐点置信度融合瞬态强度、全曲 75th percentile 参考、局部峰值差距、activity 支持、多证据一致性与节拍骨架可靠度，小节置信度再汇总有效事件数量、瞬态占比和活动覆盖。低于可用阈值或只有 beat 骨架时保留稀疏诊断但输出稳定 fallback reason，首尾静音和普通静音也使用固定 reason code。 | `pytest tests/test_rhythmic_salience.py -v` 覆盖绝对门控、多证据置信度提升、低置信瞬态、beat-only fallback、静音 reason 传播和确定性。 |
-| 7.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
+| 7.7 阶段退出条件 | 已完成 | 新增 `phase-one-acceptance-v1` 离线验收：对全部 17 个合成 fixture 在禁用 socket 连接时独立运行两次完整音频分析、结构分析与 hit/accent/don-ka salience，验证 canonical grid、确定性、首尾静音、onset 峰值对齐、confidence/reason 契约和稀疏输出。Phase 1 内部阶段共享同一 salience 流水线；fallback、AI prompt 与质量报告接入仍按 Phase 2–4 明确后移，不伪装为本阶段已完成。 | 2026-07-15：`python tools/verify_phase_one.py`，PASS；17 fixtures，onset peak precision 0.998555、recall 0.988555、F1 0.993530，最大误差 52.44 ms，2 次离线运行完全一致，10 个首尾静音小节 0 违规，1028/6240 稀疏点；`pytest tests/test_phase_one_acceptance.py -v`，7 passed。 |
 
 ## 7.1 建议数据模型
 
@@ -546,8 +546,13 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 - 同一输入结果确定；
 - 静音区全零；
 - 已知 onset fixture 上 hit salience 峰值位置正确；
-- 消费者不再各自重复实现相同的 onset/spectral 融合；
-- AI payload 增量保持紧凑。
+- Phase 1 内 hit、accent、don/ka 阶段复用同一 salience 流水线，不重复实现 onset/spectral 融合；
+- fallback generator、AI prompt 和质量报告的消费迁移分别留给 Phase 2–4，不作为 Phase 1 已接入能力；
+- Phase 1 不增加 AI payload 字段，后续接入时仍须保持紧凑。
+
+阶段验收入口为 `python tools/verify_phase_one.py`。`phase-one-acceptance-v1` 在屏蔽 `socket.connect` / `connect_ex` 的上下文中对全部 17 个合成 fixture 独立执行两次 librosa/onset-grid、canonical `BarFeature`、`structure-v1` 和完整 hit/accent/don-ka salience 流水线；验收要求两次结构化结果完全一致，所有点均位于对应 canonical grid 且无重复或乱序，首尾静音小节没有 salience 点，confidence 与稳定 fallback reason 契约无冲突。
+
+已知 fixture onset 使用 70 ms 容差与 `hit >= 0.45` 的 salience 峰值做一对一匹配，阻断门槛为 precision 不低于 0.98、recall 不低于 0.95；稀疏点数量不得超过 canonical dense grid 的 50%。机器可读结果写入 `tests/fixtures/audio/phase_one_acceptance.json`，人类可读结果写入 `phase_one_acceptance.md`。当前验收结果为 PASS：691/699 onset 匹配、precision 0.998555、recall 0.988555、最大误差 52.44 ms，10 个首尾静音小节 0 违规，稀疏点比例 0.164744。
 
 ## Phase 1 任务划分列表
 
@@ -557,7 +562,7 @@ accent 只表示“值得强调”，不直接决定使用 `3` 或 `4` 大音符
 - [x] 7.4 定义并实现 accent salience
 - [x] 7.5 定义并实现 don/ka 软倾向
 - [x] 7.6 增加绝对门控、置信度和稳定 reason
-- [ ] 7.7 执行 Phase 1 阶段验收
+- [x] 7.7 执行 Phase 1 阶段验收
 
 ---
 

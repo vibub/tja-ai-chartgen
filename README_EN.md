@@ -50,15 +50,16 @@ The 17 audio fixtures and their event ground truth are generated entirely by pro
 python tests/fixtures/audio/rebuild_click_fixtures.py
 ```
 
-Phase 0 provides three offline commands for audio analysis, chart alignment, and final acceptance:
+The project provides offline commands for audio analysis, chart alignment, and phase acceptance:
 
 ```bash
 python tools/benchmark_audio_fixtures.py
 python tools/benchmark_chart_alignment.py
 python tools/verify_phase_zero.py
+python tools/verify_phase_one.py
 ```
 
-`benchmark_audio_fixtures.py` writes the `audio-alignment-v2` JSON/Markdown baseline for onset, beat, downbeat, meter, band attacks, pickup, fill, and ResolutionPlan behavior. `benchmark_chart_alignment.py` writes the `chart-alignment-v1` baseline for 68 Easy 3, Normal 5, Hard 7, and Oni 10 rule charts. `verify_phase_zero.py` rebuilds the fixtures twice in temporary directories, reruns both benchmarks with socket connections disabled, and checks baseline coverage, stability, and persisted-data privacy. See [Chart Quality Evaluation](docs/quality-evaluation.md) and the [Vocal, Instrument, and Beat Analysis Roadmap](docs/instrument-analysis-roadmap.md) for metric definitions and acceptance boundaries.
+`benchmark_audio_fixtures.py` writes the `audio-alignment-v2` JSON/Markdown baseline for onset, beat, downbeat, meter, band attacks, pickup, fill, and ResolutionPlan behavior. `benchmark_chart_alignment.py` writes the `chart-alignment-v1` baseline for 68 Easy 3, Normal 5, Hard 7, and Oni 10 rule charts. `verify_phase_zero.py` rebuilds the fixtures twice in temporary directories, reruns both benchmarks with socket connections disabled, and checks baseline coverage, stability, and persisted-data privacy. `verify_phase_one.py` runs the complete `rhythmic-salience-v1` pipeline twice without network access on all 17 synthetic fixtures, validates canonical grids, determinism, edge silence, onset-peak alignment, confidence/reason consistency, and sparse output, then writes `phase_one_acceptance.json` and `.md`. See [Chart Quality Evaluation](docs/quality-evaluation.md) and the [Vocal, Instrument, and Beat Analysis Roadmap](docs/instrument-analysis-roadmap.md) for metric definitions and acceptance boundaries.
 
 ## Usage
 

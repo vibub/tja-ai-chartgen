@@ -50,15 +50,16 @@ pytest tests/test_audio_pipeline_integration.py -v
 python tests/fixtures/audio/rebuild_click_fixtures.py
 ```
 
-Phase 0 提供音频分析、谱面对齐和阶段验收三组离线命令：
+项目提供音频分析、谱面对齐和阶段验收离线命令：
 
 ```bash
 python tools/benchmark_audio_fixtures.py
 python tools/benchmark_chart_alignment.py
 python tools/verify_phase_zero.py
+python tools/verify_phase_one.py
 ```
 
-`benchmark_audio_fixtures.py` 生成 `audio-alignment-v2` JSON/Markdown 基线，覆盖 onset、beat、downbeat、拍号、频带攻击、弱起、fill 和 ResolutionPlan；`benchmark_chart_alignment.py` 为 Easy 3、Normal 5、Hard 7、Oni 10 共 68 张规则谱面生成 `chart-alignment-v1` 基线。`verify_phase_zero.py` 会在临时目录中执行两次 fixture 重建，在禁用 socket 网络连接时重复运行两类 benchmark，并检查 baseline 的覆盖范围、稳定性和持久化隐私。详细指标和验收边界见 [谱面质量评测](docs/quality-evaluation.md) 与 [人声、乐器与节拍分析升级路线图](docs/instrument-analysis-roadmap.md)。
+`benchmark_audio_fixtures.py` 生成 `audio-alignment-v2` JSON/Markdown 基线，覆盖 onset、beat、downbeat、拍号、频带攻击、弱起、fill 和 ResolutionPlan；`benchmark_chart_alignment.py` 为 Easy 3、Normal 5、Hard 7、Oni 10 共 68 张规则谱面生成 `chart-alignment-v1` 基线。`verify_phase_zero.py` 会在临时目录中执行两次 fixture 重建，在禁用 socket 网络连接时重复运行两类 benchmark，并检查 baseline 的覆盖范围、稳定性和持久化隐私。`verify_phase_one.py` 会对 17 个合成 fixture 禁网运行两次完整 `rhythmic-salience-v1` 流水线，验收 canonical grid、确定性、首尾静音、onset 峰值对齐、confidence/reason 契约和稀疏输出，并生成 `phase_one_acceptance.json` 与 `.md`。详细指标和验收边界见 [谱面质量评测](docs/quality-evaluation.md) 与 [人声、乐器与节拍分析升级路线图](docs/instrument-analysis-roadmap.md)。
 
 ## 使用方式
 
