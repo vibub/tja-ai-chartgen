@@ -3,6 +3,7 @@ import pytest
 from tja_ai_chartgen.features.salience_candidates import (
     build_salience_candidate_bars,
     is_salience_grid_representable,
+    rank_accent_candidates,
     rank_bar_salience_candidates,
 )
 from tja_ai_chartgen.tja.model import (
@@ -95,6 +96,48 @@ def test_salience_candidates_follow_evidence_priority_and_score_order():
         False,
     ]
     assert candidates[0].score > candidates[1].score
+
+
+def test_accent_candidates_unify_reliable_onset_structure_and_stable_downbeat():
+    bar = _bar()
+    salience = BarRhythmicSalience(
+        confidence=0.8,
+        points=[
+            RhythmicSaliencePoint(
+                grid=0,
+                hit=0.35,
+                accent=0.58,
+                confidence=0.3,
+                reasons=["downbeat", "accent:downbeat"],
+            ),
+            RhythmicSaliencePoint(
+                grid=6,
+                hit=0.9,
+                accent=0.85,
+                confidence=0.85,
+                reasons=["onset", "accent:onset-peak"],
+            ),
+            RhythmicSaliencePoint(
+                grid=12,
+                hit=0.5,
+                accent=0.75,
+                confidence=0.8,
+                reasons=["accent:section-start"],
+            ),
+            RhythmicSaliencePoint(
+                grid=18,
+                hit=0.4,
+                accent=0.7,
+                confidence=0.2,
+                reasons=["accent:section-start"],
+            ),
+        ],
+    )
+
+    candidates = rank_bar_salience_candidates(bar, salience, output_resolution=16)
+    accents = rank_accent_candidates(candidates)
+
+    assert [candidate.grid for candidate in accents] == [6, 12, 0]
 
 
 def test_salience_candidates_filter_unrepresentable_and_out_of_range_points():

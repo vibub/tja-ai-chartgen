@@ -294,6 +294,123 @@ def test_generate_fallback_chart_bars_applies_style_coloring():
     assert set(performance) & {"3", "4"}
 
 
+def test_performance_style_uses_unified_accent_salience_with_easy_budget():
+    bar = _feature(
+        0,
+        energy=0.8,
+        onsets=[0, 4, 8, 12],
+        strengths={0: 0.9, 4: 0.9, 8: 0.9, 12: 0.9},
+        beats=[0, 4, 8, 12],
+        downbeat=0,
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar],
+        style="performance",
+        density="high",
+        course="Easy",
+        level=3,
+    )[0].notes
+
+    assert notes[0] in "34"
+    assert sum(note in "34" for note in notes) == 1
+
+
+def test_performance_style_prefers_section_change_accent_over_plain_onset():
+    bars = [
+        _feature(
+            0,
+            energy=0.5,
+            onsets=[0, 8],
+            strengths={0: 0.7, 8: 0.7},
+            section="verse",
+        ).model_copy(update={"section_id": "section-a", "phrase_id": 0}),
+        _feature(
+            1,
+            energy=0.8,
+            onsets=[5, 12],
+            strengths={5: 0.6, 12: 0.6},
+            downbeat=None,
+            section="chorus",
+        ).model_copy(
+            update={
+                "section_id": "section-b",
+                "phrase_id": 1,
+                "boundary_confidence": 0.9,
+                "energy_delta": 0.4,
+            }
+        ),
+    ]
+
+    notes = generate_fallback_chart_bars(
+        bars,
+        style="performance",
+        density="medium",
+        course="Easy",
+        level=3,
+    )[1].notes
+
+    assert notes[5] in "34"
+    assert notes[12] in "12"
+
+
+def test_performance_peak_caps_and_separates_big_notes():
+    bar = _feature(
+        0,
+        energy=0.95,
+        onsets=list(range(0, 16, 2)),
+        strengths={grid: 1.0 for grid in range(0, 16, 2)},
+        beats=[0, 4, 8, 12],
+        transition_role="peak",
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar],
+        style="performance",
+        density="max",
+        course="Oni",
+        level=10,
+    )[0].notes
+    big_grids = [grid for grid, note in enumerate(notes) if note in "34"]
+
+    assert len(big_grids) <= 2
+    assert all(
+        current - previous > 1
+        for previous, current in zip(big_grids, big_grids[1:], strict=False)
+    )
+
+
+def test_performance_style_avoids_adjacent_big_notes_across_bar_boundary():
+    bars = [
+        _feature(
+            0,
+            energy=0.8,
+            onsets=[15],
+            strengths={15: 1.0},
+            downbeat=None,
+        ),
+        _feature(
+            1,
+            energy=0.8,
+            onsets=[0],
+            strengths={0: 1.0},
+            beats=[0, 4, 8, 12],
+            downbeat=0,
+        ),
+    ]
+
+    chart_bars = generate_fallback_chart_bars(
+        bars,
+        style="performance",
+        density="low",
+        course="Oni",
+        level=10,
+    )
+
+    assert chart_bars[0].notes[-1] in "34"
+    assert chart_bars[1].notes[0] in "12"
+
+
 def test_generate_fallback_chart_bars_keeps_edge_silence_empty():
     bars = [
         _feature(

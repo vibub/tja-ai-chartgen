@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.meter import get_meter_spec
+from tja_ai_chartgen.features.salience_candidates import (
+    SalienceCandidate,
+    build_salience_candidate_bars,
+    rank_accent_candidates,
+)
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ResolutionPlan
 
@@ -109,6 +114,10 @@ def build_quality_report(
     paired_notes_per_second = [0.0] * paired_count
     accent_candidate_count = 0
     accent_hit_count = 0
+    salience_candidate_bars = build_salience_candidate_bars(
+        paired_feature_bars,
+        resolution_plan=resolution_plan,
+    )
     for position, (chart_bar, feature_bar) in enumerate(
         zip(paired_chart_bars, paired_feature_bars, strict=True)
     ):
@@ -122,7 +131,11 @@ def build_quality_report(
         if hit_count:
             active_durations.append(duration)
         note_times.extend(normal_note_times(chart_bar, feature_bar))
-        candidates, hits = accent_coverage_counts(chart_bar, feature_bar)
+        candidates, hits = accent_coverage_counts(
+            chart_bar,
+            feature_bar,
+            salience_candidates=salience_candidate_bars[position],
+        )
         accent_candidate_count += candidates
         accent_hit_count += hits
     playable_note_count = sum(timed_hit_counts)
@@ -658,19 +671,20 @@ def longest_note_stream(note_times: list[float]) -> tuple[int, float]:
 def accent_coverage_counts(
     chart_bar: ChartBar,
     feature_bar: BarFeature,
+    *,
+    salience_candidates: list[SalienceCandidate] | None = None,
 ) -> tuple[int, int]:
     if not chart_bar.notes or feature_bar.grids_per_bar <= 0:
         return 0, 0
+    resolved_candidates = salience_candidates
+    if resolved_candidates is None:
+        resolved_candidates = build_salience_candidate_bars([feature_bar])[0]
+    meter = get_meter_spec(feature_bar.time_signature)
+    candidate_limit = max(1, len(meter.beat_positions_quarters))
     feature_candidates = {
-        grid
-        for grid in feature_bar.accent_grids
-        if 0 <= grid < feature_bar.grids_per_bar
+        candidate.grid
+        for candidate in rank_accent_candidates(resolved_candidates)[:candidate_limit]
     }
-    if (
-        feature_bar.downbeat_grid is not None
-        and 0 <= feature_bar.downbeat_grid < feature_bar.grids_per_bar
-    ):
-        feature_candidates.add(feature_bar.downbeat_grid)
     candidates = {
         min(
             len(chart_bar.notes) - 1,

@@ -388,9 +388,27 @@ def test_quality_report_records_accent_coverage_for_supported_grids():
 
     report = build_quality_report(bars, features)
 
-    assert report.accent_candidate_count == 6
+    assert report.accent_candidate_count == 7
     assert report.accent_hit_count == 4
-    assert report.accent_coverage_rate == pytest.approx(2 / 3)
+    assert report.accent_coverage_rate == pytest.approx(4 / 7)
+
+
+def test_quality_report_caps_unified_accent_candidates_by_meter():
+    feature = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.9,
+        onset_16=list(range(0, 16, 2)),
+        beat_grids=[0, 4, 8, 12],
+        downbeat_grid=0,
+    )
+
+    report = build_quality_report([_chart_bar(0, "1010101010101010")], [feature])
+
+    assert report.accent_candidate_count == 4
+    assert report.accent_hit_count == 4
+    assert report.accent_coverage_rate == 1.0
 
 
 def test_feature_driven_fallback_quality_avoids_silence_and_exact_repetition():

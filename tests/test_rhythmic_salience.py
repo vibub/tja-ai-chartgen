@@ -395,14 +395,36 @@ def test_accent_salience_uses_downbeat_onset_peaks_and_legacy_hints():
     salience = build_bar_accent_salience(bar)
     points = {point.grid: point for point in salience.points}
 
-    assert points[0].accent == 0.72
+    assert points[0].accent == 0.82
     assert "accent:downbeat" in points[0].reasons
     assert "accent:onset-peak" in points[0].reasons
+    assert "accent:downbeat-onset" in points[0].reasons
     assert points[6].accent == 0.855
     assert points[6].reasons[-1] == "accent:onset-peak"
     assert points[7].accent == 0.5
     assert "accent:onset-peak" not in points[7].reasons
     assert points[7].reasons[-1] == "accent:hint"
+
+
+def test_accent_salience_rejects_weak_local_onset_peaks():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        grid_features=[
+            GridFeature(grid=0, beat=1, downbeat=True, activity=0.5),
+            GridFeature(grid=6, onset=True, strength=0.4, activity=0.5),
+        ],
+    )
+
+    salience = build_bar_accent_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[0].accent == 0.58
+    assert "accent:downbeat" in points[0].reasons
+    assert points[6].accent == 0.0
+    assert "accent:onset-peak" not in points[6].reasons
 
 
 def test_accent_salience_uses_low_attack_without_treating_all_spectral_hits_as_accents():

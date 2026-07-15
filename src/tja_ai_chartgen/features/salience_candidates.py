@@ -25,6 +25,7 @@ SalienceCandidateKind = Literal[
 ]
 
 STRONG_TRANSIENT_HIT_THRESHOLD = 0.65
+ACCENT_CANDIDATE_THRESHOLD = 0.50
 CANDIDATE_PRIORITY: dict[SalienceCandidateKind, int] = {
     "strong-transient": 0,
     "transient": 1,
@@ -93,6 +94,32 @@ def rank_bar_salience_candidates(
         seen_grids.add(candidate.grid)
         unique.append(candidate)
     return unique
+
+
+def rank_accent_candidates(
+    candidates: list[SalienceCandidate],
+) -> list[SalienceCandidate]:
+    """从统一 salience 中选出可靠重音候选，并按强调价值排序。"""
+    accent_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.point.accent >= ACCENT_CANDIDATE_THRESHOLD
+        and (
+            candidate.reliable
+            or "accent:downbeat" in candidate.point.reasons
+            or "accent:hint" in candidate.point.reasons
+        )
+    ]
+    return sorted(
+        accent_candidates,
+        key=lambda candidate: (
+            -candidate.point.accent,
+            candidate.priority,
+            -candidate.score,
+            -candidate.point.confidence,
+            candidate.grid,
+        ),
+    )
 
 
 def is_salience_grid_representable(

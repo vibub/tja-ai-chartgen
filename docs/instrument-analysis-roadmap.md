@@ -697,7 +697,7 @@ AI payload 建议发送：
 
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
-| 9.1 重音候选升级 | 部分完成 | 当前已有 beat/downbeat、accent 和 peak 证据；尚未统一到 accent salience。 | 现有 accent coverage 测试可复用。 |
+| 9.1 重音候选升级 | 已完成 | accent salience 统一融合 downbeat、强 onset 局部峰值和 section/phrase/energy/transition 结构变化；downbeat 与强 onset 重合时显式加权。fallback 的 performance 风格只从统一候选中选择大音符，并按 course 限制每小节数量，并禁止小节内及跨小节边界的相邻大音符；QualityReport 的 accent coverage 同步改用统一候选，并按拍号限制每小节只评估最高优先级候选。 | `pytest tests/test_rhythmic_salience.py tests/test_salience_candidates.py tests/test_fallback_generator.py tests/test_chart_quality.py -q` 覆盖强弱 onset、downbeat 协同、结构起点、Easy 上限、peak 上限与候选覆盖。 |
 | 9.2 咚咔软映射 | 部分完成 | 已有低频咚、高频咔弱偏好；尚未基于统一 salience 校准。 | 现有配色与单色串指标可复用。 |
 | 9.3 Fill burst 检测 | 部分完成 | 当前 structure-v1 已有 fill candidate 和 instrument fill support；尚未建立纯节奏 burst 指标。 | 现有 fill fixture 与特殊音符测试可复用。 |
 | 9.4 特殊音符响应 | 部分完成 | 当前特殊音符只在活跃 fill candidate 中生成；尚未使用统一 burst salience。 | 现有特殊音符回归可复用。 |
@@ -757,7 +757,7 @@ AI payload 建议发送：
 
 ## Phase 3 任务划分列表
 
-- [ ] 9.1 将 downbeat、强 onset 和结构变化统一为重音候选
+- [x] 9.1 将 downbeat、强 onset 和结构变化统一为重音候选
 - [ ] 9.2 使用频带与 percussive 证据校准 don/ka 软倾向
 - [ ] 9.3 建立纯节奏 fill burst 检测
 - [ ] 9.4 让滚奏和气球响应可靠 burst salience

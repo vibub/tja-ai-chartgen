@@ -18,6 +18,8 @@ ABSOLUTE_BEAT_DRIVE_GATE = 0.08
 HIT_OUTPUT_THRESHOLD = 0.02
 SPECTRAL_EVIDENCE_THRESHOLD = 0.05
 ACCENT_OUTPUT_THRESHOLD = 0.15
+STRONG_ONSET_ACCENT_THRESHOLD = 0.55
+DOWNBEAT_ONSET_ACCENT_BOOST = 0.10
 MIN_USABLE_BAR_CONFIDENCE = 0.45
 COLOR_DOMINANCE_MARGIN = 0.12
 COLOR_PREFERENCE_CAP = 0.75
@@ -309,10 +311,15 @@ def build_bar_accent_salience(
         if item.accent_hint:
             accent = max(accent, 0.50)
             accent_reasons.append("accent:hint")
-        if item.grid in onset_peaks:
-            onset_strength = item.onset_strength if item.onset_strength > 0 else 0.65
-            accent = max(accent, 0.45 + onset_strength * 0.45)
+        onset_peak_strength = (
+            _effective_onset_strength(item) if item.grid in onset_peaks else 0.0
+        )
+        if onset_peak_strength >= STRONG_ONSET_ACCENT_THRESHOLD:
+            accent = max(accent, 0.45 + onset_peak_strength * 0.45)
             accent_reasons.append("accent:onset-peak")
+        if item.downbeat and onset_peak_strength >= STRONG_ONSET_ACCENT_THRESHOLD:
+            accent = _unit_value(accent + DOWNBEAT_ONSET_ACCENT_BOOST)
+            accent_reasons.append("accent:downbeat-onset")
         if (
             item.grid in spectral_peaks
             and item.low_onset_strength >= SPECTRAL_EVIDENCE_THRESHOLD

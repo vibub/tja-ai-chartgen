@@ -6,6 +6,7 @@ from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.features.salience_candidates import (
     SalienceCandidate,
     build_salience_candidate_bars,
+    rank_accent_candidates,
 )
 from tja_ai_chartgen.rules.styles import (
     StyleTemplate,
@@ -64,6 +65,12 @@ MAX_CONSECUTIVE_WEAK_HITS = 2
 GRID_ACTIVITY_EVIDENCE_THRESHOLD = 0.18
 SPECTRAL_GRID_EVIDENCE_THRESHOLD = 0.25
 INSTRUMENT_GRID_EVIDENCE_THRESHOLD = 0.35
+BIG_NOTE_LIMITS = {
+    "easy": 1,
+    "normal": 1,
+    "hard": 2,
+    "oni": 2,
+}
 
 
 @dataclass(frozen=True)
@@ -127,6 +134,7 @@ def generate_fallback_chart_bars(
     )
     chart_bars: list[ChartBar] = []
     previous_was_special = False
+    previous_ended_with_big_note = False
     for position, bar in enumerate(bars):
         hint = density_hints[position]
         salience_candidates = salience_candidate_bars[position]
@@ -155,15 +163,18 @@ def generate_fallback_chart_bars(
                 level,
                 output_resolution=output_resolution,
                 salience_candidates=salience_candidates,
+                forbid_initial_big_note=previous_ended_with_big_note,
             )
             previous_was_special = False
-        chart_bars.append(
-            encode_chart_bar_events(
-                events,
-                canonical_grids_per_bar=bar.grids_per_bar,
-                output_resolution=output_resolution,
-                time_signature=bar.time_signature,
-            )
+        chart_bar = encode_chart_bar_events(
+            events,
+            canonical_grids_per_bar=bar.grids_per_bar,
+            output_resolution=output_resolution,
+            time_signature=bar.time_signature,
+        )
+        chart_bars.append(chart_bar)
+        previous_ended_with_big_note = bool(
+            chart_bar.notes and chart_bar.notes[-1] in {"3", "4"}
         )
     return chart_bars
 
@@ -212,6 +223,7 @@ def _feature_driven_events(
     *,
     output_resolution: int,
     salience_candidates: list[SalienceCandidate],
+    forbid_initial_big_note: bool = False,
 ) -> ChartBarEvents:
     grid_features = _project_grid_features(
         bar,
@@ -251,20 +263,26 @@ def _feature_driven_events(
         instrument_features=instrument_features,
     )
     colors = style_color_sequence(template, _effective_density(density, hint), bar.index)
-    accent_grids = {
-        feature.grid for feature in grid_features if feature.accent or feature.downbeat
-    }
-    accent_grids.update(
-        grid
-        for grid, feature in instrument_features.items()
-        if feature.drum_onset >= 0.75
+    big_note_grids = (
+        _select_big_note_grids(
+            bar,
+            selected,
+            salience_candidates,
+            profile=profile,
+            output_resolution=output_resolution,
+            forbid_initial_big_note=forbid_initial_big_note,
+        )
+        if template.name == "performance"
+        else set()
     )
     hits: list[ChartHitEvent] = []
     for sequence_index, grid in enumerate(sorted(selected)):
         color = colors[sequence_index % len(colors)]
         color = _spectral_color(color, spectral_features.get(grid))
         color = _instrument_color(color, instrument_features.get(grid))
-        if template.name == "performance" and grid in accent_grids:
+        if template.name == "performance":
+            color = "1" if color in {"1", "3"} else "2"
+        if grid in big_note_grids:
             color = "3" if color in {"1", "3"} else "4"
         hits.append(ChartHitEvent(tick=grid, note=color))
     return ChartBarEvents(index=bar.index, hits=hits)
@@ -627,6 +645,35 @@ def _select_supplemental_grids(
         candidate_grids.remove(best_grid)
         added += 1
     return added
+
+
+def _select_big_note_grids(
+    bar: BarFeature,
+    selected: set[int],
+    salience_candidates: list[SalienceCandidate],
+    *,
+    profile: CourseLoadProfile,
+    output_resolution: int,
+    forbid_initial_big_note: bool,
+) -> set[int]:
+    """按统一 accent salience 选择少量、互不相邻的大音符。"""
+    limit = BIG_NOTE_LIMITS[profile.name.casefold()]
+    if limit <= 0 or not selected:
+        return set()
+
+    step = bar.grids_per_bar // output_resolution
+    chosen: set[int] = set()
+    for candidate in rank_accent_candidates(salience_candidates):
+        if candidate.grid not in selected:
+            continue
+        if forbid_initial_big_note and candidate.grid == 0:
+            continue
+        if any(abs(candidate.grid - grid) <= step for grid in chosen):
+            continue
+        chosen.add(candidate.grid)
+        if len(chosen) >= limit:
+            break
+    return chosen
 
 
 def _weak_fill_limit(
