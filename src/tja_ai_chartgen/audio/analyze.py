@@ -37,6 +37,17 @@ FULL_ONSET_GRID_EVIDENCE_COVERAGE = 0.9
 MAX_ONSET_GRID_RUNNER_UP_RATIO = 0.9
 MIN_DISTINCT_BPM_DISTANCE = 3.0
 MIN_DISTINCT_BPM_RATIO = 0.03
+TEMPO_ARBITRATION_VERSION = "tempo-arbitration-v1"
+MIN_TEMPO_CANDIDATE_SCORE = 0.45
+MIN_BEATNET_INTERVAL_STABILITY = 0.8
+MIN_BEATNET_NUMBER_COMPLETENESS = 0.7
+MIN_BEATNET_METER_STABILITY = 0.5
+MIN_BEATNET_METER_LENGTH_SCORE = 0.65
+MAX_BEATNET_ONSET_SUPPORT_DEFICIT = 0.08
+TEMPO_AMBIGUITY_MARGIN = 0.04
+TEMPO_ALIAS_AMBIGUITY_MARGIN = 0.08
+TEMPO_AGREEMENT_RATIO = 0.03
+OFFSET_AGREEMENT_SECONDS = 0.08
 _BEATNET_IMPORT_LOCK = Lock()
 
 
@@ -629,12 +640,17 @@ def _beat_number_completeness(beat_numbers: list[int], time_signature: str) -> f
 def _meter_stability(beat_numbers: list[int], time_signature: str) -> float:
     expected_size = {"3/4": 3, "4/4": 4, "6/8": 6}[time_signature]
     downbeat_indexes = [index for index, number in enumerate(beat_numbers) if number == 1]
-    if len(downbeat_indexes) < 2:
+    if not downbeat_indexes:
         return 0.0
     cycles = [
         beat_numbers[start:end]
         for start, end in zip(downbeat_indexes, downbeat_indexes[1:], strict=False)
     ]
+    trailing_cycle = beat_numbers[downbeat_indexes[-1] :]
+    if len(trailing_cycle) == expected_size:
+        cycles.append(trailing_cycle)
+    if not cycles:
+        return 0.0
     expected_cycle = list(range(1, expected_size + 1))
     return round(sum(cycle == expected_cycle for cycle in cycles) / len(cycles), 6)
 
@@ -854,6 +870,376 @@ def _replace_tempo_candidates(
     return [
         candidate for candidate in existing if candidate.source not in replacement_sources
     ] + additions
+
+
+def _tempo_score_components(candidate: TempoMeterCandidate) -> dict[str, float]:
+    evidence = candidate.evidence
+    margin_quality = max(0.0, min(1.0, 0.5 + evidence.onset_support_margin))
+    evidence_volume = min(1.0, evidence.onset_count / 32.0)
+    sufficient_onsets = evidence.onset_count >= MIN_ONSET_GRID_ONSETS
+    if candidate.source.startswith("beatnet"):
+        if sufficient_onsets:
+            weights = {
+                "onset": 0.4,
+                "coverage": 0.1,
+                "interval": 0.15,
+                "margin": 0.05,
+                "beat_numbers": 0.1,
+                "meter": 0.08,
+                "meter_length": 0.05,
+                "downbeat": 0.07,
+            }
+        else:
+            weights = {
+                "onset": 0.0,
+                "coverage": 0.1,
+                "interval": 0.35,
+                "margin": 0.0,
+                "beat_numbers": 0.25,
+                "meter": 0.15,
+                "meter_length": 0.1,
+                "downbeat": 0.05,
+            }
+    elif sufficient_onsets:
+        weights = {
+            "onset": 0.6,
+            "coverage": 0.15,
+            "interval": 0.15,
+            "margin": 0.05,
+            "volume": 0.05,
+        }
+    else:
+        weights = {
+            "onset": 0.0,
+            "coverage": 0.4,
+            "interval": 0.6,
+        }
+    values = {
+        "onset": candidate.onset_support,
+        "coverage": candidate.time_coverage,
+        "interval": candidate.interval_stability,
+        "margin": margin_quality,
+        "volume": evidence_volume,
+        "beat_numbers": evidence.beat_number_completeness,
+        "meter": evidence.meter_stability,
+        "meter_length": evidence.meter_length_score,
+        "downbeat": evidence.downbeat_support,
+    }
+    components = {
+        key: round(values[key] * weight, 6)
+        for key, weight in weights.items()
+    }
+    components["total"] = round(min(1.0, sum(components.values())), 6)
+    return components
+
+
+def _tempo_candidate_rejection(
+    candidate: TempoMeterCandidate,
+    *,
+    baseline: TempoMeterCandidate,
+) -> str | None:
+    source = candidate.source
+    if source == baseline.source:
+        return None
+    if source.endswith("+onset-grid") and not candidate.accepted:
+        return f"local-rejection:{candidate.reason or 'unknown'}"
+    if not source.startswith("beatnet"):
+        return None
+
+    evidence = candidate.evidence
+    expected_size = {"3/4": 3, "4/4": 4, "6/8": 6}[candidate.time_signature]
+    if evidence.interval_count < max(2, expected_size - 1):
+        return "insufficient-tracker-intervals"
+    if candidate.interval_stability < MIN_BEATNET_INTERVAL_STABILITY:
+        return "unstable-beat-intervals"
+    if evidence.beat_number_completeness < MIN_BEATNET_NUMBER_COMPLETENESS:
+        return "incomplete-beat-numbers"
+    if evidence.meter_stability < MIN_BEATNET_METER_STABILITY:
+        return "unstable-meter"
+    if (
+        len(candidate.downbeat_times) >= 2
+        and evidence.meter_length_score < MIN_BEATNET_METER_LENGTH_SCORE
+    ):
+        return "implausible-meter-length"
+    if (
+        evidence.onset_count >= MIN_ONSET_GRID_ONSETS
+        and baseline.evidence.onset_count >= MIN_ONSET_GRID_ONSETS
+        and candidate.onset_support + MAX_BEATNET_ONSET_SUPPORT_DEFICIT
+        < baseline.onset_support
+    ):
+        return "onset-support-below-baseline"
+    if candidate.confidence < MIN_TEMPO_CANDIDATE_SCORE:
+        return "low-candidate-score"
+    return None
+
+
+def _tempo_candidates_disagree(
+    first: TempoMeterCandidate,
+    second: TempoMeterCandidate,
+) -> bool:
+    bpm_ratio = abs(first.bpm - second.bpm) / max(first.bpm, second.bpm)
+    if bpm_ratio > TEMPO_AGREEMENT_RATIO or first.time_signature != second.time_signature:
+        return True
+    interval = 60.0 / max(first.bpm, second.bpm)
+    phase_delta = abs((first.offset - second.offset) % interval)
+    phase_delta = min(phase_delta, interval - phase_delta)
+    return phase_delta > OFFSET_AGREEMENT_SECONDS
+
+
+def _tempo_alias_pair(first: TempoMeterCandidate, second: TempoMeterCandidate) -> bool:
+    slower, faster = sorted((first.bpm, second.bpm))
+    return abs(faster - (slower * 2.0)) <= BPM_SCAN_STEP
+
+
+def _tempo_source_priority(source: str, fallback_source: str) -> int:
+    if source == fallback_source:
+        return 3
+    if source.endswith("+onset-grid"):
+        return 2
+    if source == "beatnet":
+        return 1
+    return 0
+
+
+def arbitrate_tempo_candidates(
+    candidates: list[TempoMeterCandidate],
+    *,
+    fallback_source: str,
+) -> tuple[list[TempoMeterCandidate], TempoAnalysisDecision]:
+    if not candidates:
+        raise ValueError("tempo arbitration requires at least one candidate")
+    baseline = next(
+        (candidate for candidate in candidates if candidate.source == fallback_source),
+        candidates[0],
+    )
+    scored: list[TempoMeterCandidate] = []
+    rejections: dict[str, str] = {}
+    for candidate in candidates:
+        components = _tempo_score_components(candidate)
+        scored_candidate = candidate.model_copy(
+            update={
+                "score_components": components,
+                "confidence": components["total"],
+            }
+        )
+        rejection = _tempo_candidate_rejection(scored_candidate, baseline=baseline)
+        if rejection is not None:
+            rejections[candidate.source] = rejection
+            scored_candidate = scored_candidate.model_copy(
+                update={"accepted": False, "selected": False, "reason": rejection}
+            )
+        else:
+            scored_candidate = scored_candidate.model_copy(
+                update={"accepted": True, "selected": False, "reason": "eligible"}
+            )
+        scored.append(scored_candidate)
+
+    eligible = [candidate for candidate in scored if candidate.accepted]
+    if not eligible:
+        eligible = [
+            baseline.model_copy(
+                update={
+                    "score_components": _tempo_score_components(baseline),
+                    "confidence": _tempo_score_components(baseline)["total"],
+                    "accepted": True,
+                    "reason": "fallback-only",
+                }
+            )
+        ]
+    ranked = sorted(
+        eligible,
+        key=lambda candidate: (
+            candidate.confidence,
+            _tempo_source_priority(candidate.source, fallback_source),
+        ),
+        reverse=True,
+    )
+    top = ranked[0]
+    runner_up = ranked[1] if len(ranked) > 1 else None
+    conservative = next(
+        (candidate for candidate in ranked if candidate.source == fallback_source),
+        baseline,
+    )
+    local_refinement_source = (
+        f"{fallback_source}+onset-grid"
+        if not fallback_source.endswith("+onset-grid")
+        else None
+    )
+    ambiguous = bool(
+        local_refinement_source
+        and "ambiguous_candidates"
+        in rejections.get(local_refinement_source, "")
+    )
+    ambiguity_threshold = TEMPO_AMBIGUITY_MARGIN
+    if runner_up is not None and _tempo_alias_pair(top, runner_up):
+        ambiguity_threshold = TEMPO_ALIAS_AMBIGUITY_MARGIN
+    if ambiguous:
+        selected = conservative
+    elif (
+        runner_up is not None
+        and _tempo_candidates_disagree(top, runner_up)
+        and top.confidence - runner_up.confidence < ambiguity_threshold
+    ):
+        ambiguous = True
+        selected = conservative
+    else:
+        selected = top
+
+    updated: list[TempoMeterCandidate] = []
+    for candidate in scored:
+        if candidate.source == selected.source:
+            updated.append(
+                candidate.model_copy(
+                    update={
+                        "accepted": True,
+                        "selected": True,
+                        "reason": "ambiguous-fallback" if ambiguous else "selected",
+                    }
+                )
+            )
+        elif candidate.accepted:
+            updated.append(
+                candidate.model_copy(
+                    update={
+                        "selected": False,
+                        "reason": "ambiguous" if ambiguous else "lower-score",
+                    }
+                )
+            )
+        else:
+            updated.append(candidate)
+    selected = next(candidate for candidate in updated if candidate.selected)
+    ranked_updated = sorted(
+        (candidate for candidate in updated if not candidate.selected),
+        key=lambda candidate: candidate.confidence,
+        reverse=True,
+    )
+    decision_runner = ranked_updated[0] if ranked_updated else None
+    score_margin = (
+        round(max(0.0, selected.confidence - decision_runner.confidence), 6)
+        if decision_runner is not None
+        else None
+    )
+    decision_reason = "ambiguous-candidates" if ambiguous else "selected-by-score"
+    if selected.source == fallback_source and not ambiguous:
+        preferred_rejection = (
+            rejections.get(decision_runner.source)
+            if decision_runner is not None
+            else None
+        )
+        if preferred_rejection is not None:
+            decision_reason = preferred_rejection.removeprefix("local-rejection:")
+    decision = TempoAnalysisDecision(
+        decision_version=TEMPO_ARBITRATION_VERSION,
+        fallback_source=fallback_source,
+        selected_source=selected.source,
+        estimated_bpm=selected.bpm,
+        estimated_offset=selected.offset,
+        normalized_support=selected.onset_support,
+        onset_count=selected.evidence.onset_count,
+        time_coverage=selected.time_coverage,
+        runner_up_bpm=selected.evidence.runner_up_bpm,
+        runner_up_support=selected.evidence.runner_up_support,
+        selected_score=selected.confidence,
+        runner_up_source=decision_runner.source if decision_runner is not None else None,
+        runner_up_score=decision_runner.confidence if decision_runner is not None else None,
+        score_margin=score_margin,
+        ambiguous=ambiguous,
+        candidate_rejections=rejections,
+        accepted=selected.source != fallback_source and not ambiguous,
+        reason=decision_reason,
+    )
+    return updated, decision
+
+
+def _raw_baseline_candidate(raw: AudioAnalysisRaw) -> TempoMeterCandidate:
+    source = "librosa+onset-grid" if "onset-grid" in raw.analyzer else "librosa"
+    onset_weights = _weights_from_raw_onsets(raw)
+    onset_support, evidence = _tempo_meter_evidence(
+        bpm=raw.bpm,
+        offset=raw.offset,
+        time_signature=raw.time_signature,
+        beat_times=raw.beat_times,
+        downbeat_times=raw.downbeat_times,
+        onset_times=raw.onset_times,
+        onset_weights=onset_weights,
+        onset_strengths=raw.onset_strengths,
+        spectral=raw.spectral,
+        sample_rate=raw.sample_rate,
+        hop_length=raw.hop_length,
+        beat_numbers=raw.beat_numbers,
+    )
+    return _tempo_candidate(
+        source=source,
+        bpm=raw.bpm,
+        offset=raw.offset,
+        time_signature=raw.time_signature,
+        beat_times=raw.beat_times,
+        downbeat_times=raw.downbeat_times,
+        onset_support=onset_support,
+        time_coverage=_candidate_time_coverage(raw.beat_times, raw.duration),
+        evidence=evidence,
+        accepted=True,
+        reason="baseline",
+    )
+
+
+def _apply_tempo_arbitration(
+    raw: AudioAnalysisRaw,
+    candidates: list[TempoMeterCandidate],
+    *,
+    fallback_source: str,
+) -> AudioAnalysisRaw:
+    updated_candidates, decision = arbitrate_tempo_candidates(
+        candidates,
+        fallback_source=fallback_source,
+    )
+    selected = next(candidate for candidate in updated_candidates if candidate.selected)
+    uses_meter = selected.source.startswith("beatnet")
+    offset = selected.downbeat_times[0] if selected.downbeat_times else selected.offset
+    beat_times = (
+        _regular_beat_times(offset, selected.bpm, raw.duration)
+        if uses_meter
+        else selected.beat_times
+    )
+    if not beat_times:
+        return raw.model_copy(
+            update={"tempo_candidates": updated_candidates, "tempo_analysis": decision}
+        )
+    beat_numbers = (
+        _regular_beat_numbers(len(beat_times), selected.time_signature)
+        if uses_meter
+        else []
+    )
+    downbeat_times = (
+        _project_downbeats_to_regular_grid(
+            selected.downbeat_times,
+            beat_times,
+            offset,
+            selected.bpm,
+        )
+        if uses_meter
+        else []
+    )
+    if uses_meter and not downbeat_times:
+        downbeat_times = [
+            time
+            for time, number in zip(beat_times, beat_numbers, strict=True)
+            if number == 1
+        ]
+    return raw.model_copy(
+        update={
+            "bpm": selected.bpm,
+            "offset": downbeat_times[0] if downbeat_times else offset,
+            "beat_times": beat_times,
+            "beat_numbers": beat_numbers,
+            "downbeat_times": downbeat_times,
+            "time_signature": selected.time_signature,
+            "analyzer": selected.source,
+            "tempo_candidates": updated_candidates,
+            "tempo_analysis": decision,
+        }
+    )
 
 
 def _regular_beat_numbers(beat_count: int, time_signature: str) -> list[int]:
@@ -1122,6 +1508,11 @@ def analyze_audio(input_path: Path, use_beatnet: bool = False) -> AudioAnalysisR
         tempo_analysis=estimate.to_decision("librosa"),
         spectral=spectral,
     )
+    raw = _apply_tempo_arbitration(
+        raw,
+        raw.tempo_candidates,
+        fallback_source="librosa",
+    )
 
     if not use_beatnet:
         return raw
@@ -1366,42 +1757,26 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         accepted=estimate.accepted,
         reason=estimate.reason,
     )
-    if estimate.accepted:
-        bpm, offset = estimate.bpm, estimate.offset
-
-    beat_times = _regular_beat_times(offset, bpm, raw.duration)
-    if not beat_times:
-        return raw
-
-    beat_numbers = _regular_beat_numbers(len(beat_times), time_signature)
-    downbeat_times = _project_downbeats_to_regular_grid(
-        beatnet_downbeat_references,
-        beat_times,
-        offset,
-        bpm,
-    )
-    if not downbeat_times:
-        downbeat_times = [
-            time
-            for time, number in zip(beat_times, beat_numbers, strict=True)
-            if number == 1
-        ]
-
-    return raw.model_copy(
-        update={
-            "beat_times": beat_times,
-            "beat_numbers": beat_numbers,
-            "downbeat_times": downbeat_times,
-            "offset": downbeat_times[0] if downbeat_times else offset,
-            "time_signature": time_signature,
-            "bpm": bpm,
-            "analyzer": "beatnet+librosa+onset-grid" if estimate.accepted else "beatnet",
-            "tempo_candidates": _replace_tempo_candidates(
-                raw.tempo_candidates,
-                [beatnet_candidate, refined_candidate],
+    baseline_candidates = raw.tempo_candidates or [_raw_baseline_candidate(raw)]
+    fallback_candidate = next(
+        (candidate for candidate in baseline_candidates if candidate.selected),
+        next(
+            (
+                candidate
+                for candidate in baseline_candidates
+                if candidate.source == raw.analyzer
             ),
-            "tempo_analysis": estimate.to_decision("beatnet"),
-        }
+            baseline_candidates[0],
+        ),
+    )
+    candidates = _replace_tempo_candidates(
+        baseline_candidates,
+        [beatnet_candidate, refined_candidate],
+    )
+    return _apply_tempo_arbitration(
+        raw,
+        candidates,
+        fallback_source=fallback_candidate.source,
     )
 
 

@@ -171,12 +171,15 @@ class TempoMeterCandidate(BaseModel):
     time_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
     interval_stability: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence: TempoMeterEvidence = Field(default_factory=TempoMeterEvidence)
+    score_components: dict[str, float] = Field(default_factory=dict)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     accepted: bool = False
+    selected: bool = False
     reason: str | None = None
 
 
 class TempoAnalysisDecision(BaseModel):
+    decision_version: str = "legacy"
     fallback_source: str
     selected_source: str
     estimated_bpm: float
@@ -186,6 +189,12 @@ class TempoAnalysisDecision(BaseModel):
     time_coverage: float = Field(ge=0.0, le=1.0)
     runner_up_bpm: float | None = None
     runner_up_support: float | None = Field(default=None, ge=0.0, le=1.0)
+    selected_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    runner_up_source: str | None = None
+    runner_up_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    score_margin: float | None = Field(default=None, ge=0.0, le=1.0)
+    ambiguous: bool = False
+    candidate_rejections: dict[str, str] = Field(default_factory=dict)
     accepted: bool
     reason: str
 

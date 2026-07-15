@@ -67,8 +67,10 @@ def test_real_audio_pipeline(
     assert raw.analyzer == "librosa+onset-grid"
     assert raw.tempo_analysis is not None
     assert raw.tempo_analysis.accepted is True
-    assert raw.tempo_analysis.reason == "accepted"
-    assert raw.tempo_analysis.selected_source == "onset-grid"
+    assert raw.tempo_analysis.reason == "selected-by-score"
+    assert raw.tempo_analysis.selected_source == "librosa+onset-grid"
+    assert raw.tempo_analysis.decision_version == "tempo-arbitration-v1"
+    assert raw.tempo_analysis.selected_score > 0.0
     assert raw.tempo_analysis.normalized_support >= 0.85
     assert raw.tempo_analysis.onset_count >= 12
     assert raw.tempo_analysis.time_coverage >= 0.75
@@ -118,6 +120,14 @@ def test_real_audio_pipeline(
     assert serialized_analysis["instrument_analysis_status"] == "unavailable"
     assert serialized_analysis["tempo_analysis"]["accepted"] is True
     assert serialized_analysis["tempo_analysis"]["fallback_source"] == "librosa"
+    assert serialized_analysis["tempo_analysis"]["decision_version"] == (
+        "tempo-arbitration-v1"
+    )
+    assert serialized_analysis["tempo_analysis"]["selected_score"] > 0.0
+    assert serialized_analysis["tempo_analysis"]["ambiguous"] is False
+    assert sum(
+        candidate["selected"] for candidate in serialized_analysis["tempo_candidates"]
+    ) == 1
     assert [candidate["source"] for candidate in serialized_analysis["tempo_candidates"]] == [
         "librosa",
         "librosa+onset-grid",
@@ -273,7 +283,7 @@ def test_missing_instrument_models_fall_back_without_blocking_real_audio_generat
         instrument_model_dir=tmp_path / "missing-models",
     )
 
-    assert analysis.analysis_schema_version == 8
+    assert analysis.analysis_schema_version == 9
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "fallback"
     assert analysis.instrument_analysis_reason == "missing-model:manifest"

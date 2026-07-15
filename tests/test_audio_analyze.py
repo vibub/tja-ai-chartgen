@@ -12,6 +12,7 @@ from tja_ai_chartgen.audio.analyze import (
     _regular_beat_times,
     analyze_audio,
     apply_analysis_overrides,
+    arbitrate_tempo_candidates,
     enrich_tempo_candidates_with_instruments,
     enhance_with_beatnet,
     estimate_time_signature,
@@ -26,6 +27,7 @@ from tja_ai_chartgen.tja.model import (
     ChartMetadata,
     TempoAnalysisDecision,
     TempoMeterCandidate,
+    TempoMeterEvidence,
     TjaChart,
 )
 from tja_ai_chartgen.tja.writer import render_tja
@@ -39,6 +41,125 @@ def test_normalize_bpm_keeps_taiko_friendly_range():
 def test_normalize_bpm_rejects_non_positive_values():
     with pytest.raises(ValueError, match="BPM must be positive"):
         normalize_bpm(0)
+
+
+def _arbitration_candidate(
+    source: str,
+    *,
+    bpm: float = 120.0,
+    time_signature: str = "4/4",
+    onset_support: float = 0.9,
+    onset_count: int = 16,
+    downbeat_support: float = 0.5,
+) -> TempoMeterCandidate:
+    interval = 60.0 / bpm
+    beat_times = [0.2 + index * interval for index in range(17)]
+    meter_size = {"3/4": 3, "4/4": 4, "6/8": 6}[time_signature]
+    downbeat_times = [
+        beat_times[index]
+        for index in range(0, len(beat_times), 3 if time_signature == "6/8" else meter_size)
+    ]
+    return TempoMeterCandidate(
+        source=source,
+        bpm=bpm,
+        offset=0.2,
+        time_signature=time_signature,
+        beat_times=beat_times,
+        downbeat_times=downbeat_times if source.startswith("beatnet") else [],
+        onset_support=onset_support,
+        time_coverage=1.0,
+        interval_stability=1.0,
+        evidence=TempoMeterEvidence(
+            onset_count=onset_count,
+            onset_support_margin=0.1,
+            interval_count=len(beat_times) - 1,
+            beat_number_completeness=1.0 if source.startswith("beatnet") else 0.0,
+            meter_stability=1.0 if source.startswith("beatnet") else 0.0,
+            downbeat_support=downbeat_support if source.startswith("beatnet") else 0.0,
+            meter_length_score=1.0 if source.startswith("beatnet") else 0.0,
+        ),
+        accepted=True,
+        reason="candidate",
+    )
+
+
+def test_arbitration_rejects_beatnet_when_onset_support_is_below_baseline():
+    baseline = _arbitration_candidate("librosa+onset-grid", onset_support=0.92)
+    beatnet = _arbitration_candidate("beatnet", onset_support=0.7)
+
+    candidates, decision = arbitrate_tempo_candidates(
+        [baseline, beatnet],
+        fallback_source="librosa+onset-grid",
+    )
+
+    rejected = next(candidate for candidate in candidates if candidate.source == "beatnet")
+    assert rejected.accepted is False
+    assert rejected.reason == "onset-support-below-baseline"
+    assert decision.selected_source == "librosa+onset-grid"
+    assert decision.candidate_rejections == {
+        "beatnet": "onset-support-below-baseline"
+    }
+
+
+def test_arbitration_selects_stronger_beatnet_candidate_by_score():
+    baseline = _arbitration_candidate(
+        "librosa",
+        onset_support=0.35,
+        onset_count=4,
+    ).model_copy(update={"time_coverage": 0.4, "interval_stability": 0.5})
+    beatnet = _arbitration_candidate("beatnet", time_signature="3/4", onset_count=4)
+
+    candidates, decision = arbitrate_tempo_candidates(
+        [baseline, beatnet],
+        fallback_source="librosa",
+    )
+
+    selected = next(candidate for candidate in candidates if candidate.selected)
+    assert selected.source == "beatnet"
+    assert selected.confidence > baseline.confidence
+    assert decision.accepted is True
+    assert decision.reason == "selected-by-score"
+    assert decision.selected_score == selected.confidence
+
+
+def test_arbitration_promotes_local_onset_grid_ambiguity_to_decision():
+    baseline = _arbitration_candidate("librosa")
+    ambiguous_grid = _arbitration_candidate("librosa+onset-grid").model_copy(
+        update={"accepted": False, "reason": "ambiguous_candidates"}
+    )
+
+    candidates, decision = arbitrate_tempo_candidates(
+        [baseline, ambiguous_grid],
+        fallback_source="librosa",
+    )
+
+    selected = next(candidate for candidate in candidates if candidate.selected)
+    assert selected.source == "librosa"
+    assert selected.reason == "ambiguous-fallback"
+    assert decision.ambiguous is True
+    assert decision.reason == "ambiguous-candidates"
+    assert decision.runner_up_source == "librosa+onset-grid"
+    assert decision.candidate_rejections == {
+        "librosa+onset-grid": "local-rejection:ambiguous_candidates"
+    }
+
+
+def test_arbitration_keeps_fallback_for_close_speed_alias_candidates():
+    baseline = _arbitration_candidate("librosa+onset-grid", bpm=120)
+    beatnet = _arbitration_candidate("beatnet", bpm=240)
+
+    candidates, decision = arbitrate_tempo_candidates(
+        [baseline, beatnet],
+        fallback_source="librosa+onset-grid",
+    )
+
+    selected = next(candidate for candidate in candidates if candidate.selected)
+    assert selected.source == "librosa+onset-grid"
+    assert selected.reason == "ambiguous-fallback"
+    assert decision.ambiguous is True
+    assert decision.accepted is False
+    assert decision.reason == "ambiguous-candidates"
+    assert decision.runner_up_source == "beatnet"
 
 
 def test_estimate_tempo_and_offset_from_onsets_selects_periodic_grid():
@@ -474,9 +595,10 @@ def test_analyze_audio_keeps_librosa_baseline_when_onset_grid_is_rejected(tmp_pa
         "librosa+onset-grid",
     ]
     assert raw.tempo_candidates[0].accepted is True
-    assert raw.tempo_candidates[0].reason == "baseline"
+    assert raw.tempo_candidates[0].selected is True
+    assert raw.tempo_candidates[0].reason == "selected"
     assert raw.tempo_candidates[1].accepted is False
-    assert raw.tempo_candidates[1].reason == "insufficient_onsets"
+    assert raw.tempo_candidates[1].reason == "local-rejection:insufficient_onsets"
 
 
 def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
@@ -507,19 +629,29 @@ def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
     assert updated.bpm == 120
     assert updated.time_signature == "3/4"
     assert updated.tempo_analysis is not None
-    assert updated.tempo_analysis.accepted is False
-    assert updated.tempo_analysis.reason == "insufficient_onsets"
+    assert updated.tempo_analysis.accepted is True
+    assert updated.tempo_analysis.reason == "selected-by-score"
     assert updated.tempo_analysis.selected_source == "beatnet"
     assert [candidate.source for candidate in updated.tempo_candidates] == [
+        "librosa",
         "beatnet",
         "beatnet+onset-grid",
     ]
-    assert updated.tempo_candidates[0].accepted is True
-    assert updated.tempo_candidates[0].time_signature == "3/4"
-    assert updated.tempo_candidates[0].downbeat_times == [0.25, 1.75]
-    assert updated.tempo_candidates[0].interval_stability == 1.0
-    assert updated.tempo_candidates[1].accepted is False
-    assert updated.tempo_candidates[1].reason == "insufficient_onsets"
+    beatnet = next(
+        candidate for candidate in updated.tempo_candidates if candidate.source == "beatnet"
+    )
+    refined = next(
+        candidate
+        for candidate in updated.tempo_candidates
+        if candidate.source == "beatnet+onset-grid"
+    )
+    assert beatnet.accepted is True
+    assert beatnet.selected is True
+    assert beatnet.time_signature == "3/4"
+    assert beatnet.downbeat_times == [0.25, 1.75]
+    assert beatnet.interval_stability == 1.0
+    assert refined.accepted is False
+    assert refined.reason == "local-rejection:insufficient_onsets"
 
 
 def test_merge_beatnet_output_records_meter_downbeat_and_alias_evidence():
@@ -561,7 +693,9 @@ def test_merge_beatnet_output_records_meter_downbeat_and_alias_evidence():
         ],
     )
 
-    candidate = updated.tempo_candidates[0]
+    candidate = next(
+        candidate for candidate in updated.tempo_candidates if candidate.source == "beatnet"
+    )
     evidence = candidate.evidence
     assert candidate.onset_support == 1.0
     assert evidence.onset_count == 7
@@ -623,9 +757,15 @@ def test_merge_beatnet_output_uses_four_four_grid_when_two_beat_meter_is_unsuppo
         [[0.25 + index * 0.5, (index % 2) + 1] for index in range(8)],
     )
 
+    assert updated.analyzer == "librosa"
     assert updated.time_signature == "4/4"
-    assert updated.beat_numbers[:8] == [1, 2, 3, 4, 1, 2, 3, 4]
-    assert updated.downbeat_times == [0.25, 2.25, 4.25]
+    assert updated.beat_numbers == []
+    assert updated.downbeat_times == []
+    assert updated.tempo_analysis is not None
+    assert updated.tempo_analysis.accepted is False
+    assert updated.tempo_analysis.candidate_rejections["beatnet"] == (
+        "incomplete-beat-numbers"
+    )
 
 
 def test_merge_beatnet_output_converts_six_eight_pulses_to_quarter_note_bpm():
@@ -796,14 +936,15 @@ def test_merge_beatnet_output_refines_timing_with_onset_grid():
         ],
     )
 
-    assert updated.analyzer == "beatnet+librosa+onset-grid"
+    assert updated.analyzer == "beatnet+onset-grid"
     assert updated.bpm == 120
     assert updated.beat_times[:4] == [0.2, 0.7, 1.2, 1.7]
     assert updated.offset == 0.2
     assert updated.time_signature == "3/4"
     assert updated.tempo_analysis is not None
     assert updated.tempo_analysis.accepted is True
-    assert updated.tempo_analysis.selected_source == "onset-grid"
+    assert updated.tempo_analysis.selected_source == "beatnet+onset-grid"
+    assert updated.tempo_analysis.decision_version == "tempo-arbitration-v1"
     assert [candidate.source for candidate in updated.tempo_candidates] == [
         "librosa",
         "librosa+onset-grid",
@@ -814,7 +955,10 @@ def test_merge_beatnet_output_refines_timing_with_onset_grid():
     assert updated.tempo_candidates[3].bpm == 120
     assert updated.tempo_candidates[3].offset == 0.2
     assert updated.tempo_candidates[3].onset_support >= 0.95
-    assert updated.tempo_candidates[3].confidence >= 0.95
+    assert updated.tempo_candidates[3].confidence >= 0.85
+    assert updated.tempo_candidates[3].score_components["total"] == (
+        updated.tempo_candidates[3].confidence
+    )
 
 
 def test_merge_beatnet_output_keeps_raw_when_output_is_empty():

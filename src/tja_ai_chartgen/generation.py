@@ -175,7 +175,7 @@ def build_song_analysis(
         for phrase in structure.phrases
     ]
     return SongAnalysis(
-        analysis_schema_version=8,
+        analysis_schema_version=9,
         beatnet_analysis_status=raw.beatnet_analysis_status,
         beatnet_analysis_reason=raw.beatnet_analysis_reason,
         spectral_feature_version=raw.spectral.feature_version,
@@ -224,16 +224,40 @@ def build_analysis_notices(
 ) -> list[GenerationNotice]:
     notices: list[GenerationNotice] = []
     analyzer = analysis.analyzer.lower()
+    tempo = analysis.tempo_analysis
     if requested_beatnet and "beatnet" not in analyzer:
-        notices.append(
-            GenerationNotice(
-                code="beatnet-fallback",
-                level="warning",
-                stage="analysis",
-                message="BeatNet 增强未生效，已保留 librosa 分析结果。",
-                detail=f"reason={analysis.beatnet_analysis_reason or 'unknown'}",
-            )
+        beatnet_rejections = (
+            {
+                source: reason
+                for source, reason in tempo.candidate_rejections.items()
+                if source.startswith("beatnet")
+            }
+            if tempo is not None
+            else {}
         )
+        if analysis.beatnet_analysis_status == "complete" and beatnet_rejections:
+            notices.append(
+                GenerationNotice(
+                    code="beatnet-candidate-rejected",
+                    level="warning",
+                    stage="analysis",
+                    message="BeatNet 已完成分析，但候选未通过节拍仲裁，已保留基础结果。",
+                    detail="; ".join(
+                        f"{source}={reason}"
+                        for source, reason in sorted(beatnet_rejections.items())
+                    ),
+                )
+            )
+        else:
+            notices.append(
+                GenerationNotice(
+                    code="beatnet-fallback",
+                    level="warning",
+                    stage="analysis",
+                    message="BeatNet 增强未生效，已保留 librosa 分析结果。",
+                    detail=f"reason={analysis.beatnet_analysis_reason or 'unknown'}",
+                )
+            )
 
     if analysis.spectral_analysis_status == "fallback":
         notices.append(
@@ -280,18 +304,43 @@ def build_analysis_notices(
                 )
             )
 
-    tempo = analysis.tempo_analysis
-    if tempo is not None and not tempo.accepted and "manual-override" not in analyzer:
-        source = "BeatNet" if tempo.fallback_source == "beatnet" else "librosa"
+    if tempo is not None and tempo.ambiguous and "manual-override" not in analyzer:
+        notices.append(
+            GenerationNotice(
+                code="tempo-arbitration-ambiguous",
+                level="warning",
+                stage="analysis",
+                message="节拍候选得分接近且结论冲突，已保守保留基础结果。",
+                detail=(
+                    f"selected={tempo.selected_source}; score={tempo.selected_score:.3f}; "
+                    f"runner_up={tempo.runner_up_source or 'none'}; "
+                    f"runner_up_score={tempo.runner_up_score or 0.0:.3f}"
+                ),
+            )
+        )
+    elif tempo is not None and not tempo.accepted and "manual-override" not in analyzer:
+        source = "BeatNet" if tempo.fallback_source.startswith("beatnet") else "librosa"
+        onset_refinement_reason = tempo.reason in {
+            "insufficient_onsets",
+            "insufficient_time_span",
+            "insufficient_time_coverage",
+            "low_normalized_support",
+        }
+        message = (
+            f"onset-grid 节拍校正置信度不足，已保留 {source} 基线。"
+            if onset_refinement_reason
+            else f"节拍增强候选未通过仲裁，已保留 {source} 基线。"
+        )
         notices.append(
             GenerationNotice(
                 code="tempo-refinement-fallback",
                 level="warning",
                 stage="analysis",
-                message=f"onset-grid 节拍校正置信度不足，已保留 {source} 基线。",
+                message=message,
                 detail=(
                     f"reason={tempo.reason}; support={tempo.normalized_support:.3f}; "
-                    f"onsets={tempo.onset_count}; coverage={tempo.time_coverage:.3f}"
+                    f"score={tempo.selected_score:.3f}; onsets={tempo.onset_count}; "
+                    f"coverage={tempo.time_coverage:.3f}"
                 ),
             )
         )

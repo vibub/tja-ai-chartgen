@@ -146,7 +146,7 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.time_signature == "3/4"
     assert len(analysis.bars) == 2
     assert all(bar.time_signature == "3/4" for bar in analysis.bars)
-    assert analysis.analysis_schema_version == 8
+    assert analysis.analysis_schema_version == 9
     assert analysis.spectral_feature_version == "spectral-v1"
     assert analysis.spectral_analysis_status == "complete"
     assert analysis.instrument_feature_version is None
@@ -246,7 +246,7 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
             },
         )
     ]
-    assert analysis.analysis_schema_version == 8
+    assert analysis.analysis_schema_version == 9
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "complete"
     assert analysis.instrument_demucs_model == "htdemucs"
@@ -304,6 +304,73 @@ def test_build_analysis_notices_reports_optional_analysis_fallbacks():
     assert all(notice.stage == "analysis" for notice in notices)
     beatnet_notice = next(notice for notice in notices if notice.code == "beatnet-fallback")
     assert beatnet_notice.detail == "reason=inference-error:RuntimeError"
+
+
+def test_build_analysis_notices_reports_rejected_beatnet_candidates():
+    analysis = _analysis().model_copy(
+        update={
+            "analyzer": "librosa+onset-grid",
+            "beatnet_analysis_status": "complete",
+            "tempo_analysis": TempoAnalysisDecision(
+                decision_version="tempo-arbitration-v1",
+                fallback_source="librosa+onset-grid",
+                selected_source="librosa+onset-grid",
+                estimated_bpm=120,
+                estimated_offset=0.2,
+                normalized_support=0.9,
+                onset_count=16,
+                time_coverage=0.9,
+                selected_score=0.85,
+                candidate_rejections={
+                    "beatnet": "onset-support-below-baseline",
+                    "beatnet+onset-grid": "local-rejection:ambiguous_candidates",
+                },
+                accepted=False,
+                reason="selected-by-score",
+            ),
+        }
+    )
+
+    notices = build_analysis_notices(analysis, requested_beatnet=True)
+
+    assert {notice.code for notice in notices} == {
+        "beatnet-candidate-rejected",
+        "tempo-refinement-fallback",
+    }
+    rejected = next(
+        notice for notice in notices if notice.code == "beatnet-candidate-rejected"
+    )
+    assert "beatnet=onset-support-below-baseline" in (rejected.detail or "")
+
+
+def test_build_analysis_notices_reports_tempo_ambiguity():
+    analysis = _analysis().model_copy(
+        update={
+            "analyzer": "librosa+onset-grid",
+            "tempo_analysis": TempoAnalysisDecision(
+                decision_version="tempo-arbitration-v1",
+                fallback_source="librosa+onset-grid",
+                selected_source="librosa+onset-grid",
+                estimated_bpm=120,
+                estimated_offset=0.2,
+                normalized_support=0.9,
+                onset_count=16,
+                time_coverage=0.9,
+                selected_score=0.89,
+                runner_up_source="beatnet",
+                runner_up_score=0.9,
+                score_margin=0.0,
+                ambiguous=True,
+                accepted=False,
+                reason="ambiguous-candidates",
+            ),
+        }
+    )
+
+    notices = build_analysis_notices(analysis)
+
+    assert [notice.code for notice in notices] == ["tempo-arbitration-ambiguous"]
+    assert "runner_up=beatnet" in (notices[0].detail or "")
 
 
 @pytest.mark.parametrize(
