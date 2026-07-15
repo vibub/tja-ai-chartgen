@@ -525,6 +525,42 @@ def is_reliable_burst(salience: BarRhythmicSalience) -> bool:
     )
 
 
+def project_reliable_burst_span(
+    bar: BarFeature,
+    salience: BarRhythmicSalience,
+    *,
+    output_resolution: int,
+) -> tuple[int, int] | None:
+    """将可靠 burst 范围投影到无需量化误差的目标输出格点。"""
+    if (
+        not is_reliable_burst(salience)
+        or output_resolution < 3
+        or bar.grids_per_bar % output_resolution
+    ):
+        return None
+
+    step = bar.grids_per_bar // output_resolution
+    burst_start = max(
+        bar.grids_per_bar // 2,
+        salience.burst_start_grid or 0,
+    )
+    burst_end = salience.burst_end_grid
+    if burst_end is None or burst_end <= burst_start:
+        return None
+
+    start_grid = ((burst_start + step - 1) // step) * step
+    end_grid = (burst_end // step) * step
+    latest_grid = bar.grids_per_bar - step
+    if start_grid >= latest_grid:
+        return None
+    end_grid = min(latest_grid, end_grid)
+    if end_grid <= start_grid:
+        end_grid = min(latest_grid, start_grid + step)
+    if end_grid <= start_grid:
+        return None
+    return start_grid, end_grid
+
+
 def _apply_bar_don_ka_salience(
     bar: BarFeature,
     base: BarRhythmicSalience,

@@ -643,7 +643,7 @@ AI payload 建议发送：
 
 不再要求 AI 根据具体乐器名称决定 note 时间。
 
-当前 8.5 已将 AI 输入升级为 `tja-ai-chartgen-compact-v5`。`bar_salience` 与 bars 按位置对齐，每个小节包含 bar confidence、稳定 fallback reason 和稀疏 point；point 使用 legend 定义的 `[grid,hit,accent,don_preference,ka_preference,sustained_activity,confidence,kind]` 行，其中连续值统一编码为 0–1000 整数。salience 在发送前复用与 fallback 相同的完整 hit/accent/don-ka 流水线和候选排序，并按当前逐小节 `ResolutionPlan` 删除不可精确表达的点，因此 AI 不会看到无法合法返回的细分 salience。prompt 明确要求先消费 strong-transient、transient、rhythmic-skeleton、structure-highlight，再考虑 weak-evidence 或短连接点；instrument 与原始 audio channel 降为乐句、motif、段落和邻近支持上下文，不再直接决定 note tick。
+8.5 首次将 AI 输入升级为 `tja-ai-chartgen-compact-v5`，9.4 再升级为携带可靠 burst 范围的 `compact-v6`。`bar_salience` 与 bars 按位置对齐，每个小节包含 bar confidence、稳定 fallback reason、burst score/confidence/可表达起止格/可靠标记和稀疏 point；point 使用 legend 定义的 `[grid,hit,accent,don_preference,ka_preference,sustained_activity,confidence,kind]` 行，其中连续值统一编码为 0–1000 整数。salience 在发送前复用与 fallback 相同的完整 hit/accent/don-ka 流水线和候选排序，并按当前逐小节 `ResolutionPlan` 删除不可精确表达的点，因此 AI 不会看到无法合法返回的细分 salience。prompt 明确要求先消费 strong-transient、transient、rhythmic-skeleton、structure-highlight，再考虑 weak-evidence 或短连接点；instrument 与原始 audio channel 降为乐句、motif、段落和邻近支持上下文，不再直接决定 note tick。
 
 ## 8.4 AI 校验
 
@@ -700,7 +700,7 @@ AI payload 建议发送：
 | 9.1 重音候选升级 | 已完成 | accent salience 统一融合 downbeat、强 onset 局部峰值和 section/phrase/energy/transition 结构变化；downbeat 与强 onset 重合时显式加权。fallback 的 performance 风格只从统一候选中选择大音符，并按 course 限制每小节数量，并禁止小节内及跨小节边界的相邻大音符；QualityReport 的 accent coverage 同步改用统一候选，并按拍号限制每小节只评估最高优先级候选。 | `pytest tests/test_rhythmic_salience.py tests/test_salience_candidates.py tests/test_fallback_generator.py tests/test_chart_quality.py -q` 覆盖强弱 onset、downbeat 协同、结构起点、Easy 上限、peak 上限与候选覆盖。 |
 | 9.2 咚咔软映射 | 已完成 | don/ka salience 对频带攻击增加绝对门槛：高置信低频攻击提高咚倾向，高频攻击先给基础咔倾向，再由 percussive ratio 和受限 brightness 证据校准；全曲 brightness 不再能单独制造强咔偏好。fallback 已移除频带到字符的直接硬映射，改为 style 基础票、统一 salience 偏好和弱 bass 证据的确定性软评分，并将最终普通咚咔单色串限制为最多 4 个且跨小节生效。 | `pytest tests/test_rhythmic_salience.py tests/test_fallback_generator.py tests/test_chart_quality.py -q` 覆盖频带门槛、混合频带中性、percussive 增益、brightness 门控、style 回退、统一偏好消费和跨小节单色串。 |
 | 9.3 Fill burst 检测 | 已完成 | `BarRhythmicSalience` 新增 bar-level burst score/confidence/range/reasons 契约；`build_burst_salience()` 在完整 hit/accent/don-ka salience 后检测后半小节 onset 密度跃升、spectral flux 爆发、percussive ratio 上升和前段稳定对比，phrase end/cadence 与后继 section/peak/drop 只能增强已存在的节奏 burst，不能单独制造候选。检测兼容 4/4、3/4、6/8 canonical grid，并在真实 `fill_burst_120.wav` 上只命中第 4、8 小节的后半 burst。特殊音符消费留给 9.4。 | `pytest tests/test_rhythmic_salience.py tests/test_audio_pipeline_integration.py::test_fill_burst_fixture_detects_only_expected_late_bar_bursts -q` 覆盖契约、可靠性门控、结构增强、无 burst phrase end、复拍号与真实 fixture。 |
-| 9.4 特殊音符响应 | 部分完成 | 当前特殊音符只在活跃 fill candidate 中生成；尚未使用统一 burst salience。 | 现有特殊音符回归可复用。 |
+| 9.4 特殊音符响应 | 已完成 | fallback 与 AI 统一要求可靠 burst salience 才能生成 long note，并把 burst canonical range 精确投影到当前输出 resolution；滚奏/气球的起止 tick 被限制在该范围内，过短范围、低/中 density、静音和不可表达格点均保持普通 note。结构 fill candidate 只能增强类型选择，不能替代纯节奏 burst 门控；AI compact payload 升级为 v6，并由内容校验拒绝范围外、过短或同小节多个 long note。 | `pytest tests/test_rhythmic_salience.py tests/test_fallback_generator.py tests/test_ai_client.py tests/test_audio_pipeline_integration.py::test_fill_burst_fixture_detects_only_expected_late_bar_bursts tests/test_cli_generate.py::test_generate_with_special_notes_outputs_balloon_header -q` 覆盖范围投影、无 burst 拒绝、无结构 fill 候选的纯节奏 burst、滚奏/气球、AI repair、真实 fixture 与 TJA 输出。 |
 | 9.5 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
 ## 9.1 重音
@@ -740,12 +740,12 @@ AI payload 建议发送：
 
 - `--special-notes` 显式启用；
 - 活跃、非静音；
-- fill candidate；
+- 通过可靠 burst salience 成为纯节奏 fill candidate；
 - 足够持续时间；
 - 与普通 note 不冲突；
 - TJA preflight 合法。
 
-新增 salience 只改善候选位置和持续范围，不改变合法性边界。
+结构层 `fill_candidate` 只增强气球等类型选择，不能替代可靠 burst。burst canonical 起止格会投影到当前输出 resolution，fallback 和 AI long note 都只能使用该可表达范围；新增 salience 不改变 TJA 合法性边界。
 
 ## 9.5 退出条件
 
@@ -760,7 +760,7 @@ AI payload 建议发送：
 - [x] 9.1 将 downbeat、强 onset 和结构变化统一为重音候选
 - [x] 9.2 使用频带与 percussive 证据校准 don/ka 软倾向
 - [x] 9.3 建立纯节奏 fill burst 检测
-- [ ] 9.4 让滚奏和气球响应可靠 burst salience
+- [x] 9.4 让滚奏和气球响应可靠 burst salience
 - [ ] 9.5 执行 Phase 3 阶段验收
 
 ---

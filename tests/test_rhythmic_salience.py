@@ -13,6 +13,7 @@ from tja_ai_chartgen.features.salience import (
     build_don_ka_salience,
     build_hit_salience,
     is_reliable_burst,
+    project_reliable_burst_span,
 )
 from tja_ai_chartgen.tja.model import (
     BarFeature,
@@ -867,6 +868,49 @@ def test_burst_salience_supports_compact_meter_canonical_grids(
     assert is_reliable_burst(burst)
     assert burst.burst_start_grid == 18
     assert burst.burst_end_grid == 33
+
+
+def test_reliable_burst_span_projects_to_playable_output_ticks():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.8,
+        grids_per_bar=48,
+    )
+    salience = BarRhythmicSalience(
+        burst_score=0.8,
+        burst_confidence=0.9,
+        burst_start_grid=25,
+        burst_end_grid=46,
+    )
+
+    assert project_reliable_burst_span(bar, salience, output_resolution=16) == (
+        27,
+        45,
+    )
+    assert project_reliable_burst_span(bar, salience, output_resolution=24) == (
+        26,
+        46,
+    )
+
+
+def test_unreliable_burst_has_no_projected_span():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.8,
+        grids_per_bar=48,
+    )
+    salience = BarRhythmicSalience(
+        burst_score=0.39,
+        burst_confidence=0.9,
+        burst_start_grid=25,
+        burst_end_grid=46,
+    )
+
+    assert project_reliable_burst_span(bar, salience, output_resolution=16) is None
 
 
 def test_burst_salience_does_not_promote_phrase_end_without_rhythmic_burst():

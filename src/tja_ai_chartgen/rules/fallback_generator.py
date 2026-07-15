@@ -3,6 +3,10 @@ from math import ceil, floor, isfinite
 
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.meter import get_meter_spec
+from tja_ai_chartgen.features.salience import (
+    build_burst_salience,
+    project_reliable_burst_span,
+)
 from tja_ai_chartgen.features.salience_candidates import (
     SalienceCandidate,
     build_salience_candidate_bars,
@@ -17,6 +21,7 @@ from tja_ai_chartgen.rules.styles import (
 from tja_ai_chartgen.tja.event_encoder import encode_chart_bar_events
 from tja_ai_chartgen.tja.model import (
     BarFeature,
+    BarRhythmicSalience,
     ChartBar,
     ChartBarEvents,
     ChartHitEvent,
@@ -74,6 +79,7 @@ BIG_NOTE_LIMITS = {
 STYLE_COLOR_BIAS = 0.30
 COLOR_OVERRIDE_MARGIN = 0.05
 MAX_GENERATED_MONOCHROME_RUN = 4
+MIN_SPECIAL_NOTE_DURATION_SECONDS = 0.25
 
 
 @dataclass(frozen=True)
@@ -135,6 +141,7 @@ def generate_fallback_chart_bars(
         bars,
         resolution_plan=resolution_plan,
     )
+    burst_salience_bars = build_burst_salience(bars) if special_notes else []
     chart_bars: list[ChartBar] = []
     previous_was_special = False
     previous_ended_with_big_note = False
@@ -151,6 +158,7 @@ def generate_fallback_chart_bars(
         elif special_notes and not previous_was_special:
             events = _special_bar_events(
                 bar,
+                burst_salience=burst_salience_bars[position],
                 density=density,
                 template=template,
                 profile=profile,
@@ -929,6 +937,7 @@ def _effective_density(density: str, hint: BarDensityHint) -> str:
 def _special_bar_events(
     bar: BarFeature,
     *,
+    burst_salience: BarRhythmicSalience,
     density: str,
     template: StyleTemplate,
     profile: CourseLoadProfile,
@@ -937,11 +946,17 @@ def _special_bar_events(
 ) -> ChartBarEvents | None:
     if density not in {"auto", "high", "max"}:
         return None
-    if not bar.fill_candidate:
+
+    burst_span = project_reliable_burst_span(
+        bar,
+        burst_salience,
+        output_resolution=output_resolution,
+    )
+    if burst_span is None:
         return None
 
     duration = bar.end_time - bar.start_time
-    if not isfinite(duration) or duration <= 0 or output_resolution < 3:
+    if not isfinite(duration) or duration <= 0:
         return None
     has_activity = (
         bool(bar.onset_grids)
@@ -973,8 +988,10 @@ def _special_bar_events(
     if density == "auto" and activity_score < 0.75:
         return None
 
-    start_grid, end_grid = _special_note_span(bar, output_resolution=output_resolution)
+    start_grid, end_grid = burst_span
     special_duration = duration * (end_grid - start_grid) / bar.grids_per_bar
+    if special_duration < MIN_SPECIAL_NOTE_DURATION_SECONDS:
+        return None
     is_balloon = special_duration >= duration / 4 and (
         (
             bar.phrase_position == "song_end"
@@ -1003,48 +1020,6 @@ def _special_bar_events(
             )
         ],
     )
-
-
-def _special_note_span(bar: BarFeature, *, output_resolution: int) -> tuple[int, int]:
-    features = _project_grid_features(
-        bar,
-        _grid_features_for_bar(bar),
-        output_resolution=output_resolution,
-    )
-    step = bar.grids_per_bar // output_resolution
-    earliest_start = max(0, (bar.grids_per_bar // 2 // step) * step)
-    latest_start = bar.grids_per_bar - (2 * step)
-    feature_grids = {
-        feature.grid
-        for feature in features
-        if earliest_start <= feature.grid <= latest_start
-        and (feature.onset or feature.accent or feature.beat is not None)
-    }
-    instrument_features = _project_instrument_grid_features(
-        bar,
-        output_resolution=output_resolution,
-    )
-    feature_grids.update(
-        grid
-        for grid, feature in instrument_features.items()
-        if earliest_start <= grid <= latest_start
-        and max(feature.drum_onset, feature.accompaniment_onset) >= 0.35
-    )
-    start_grid = min(feature_grids) if feature_grids else earliest_start
-
-    projected_beats = sorted(
-        {
-            min(bar.grids_per_bar - step, round(grid / step) * step)
-            for grid in bar.beat_grids
-        }
-    )
-    later_beats = [
-        grid for grid in projected_beats if start_grid + step < grid < bar.grids_per_bar
-    ]
-    end_grid = later_beats[-1] if later_beats else bar.grids_per_bar - step
-    if end_grid <= start_grid:
-        end_grid = min(bar.grids_per_bar - step, start_grid + step)
-    return start_grid, end_grid
 
 
 def _balloon_hit_count(

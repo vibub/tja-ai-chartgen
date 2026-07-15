@@ -410,7 +410,7 @@ def test_generate_with_special_notes_outputs_balloon_header(tmp_path, monkeypatc
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")
     output_dir = tmp_path / "output"
-    _patch_audio_pipeline(monkeypatch, duration=16.0)
+    _patch_audio_pipeline(monkeypatch, duration=16.0, late_fill_burst=True)
 
     result = runner.invoke(
         app,
@@ -1000,7 +1000,7 @@ def test_generate_with_ai_failure_falls_back_to_rules(tmp_path, monkeypatch):
     assert (output_dir / "ai_output.json").exists()
 
 
-def _patch_audio_pipeline(monkeypatch, duration=2.0):
+def _patch_audio_pipeline(monkeypatch, duration=2.0, late_fill_burst=False):
     def fake_convert_to_ogg(input_path, output_path):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake ogg")
@@ -1008,10 +1008,22 @@ def _patch_audio_pipeline(monkeypatch, duration=2.0):
 
     def fake_analyze_audio(input_path, use_beatnet=False):
         beat_times = [index * 0.5 for index in range(int(duration / 0.5) + 1)]
+        onset_times = beat_times[:-1]
+        if late_fill_burst and duration >= 2.0:
+            final_bar_start = duration - 2.0
+            onset_times = sorted(
+                {
+                    *onset_times,
+                    final_bar_start + 1.0,
+                    final_bar_start + 1.25,
+                    final_bar_start + 1.5,
+                    final_bar_start + 1.75,
+                }
+            )
         return AudioAnalysisRaw(
             bpm=120,
             beat_times=beat_times,
-            onset_times=beat_times[:-1],
+            onset_times=onset_times,
             onset_strengths=[],
             duration=duration,
             offset=0.0,

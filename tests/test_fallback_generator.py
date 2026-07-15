@@ -731,8 +731,8 @@ def test_legacy_feature_without_grid_features_still_uses_onset_lists():
     assert _hit_grids(chart_bar.notes).issuperset({1, 5, 9, 13})
 
 
-def test_special_notes_require_phrase_or_fill_candidate():
-    bars = [_feature(index, energy=0.9, onsets=[8, 12, 14]) for index in range(8)]
+def test_special_notes_require_reliable_burst():
+    bars = [_feature(index, energy=0.9, onsets=[0, 4, 8, 12]) for index in range(8)]
 
     chart_bars = generate_fallback_chart_bars(
         bars, density="high", special_notes=True
@@ -765,12 +765,49 @@ def test_special_notes_can_emit_roll_and_balloon_at_active_fill_candidates():
         bars, density="high", special_notes=True, course="Oni", level=10
     )
 
-    assert "5" in chart_bars[0].notes
-    assert "8" in chart_bars[0].notes
-    assert "7" in chart_bars[2].notes
-    assert "8" in chart_bars[2].notes
+    assert chart_bars[0].notes[8] == "5"
+    assert chart_bars[0].notes[14] == "8"
+    assert chart_bars[2].notes[8] == "7"
+    assert chart_bars[2].notes[14] == "8"
     assert len(chart_bars[2].balloon_counts) == 1
     assert chart_bars[2].balloon_counts[0] > 0
+
+
+def test_reliable_burst_can_emit_roll_without_structural_fill_candidate():
+    bar = _feature(
+        0,
+        energy=0.9,
+        onsets=[0, 4, 8, 9, 10, 11, 12, 13, 14, 15],
+    )
+
+    chart_bar = generate_fallback_chart_bars(
+        [bar],
+        density="high",
+        special_notes=True,
+    )[0]
+
+    assert chart_bar.notes[8] == "5"
+    assert chart_bar.notes[15] == "8"
+    assert not chart_bar.balloon_counts
+
+
+def test_fill_candidate_without_reliable_burst_keeps_normal_notes():
+    bar = _feature(
+        0,
+        energy=0.95,
+        onsets=[0, 4, 8, 12],
+        phrase_position="phrase_end",
+        fill_candidate=True,
+    )
+
+    chart_bar = generate_fallback_chart_bars(
+        [bar],
+        density="high",
+        special_notes=True,
+    )[0]
+
+    assert set(chart_bar.notes) <= set("01234")
+    assert not chart_bar.balloon_counts
 
 
 @pytest.mark.parametrize(

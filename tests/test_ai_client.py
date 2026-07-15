@@ -151,7 +151,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density_policy"]["quality_average_min_per_16_grid_bar"] == 6.5
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
-    assert payload["schema"] == "tja-ai-chartgen-compact-v5"
+    assert payload["schema"] == "tja-ai-chartgen-compact-v6"
     assert payload["rhythmic_salience_feature_version"] == "rhythmic-salience-v1"
     salience_bar_columns = payload["legend"]["salience_bar_columns"]
     salience_point_columns = payload["legend"]["salience_point_columns"]
@@ -159,6 +159,11 @@ def test_build_chart_generation_payload_includes_density():
     salience_points = salience_bar[salience_bar_columns.index("points")]
     assert salience_bar[salience_bar_columns.index("bar_confidence")] == 900
     assert salience_bar[salience_bar_columns.index("fallback_reason")] is None
+    assert salience_bar[salience_bar_columns.index("burst_score")] == 0
+    assert salience_bar[salience_bar_columns.index("burst_confidence")] == 0
+    assert salience_bar[salience_bar_columns.index("burst_start_grid")] is None
+    assert salience_bar[salience_bar_columns.index("burst_end_grid")] is None
+    assert salience_bar[salience_bar_columns.index("burst_reliable")] == 0
     assert [point[salience_point_columns.index("grid")] for point in salience_points] == [
         0,
         12,
@@ -266,6 +271,39 @@ def test_compact_salience_only_includes_exactly_representable_points():
             "confidence",
         )
     )
+
+
+def test_compact_salience_includes_projected_reliable_burst_range():
+    analysis = _analysis()
+    bar = analysis.bars[0].model_copy(
+        update={
+            "onset_grids": [0, 12, 24, 30, 36, 42],
+            "grid_features": [
+                GridFeature(grid=grid, onset=True, strength=1.0)
+                for grid in [0, 12, 24, 30, 36, 42]
+            ],
+            "phrase_position": "phrase_end",
+            "boundary_confidence": 1.0,
+            "fill_candidate": True,
+        }
+    )
+    analysis = analysis.model_copy(update={"bars": [bar]})
+
+    payload = build_chart_generation_payload(
+        analysis,
+        "Oni",
+        10,
+        "technical",
+        special_notes=True,
+    )
+
+    columns = payload["legend"]["salience_bar_columns"]
+    salience = payload["bar_salience"][0]
+    assert salience[columns.index("burst_score")] >= 400
+    assert salience[columns.index("burst_confidence")] >= 500
+    assert salience[columns.index("burst_start_grid")] == 24
+    assert salience[columns.index("burst_end_grid")] == 42
+    assert salience[columns.index("burst_reliable")] == 1
 
 
 def test_build_chart_generation_payload_includes_compact_structure_plan():
@@ -478,6 +516,8 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "target_hits is more important than merely satisfying min_hits" in prompt
     assert "density_policy.quality_average_min_per_16_grid_bar" in prompt
     assert "Prefer reliable strong-transient, transient, rhythmic-skeleton" in prompt
+    assert "only when bar_salience burst_reliable is 1" in prompt
+    assert "inside burst_start_grid..burst_end_grid" in prompt
     assert "Keep unsupported hits rare" in prompt
     assert "not to choose exact note ticks" in prompt
 
@@ -1044,7 +1084,7 @@ def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(m
         "bars": [
             _event_bar(
                 1,
-                "7000000080000000",
+                "1000000070000080",
                 balloon_counts=[8],
             )
         ]
@@ -1056,7 +1096,7 @@ def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(m
     monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
 
     bars, _ = generate_chart_bars_with_ai(
-        _analysis(),
+        _analysis_with_reliable_burst(),
         "Oni",
         10,
         "technical",
@@ -1064,7 +1104,94 @@ def test_generate_chart_bars_with_ai_accepts_special_notes_with_balloon_counts(m
         special_notes=True,
     )
 
-    assert bars == [ChartBar(index=0, notes="7000000080000000", balloon_counts=[8])]
+    assert bars == [ChartBar(index=0, notes="1000000070000080", balloon_counts=[8])]
+
+
+def test_generate_chart_bars_with_ai_repairs_special_note_outside_burst(monkeypatch):
+    responses = [
+        {
+            "bars": [
+                _event_bar(
+                    1,
+                    "7000000080000000",
+                    balloon_counts=[8],
+                )
+            ]
+        },
+        {
+            "bars": [
+                _event_bar(
+                    1,
+                    "1000000070000080",
+                    balloon_counts=[8],
+                )
+            ]
+        },
+    ]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis_with_reliable_burst(),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        special_notes=True,
+        max_repair_attempts=1,
+    )
+
+    assert bars == [ChartBar(index=0, notes="1000000070000080", balloon_counts=[8])]
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert any(
+        "must stay inside reliable burst range 24..42" in issue
+        for issue in raw["attempts"][0]["issues"]
+    )
+    assert "reliable burst salience" in captured_messages[1][-1]["content"]
+
+
+def test_generate_chart_bars_with_ai_repairs_special_note_without_reliable_burst(
+    monkeypatch,
+):
+    responses = [
+        {
+            "bars": [
+                _event_bar(
+                    1,
+                    "7000000080000000",
+                    balloon_counts=[8],
+                )
+            ]
+        },
+        _event_payload(["1000100010001000"]),
+    ]
+
+    def fake_completion(**kwargs):
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis(),
+        "Oni",
+        10,
+        "technical",
+        model="fake/model",
+        special_notes=True,
+        max_repair_attempts=1,
+    )
+
+    assert bars == [ChartBar(index=0, notes="1000100010001000")]
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert any(
+        "require reliable burst salience" in issue
+        for issue in raw["attempts"][0]["issues"]
+    )
 
 
 def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypatch):
@@ -1463,6 +1590,23 @@ def _analysis_with_edge_silence() -> SongAnalysis:
             ),
         ],
     )
+
+
+def _analysis_with_reliable_burst() -> SongAnalysis:
+    analysis = _analysis(energy=0.95)
+    bar = analysis.bars[0].model_copy(
+        update={
+            "onset_grids": [0, 12, 24, 30, 36, 42],
+            "grid_features": [
+                GridFeature(grid=grid, onset=True, strength=1.0)
+                for grid in [0, 12, 24, 30, 36, 42]
+            ],
+            "phrase_position": "song_end",
+            "boundary_confidence": 1.0,
+            "fill_candidate": True,
+        }
+    )
+    return analysis.model_copy(update={"bars": [bar]})
 
 
 def _analysis(bar_count: int = 1, energy: float = 0.2) -> SongAnalysis:

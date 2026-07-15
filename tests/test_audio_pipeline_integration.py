@@ -215,6 +215,28 @@ def test_fill_burst_fixture_detects_only_expected_late_bar_bursts(tmp_path: Path
         assert salience.burst_end_grid > salience.burst_start_grid
         assert "burst:onset-density" in salience.burst_reasons
 
+    chart_bars = generate_fallback_chart_bars(
+        structured_bars,
+        density="high",
+        special_notes=True,
+        course="Oni",
+        level=10,
+    )
+    special_indexes = [
+        position
+        for position, chart_bar in enumerate(chart_bars)
+        if any(note in "57" for note in chart_bar.notes)
+    ]
+    assert special_indexes == [3, 7]
+    for position in special_indexes:
+        chart_bar = chart_bars[position]
+        start_grid = next(
+            grid for grid, note in enumerate(chart_bar.notes) if note in "57"
+        )
+        end_grid = chart_bar.notes.index("8")
+        assert start_grid >= len(chart_bar.notes) // 2
+        assert end_grid > start_grid
+
 
 def test_missing_instrument_models_fall_back_without_blocking_real_audio_generation(
     tmp_path: Path,

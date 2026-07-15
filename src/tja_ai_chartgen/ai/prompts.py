@@ -7,7 +7,9 @@ from tja_ai_chartgen.features.density import density_hint_payload
 from tja_ai_chartgen.features.resolution import output_resolution_for_analysis_bar
 from tja_ai_chartgen.features.salience import (
     RHYTHMIC_SALIENCE_FEATURE_VERSION,
-    build_don_ka_salience,
+    build_burst_salience,
+    is_reliable_burst,
+    project_reliable_burst_span,
 )
 from tja_ai_chartgen.features.salience_candidates import rank_bar_salience_candidates
 from tja_ai_chartgen.features.silence import edge_silence_indexes
@@ -68,7 +70,16 @@ AUDIO_CHANNEL_COLUMNS = [
     "accompaniment_onset",
 ]
 BEAT_EVENT_COLUMNS = ["grid", "beat"]
-SALIENCE_BAR_COLUMNS = ["bar_confidence", "fallback_reason", "points"]
+SALIENCE_BAR_COLUMNS = [
+    "bar_confidence",
+    "fallback_reason",
+    "burst_score",
+    "burst_confidence",
+    "burst_start_grid",
+    "burst_end_grid",
+    "burst_reliable",
+    "points",
+]
 SALIENCE_POINT_COLUMNS = [
     "grid",
     "hit",
@@ -176,7 +187,7 @@ def build_chart_generation_payload(
     compact_salience = _compact_salience_bars(analysis)
 
     payload = {
-        "schema": "tja-ai-chartgen-compact-v5",
+        "schema": "tja-ai-chartgen-compact-v6",
         "legend": {
             "bool": "0=false, 1=true",
             "bar_columns": BAR_COLUMNS,
@@ -299,14 +310,14 @@ Rules:
 19. Let the chart's style and music decide the don/ka mix, but avoid outputs where nearly all normal 1/2 notes are 1. Use some 2 notes for offbeat responses, back-half answers, syncopated hits, or phrase-end fills.
 20. When translated to four equal positions, useful rhythmic cells include 1020, 1200, 1012, 1210, 1122, 1221, 1022, and 2012, but do not force a fixed ratio.
 21. Avoid long all-don streams such as 1010101010101010 unless the input clearly describes a very plain stamina passage; even then, vary later bars with occasional 2 notes.
-22. Decode bar_salience with legend.salience_bar_columns and legend.salience_point_columns. Its sparse points are already filtered to ticks exactly representable at the bar's output_resolution. Prefer reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight points before weak-evidence points or unsupported style connectors.
+22. Decode bar_salience with legend.salience_bar_columns and legend.salience_point_columns. Its sparse points and burst range are already filtered to ticks exactly representable at the bar's output_resolution. Prefer reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight points before weak-evidence points or unsupported style connectors.
 23. hit is the primary placement score. confidence and bar_confidence determine how strongly to trust it. Use accent only as soft emphasis evidence, and don_preference/ka_preference only as soft color evidence; style and playability still decide the final 1/2/3/4 note.
 24. Meet density targets by adding supported connections around salience points, not by filling arbitrary empty ticks. Keep unsupported hits rare, avoid long unsupported streams, and leave weak empty grids as 0. High sustained_activity without transient points may justify only a simple beat/downbeat skeleton. Grid 0 is the barline and primary downbeat candidate; in normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 only when salience or a justified skeleton supports it.
 25. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents, preferably after a rest or sparse lead-in.
 26. Do not place big notes 3/4 inside dense streams. If a passage has 3 or more consecutive playable hits, use normal 1/2 notes in the stream instead of 3/4.
 27. Avoid multiple big notes in one bar unless the bar is intentionally sparse; high/max density should increase 1/2 stream density, not big-note frequency.
 28. Decode beat_events with legend.beat_event_columns, and use it with downbeat_grid, phrase_position, and fill_candidate to shape musical phrasing; phrase_end/song_end bars may vary or fill, phrase_start bars should be stable.
-29. If special_notes is true, use long_notes only for occasional phrase-end/fill highlights. Balloon events require one positive balloon_count.
+29. If special_notes is true, use at most one long_note in a bar, and only when bar_salience burst_reliable is 1. Keep its start_tick and end_tick inside burst_start_grid..burst_end_grid. Structural fill_candidate may strengthen the choice but cannot replace the burst gate. Prefer drumroll for a shorter/moderate burst and balloon only for a strong, sustained highlight; balloon events require one positive balloon_count.
 30. If reference_windows, reference_examples, or reference_examples_prompt is present, use it as style and audio-alignment guidance only. Source events may use a different resolution; convert their musical phase into canonical ticks and never copy source resolution or exact sequences.
 31. Decode bar_structure with legend.bar_structure_columns and phrase_plan with legend.phrase_columns. These fields and resolution are read-only analysis; do not return modified structure data.
 32. At phrase starts, establish a recognizable motif; in phrase middles, preserve it with small rhythmic and don/ka variations.
@@ -315,7 +326,7 @@ Rules:
 35. Cadence may use a short fill, controlled variation, or deliberate space. Drop may use an impact followed by space or a denser entrance depending on the local features.
 36. Breakdown lowers load but is not silence when activity remains present; keep a simple beat/downbeat skeleton.
 37. Repeated section_id values should retain a recognizable base motif, with controlled later-song variation rather than exact copying.
-38. Do not create a fill merely because a bar number is divisible by 4 or 8; require fill_candidate_score and the musical context.
+38. Do not create a fill merely because a bar number is divisible by 4 or 8. Ordinary hits may follow fill_candidate_score and musical context, but long_notes additionally require the reliable rhythmic burst gate in bar_salience.
 39. Decode audio_channels with legend.audio_channel_columns, audio_channel_scale, and audio_channel_positions only as supporting context around bar_salience. Treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes without forcing a note on every spectral change.
 40. Decode bar_instruments with legend.instrument_bar_columns for phrase, motif, and section context, not to choose exact note ticks. Do not map instrument names, stems, vocals, or syllables directly to hits. Ignore low-confidence labels, and never let instrument semantics override salience, silence, density, speed, occupancy, resolution, or playability constraints.
 
@@ -332,20 +343,31 @@ Output schema:
 
 
 def _compact_salience_bars(analysis: SongAnalysis) -> list[list[Any]]:
-    salience_bars = build_don_ka_salience(analysis.bars)
+    salience_bars = build_burst_salience(analysis.bars)
     compact: list[list[Any]] = []
     for position, (bar, salience) in enumerate(
         zip(analysis.bars, salience_bars, strict=True)
     ):
+        output_resolution = output_resolution_for_analysis_bar(analysis, position)
         candidates = rank_bar_salience_candidates(
             bar,
             salience,
-            output_resolution=output_resolution_for_analysis_bar(analysis, position),
+            output_resolution=output_resolution,
+        )
+        burst_span = project_reliable_burst_span(
+            bar,
+            salience,
+            output_resolution=output_resolution,
         )
         compact.append(
             [
                 _compact_unit(salience.confidence),
                 salience.fallback_reason,
+                _compact_unit(salience.burst_score),
+                _compact_unit(salience.burst_confidence),
+                burst_span[0] if burst_span is not None else None,
+                burst_span[1] if burst_span is not None else None,
+                int(is_reliable_burst(salience) and burst_span is not None),
                 [
                     [
                         candidate.grid,

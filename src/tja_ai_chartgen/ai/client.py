@@ -16,11 +16,16 @@ from tja_ai_chartgen.features.resolution import (
     output_resolution_for_analysis_bar,
     output_resolution_for_bar,
 )
+from tja_ai_chartgen.features.salience import (
+    build_burst_salience,
+    project_reliable_burst_span,
+)
 from tja_ai_chartgen.features.salience_candidates import build_salience_candidate_bars
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.tja.event_encoder import EventEncodingError, encode_chart_bar_events
 from tja_ai_chartgen.tja.model import (
     BarFeature,
+    BarRhythmicSalience,
     ChartBar,
     ChartBarEvents,
     ChartHitEvent,
@@ -46,6 +51,7 @@ MIN_AI_REQUEST_TIMEOUT = 1.0
 MAX_AI_REQUEST_TIMEOUT = 600.0
 AI_SALIENCE_VALIDATION_VERSION = "ai-salience-validation-v1"
 SALIENCE_VALIDATION_EXAMPLE_LIMIT = 16
+MIN_AI_SPECIAL_NOTE_DURATION_SECONDS = 0.25
 
 
 class AiOutputRepairError(RuntimeError):
@@ -599,6 +605,7 @@ def _validate_ai_data(
     if len(raw_bars) != expected_count:
         issues.append(f"bars must contain exactly {expected_count} item(s), got {len(raw_bars)}")
 
+    burst_salience_bars = build_burst_salience(analysis.bars)
     bars: list[ChartBar] = []
     for index, item in enumerate(raw_bars):
         if index >= expected_count:
@@ -620,6 +627,7 @@ def _validate_ai_data(
                 item,
                 index=index,
                 analysis=analysis,
+                burst_salience=burst_salience_bars[index],
                 special_notes=special_notes,
                 issues=issues,
             )
@@ -650,6 +658,7 @@ def _parse_event_bar(
     *,
     index: int,
     analysis: SongAnalysis,
+    burst_salience: BarRhythmicSalience,
     special_notes: bool,
     issues: list[str],
 ) -> ChartBar | None:
@@ -724,11 +733,25 @@ def _parse_event_bar(
         return None
 
     feature_bar = analysis.bars[index]
+    output_resolution = output_resolution_for_analysis_bar(analysis, index)
+    if long_notes:
+        issues.extend(
+            _validate_ai_long_notes(
+                long_notes,
+                index=index,
+                feature_bar=feature_bar,
+                burst_salience=burst_salience,
+                output_resolution=output_resolution,
+            )
+        )
+    if len(issues) > issue_count:
+        return None
+
     try:
         return encode_chart_bar_events(
             ChartBarEvents(index=index, hits=hits, long_notes=long_notes),
             canonical_grids_per_bar=feature_bar.grids_per_bar,
-            output_resolution=output_resolution_for_analysis_bar(analysis, index),
+            output_resolution=output_resolution,
             time_signature=feature_bar.time_signature,
         )
     except EventEncodingError as error:
@@ -736,6 +759,48 @@ def _parse_event_bar(
             f"bars[{index}].{issue.code}: {issue.message}" for issue in error.issues
         )
         return None
+
+
+def _validate_ai_long_notes(
+    long_notes: list[ChartLongNoteEvent],
+    *,
+    index: int,
+    feature_bar: BarFeature,
+    burst_salience: BarRhythmicSalience,
+    output_resolution: int,
+) -> list[str]:
+    issues: list[str] = []
+    if len(long_notes) > 1:
+        issues.append(f"bars[{index}].long_notes must contain at most one event")
+
+    burst_span = project_reliable_burst_span(
+        feature_bar,
+        burst_salience,
+        output_resolution=output_resolution,
+    )
+    if burst_span is None:
+        issues.append(f"bars[{index}].long_notes require reliable burst salience")
+        return issues
+
+    burst_start, burst_end = burst_span
+    bar_duration = feature_bar.end_time - feature_bar.start_time
+    for note_index, long_note in enumerate(long_notes):
+        if long_note.start_tick < burst_start or long_note.end_tick > burst_end:
+            issues.append(
+                f"bars[{index}].long_notes[{note_index}] must stay inside reliable burst "
+                f"range {burst_start}..{burst_end}"
+            )
+        duration = (
+            bar_duration
+            * (long_note.end_tick - long_note.start_tick)
+            / feature_bar.grids_per_bar
+        )
+        if duration < MIN_AI_SPECIAL_NOTE_DURATION_SECONDS:
+            issues.append(
+                f"bars[{index}].long_notes[{note_index}] duration must be at least "
+                f"{MIN_AI_SPECIAL_NOTE_DURATION_SECONDS:.2f} seconds"
+            )
+    return issues
 
 
 def _validate_edge_silence(bars: list[ChartBar], expected_bars: list[BarFeature]) -> list[str]:
@@ -960,7 +1025,7 @@ Rules:
 - Prioritize reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight salience points. Keep unsupported hits rare and use only short supported connectors when density requires them.
 - Use only hits and long_notes; never return legacy notes or balloon_counts fields.
 - Normal hit notes are 1, 2, 3, or 4.
-- long_notes must be empty unless special_notes is true. Balloons require a positive balloon_count.
+- long_notes must be empty unless special_notes is true. Use at most one per bar, require reliable burst salience, and keep its ticks inside the projected burst range. Structural fill_candidate may strengthen the choice but cannot replace the burst gate. Balloons require a positive balloon_count.
 - Course/difficulty request: {course} level {level}, density {density}.
 - Forced silent bars: {forced_silent_bars}. These song-start/song-end silence bars must have empty hits and long_notes.
 - Respect bar_density_hints from the original input: keep each bar inside its min_hits/max_hits range and aim near target_hits when present; rest bars may stay empty, sparse bars may stay light, normal bars should be moderate, and dense/fill bars should be busier without sudden full-density spikes unless the hint allows it.
