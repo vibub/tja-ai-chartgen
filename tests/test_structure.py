@@ -3,7 +3,11 @@ from math import ceil
 import pytest
 
 from tja_ai_chartgen.features.structure import analyze_song_structure
-from tja_ai_chartgen.tja.model import BarFeature, InstrumentBarFeature
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    InstrumentBarFeature,
+    InstrumentGridFeature,
+)
 
 
 @pytest.mark.parametrize("phrase_length", [3, 4, 6, 8, 12])
@@ -197,6 +201,81 @@ def test_structure_uses_instrument_growth_for_build_up_role():
     result = analyze_song_structure(bars)
 
     assert "build_up" in [item.transition_role for item in result.bar_structures[:3]]
+
+
+def test_structure_uses_stem_role_onsets_through_unified_salience():
+    base = _bar(0, energy=0.5, pattern="none", activity=0.45).model_copy(
+        update={
+            "instrument": InstrumentBarFeature(
+                drum_activity=0.8,
+                bass_activity=0.3,
+                other_activity=0.4,
+                dominant_source="drums",
+                confidence=0.8,
+            )
+        }
+    )
+    with_stem_onsets = base.model_copy(
+        update={
+            "instrument_grid_features": [
+                InstrumentGridFeature(grid=grid, drum_onset=0.95)
+                for grid in range(0, 48, 6)
+            ]
+        }
+    )
+
+    baseline = analyze_song_structure([base]).bar_structures[0]
+    enhanced = analyze_song_structure([with_stem_onsets]).bar_structures[0]
+
+    assert baseline.onset_density == 0.0
+    assert enhanced.onset_density == pytest.approx(8 / 48, abs=1e-6)
+    assert max(enhanced.rhythm_profile) > max(baseline.rhythm_profile)
+    assert enhanced.onset_strength_mean > baseline.onset_strength_mean
+
+
+def test_structure_salience_input_ignores_previous_structure_annotations():
+    bars = [
+        _bar(0, energy=0.2, pattern="sparse", activity=0.2),
+        _bar(1, energy=0.4, pattern="quarter", activity=0.4),
+        _bar(2, energy=0.7, pattern="dense", activity=0.7),
+        _bar(3, energy=0.3, pattern="sparse", activity=0.3),
+    ]
+
+    first = analyze_song_structure(bars)
+    second = analyze_song_structure(first.bars)
+
+    assert second.bar_structures == first.bar_structures
+    assert second.phrases == first.phrases
+
+
+def test_structure_ignores_concrete_instrument_taxonomy_without_stem_role_evidence():
+    bars = [_bar(index, energy=0.5, pattern="quarter", activity=0.45) for index in range(8)]
+    for index in range(4):
+        bars[index] = bars[index].model_copy(
+            update={
+                "instrument": InstrumentBarFeature(
+                    guitar=0.95,
+                    dominant_instrument="guitar",
+                    confidence=0.95,
+                )
+            }
+        )
+    for index in range(4, 8):
+        bars[index] = bars[index].model_copy(
+            update={
+                "instrument": InstrumentBarFeature(
+                    synth=0.95,
+                    dominant_instrument="synth",
+                    confidence=0.95,
+                )
+            }
+        )
+
+    result = analyze_song_structure(bars)
+
+    assert len(result.phrases) == 1
+    assert {item.phrase_id for item in result.bar_structures} == {0}
+    assert max(item.boundary_confidence for item in result.bar_structures[:-1]) == 0.0
 
 
 def test_structure_uses_vocal_only_texture_for_breakdown_role():

@@ -1245,7 +1245,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
-| 13.1 structure 消费 salience | 未开始 | 尚未实施统一消费。 | 尚未执行。 |
+| 13.1 structure 消费 salience | 已完成 | structure vector 改由统一 hit/accent salience 生成 onset 强度、密度、accent 与 rhythm profile；stem-role onset 经 salience 门控后参与趋势与边界，声部上下文只使用 vocals/drums/bass/other。 | `tests/test_structure.py` 覆盖 stem onset 消费、具体乐器 taxonomy 独立性及原有 structure 回归。 |
 | 13.2 fallback 消费 salience | 未开始 | 尚未实施统一消费。 | 尚未执行。 |
 | 13.3 AI payload 移除具体乐器依赖 | 未开始 | 当前 compact payload 仍含 bar instruments。 | 尚未执行。 |
 | 13.4 QualityReport 收敛 | 未开始 | 尚未以 rhythm alignment 指标替代具体乐器主线指标。 | 尚未执行。 |
@@ -1265,6 +1265,10 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - phrase 前后窗口变化。
 
 具体乐器名称不能成为 section 或 transition role 的必要条件。
+
+当前实现由 `analyze_song_structure()` 在构建 structure vector 前统一调用 hit/accent salience 流水线：`onset_density` 使用 canonical primary onset evidence 数，`onset_strength_mean/max`、`accent_density` 与 12 维 `rhythm_profile` 使用 salience point，而不是再次从旧 onset 字段独立建立一套节奏解释；salience 中受 activity 门控的 drum stem onset 因而可以影响 rhythm profile、趋势、边界和 transition role，bass/vocal/accompaniment onset 仍服从统一 salience 的受限语义。传入 salience 前会清除旧 phrase/section/transition 标注，避免重复分析时 structure role modifier 反向影响自身。持续 activity、energy、spectral novelty 与前后窗口差异继续保留为独立结构证据。
+
+可选声部上下文只读取 `vocal_activity`、`drum_activity`、`bass_activity`、`other_activity` 与粗粒度 `dominant_source`。`guitar`、`piano_keyboard`、`strings`、`brass`、`woodwind`、`synth`、`organ`、`other_instrument` 和 `dominant_instrument` 继续保留在旧 analysis 中，但不参与 structure evidence、phrase signature、intensity、section 或 transition role 决策。没有 stem-role 证据时，structure 只使用基础 salience、energy、activity 与 spectral 信息，结果不会因具体乐器分类字段变化而改变。
 
 ## 13.2 Fallback
 
@@ -1353,7 +1357,7 @@ fallback 使用：
 ## Phase 7 任务划分列表
 
 - [x] 13.5 先锁定旧 instrument-v1、analysis、config 和 sidecar 兼容行为
-- [ ] 13.1 让 structure 消费统一 salience 与可选 stem-role
+- [x] 13.1 让 structure 消费统一 salience 与可选 stem-role
 - [ ] 13.2 让 fallback 使用 hit、accent、don/ka 和 burst salience
 - [ ] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
 - [ ] 13.4 将 QualityReport 主线收敛到节奏对齐指标

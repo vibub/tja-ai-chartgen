@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from math import ceil
 from statistics import mean
 
+from tja_ai_chartgen.features.salience import build_accent_salience
 from tja_ai_chartgen.features.silence import is_silent_bar
 from tja_ai_chartgen.tja.model import BarFeature, BarStructureFeature, PhraseFeature
 
@@ -71,29 +72,26 @@ def _build_structure_vectors(bars: list[BarFeature]) -> list[BarStructureFeature
     energies = [bar.energy for bar in bars]
     percentiles = [_percentile_rank(value, energies) for value in energies]
     edge_silent_indexes = _edge_silent_indexes(bars)
+    salience_bars = build_accent_salience(_salience_input_bars(bars))
     structures: list[BarStructureFeature] = []
 
-    for position, bar in enumerate(bars):
+    for position, (bar, salience) in enumerate(zip(bars, salience_bars, strict=True)):
         grid_count = max(1, bar.grids_per_bar)
-        onset_strengths = [
-            feature.strength
-            for feature in bar.grid_features
-            if feature.onset and 0 <= feature.grid < grid_count
-        ]
-        if not onset_strengths and bar.onset_grids:
-            onset_strengths = [1.0] * len(bar.onset_grids)
         activity_values = [
             max(0.0, min(1.0, value)) for value in bar.activity_grids[:grid_count]
         ]
         if len(activity_values) < grid_count:
             activity_values.extend([0.0] * (grid_count - len(activity_values)))
         rhythm_values = [0.0] * grid_count
-        for grid in bar.onset_grids:
-            if 0 <= grid < grid_count:
-                rhythm_values[grid] = 1.0
-        for feature in bar.grid_features:
-            if feature.onset and 0 <= feature.grid < grid_count:
-                rhythm_values[feature.grid] = max(rhythm_values[feature.grid], feature.strength)
+        for point in salience.points:
+            if 0 <= point.grid < grid_count:
+                rhythm_values[point.grid] = max(rhythm_values[point.grid], point.hit)
+                activity_values[point.grid] = max(
+                    activity_values[point.grid],
+                    point.sustained_activity,
+                )
+        hit_strengths = [point.hit for point in salience.points if point.hit > 0.0]
+        accent_count = sum(point.accent > 0.0 for point in salience.points)
 
         energy_delta = percentiles[position] - percentiles[position - 1] if position else 0.0
         structures.append(
@@ -101,15 +99,13 @@ def _build_structure_vectors(bars: list[BarFeature]) -> list[BarStructureFeature
                 index=bar.index,
                 energy_percentile=_rounded(percentiles[position]),
                 energy_delta=_rounded(energy_delta),
-                onset_density=_rounded(len(set(bar.onset_grids)) / grid_count),
-                onset_strength_mean=_rounded(mean(onset_strengths) if onset_strengths else 0.0),
-                onset_strength_max=_rounded(max(onset_strengths, default=0.0)),
+                onset_density=_rounded(salience.onset_evidence_count / grid_count),
+                onset_strength_mean=_rounded(mean(hit_strengths) if hit_strengths else 0.0),
+                onset_strength_max=_rounded(max(hit_strengths, default=0.0)),
                 activity_mean=_rounded(mean(activity_values) if activity_values else 0.0),
                 activity_peak=_rounded(max(activity_values, default=0.0)),
-                active_grid_ratio=_rounded(
-                    sum(value >= 0.18 for value in activity_values) / grid_count
-                ),
-                accent_density=_rounded(len(set(bar.accent_grids)) / grid_count),
+                active_grid_ratio=_rounded(salience.active_ratio),
+                accent_density=_rounded(accent_count / grid_count),
                 low_onset_strength=_rounded(bar.low_onset_strength),
                 mid_onset_strength=_rounded(bar.mid_onset_strength),
                 high_onset_strength=_rounded(bar.high_onset_strength),
@@ -125,6 +121,30 @@ def _build_structure_vectors(bars: list[BarFeature]) -> list[BarStructureFeature
             )
         )
     return structures
+
+
+def _salience_input_bars(bars: list[BarFeature]) -> list[BarFeature]:
+    """移除旧 structure 标注，避免 salience 与 structure 形成反馈循环。"""
+    return [
+        bar.model_copy(
+            update={
+                "phrase_position": "unknown",
+                "fill_candidate": False,
+                "section": "unknown",
+                "energy_percentile": 0.0,
+                "energy_delta": 0.0,
+                "boundary_confidence": 0.0,
+                "phrase_id": None,
+                "phrase_progress": 0.0,
+                "transition_role": "stable",
+                "transition_confidence": 0.0,
+                "section_id": None,
+                "section_confidence": 0.0,
+                "fill_candidate_score": 0.0,
+            }
+        )
+        for bar in bars
+    ]
 
 
 def _edge_silent_indexes(bars: list[BarFeature]) -> set[int]:
@@ -302,21 +322,13 @@ def _spectral_intensity(structure: BarStructureFeature) -> float:
 
 def _has_instrument_evidence(structure: BarStructureFeature) -> bool:
     instrument = structure.instrument
-    return instrument.confidence > 0.0 or any(
+    return any(
         value > 0.0
         for value in (
             instrument.vocal_activity,
             instrument.drum_activity,
             instrument.bass_activity,
             instrument.other_activity,
-            instrument.guitar,
-            instrument.piano_keyboard,
-            instrument.strings,
-            instrument.brass,
-            instrument.woodwind,
-            instrument.synth,
-            instrument.organ,
-            instrument.other_instrument,
         )
     )
 
@@ -328,34 +340,16 @@ def _instrument_profile(structure: BarStructureFeature) -> list[float]:
         instrument.drum_activity,
         instrument.bass_activity,
         instrument.other_activity,
-        instrument.guitar,
-        instrument.piano_keyboard,
-        instrument.strings,
-        instrument.brass,
-        instrument.woodwind,
-        instrument.synth,
-        instrument.organ,
-        instrument.other_instrument,
     ]
 
 
 def _instrument_intensity(structure: BarStructureFeature) -> float:
     instrument = structure.instrument
-    accompaniment = max(
-        instrument.other_activity,
-        instrument.guitar,
-        instrument.piano_keyboard,
-        instrument.strings,
-        instrument.brass,
-        instrument.woodwind,
-        instrument.synth,
-        instrument.organ,
-    )
     return min(
         1.0,
         instrument.drum_activity * 0.35
         + instrument.bass_activity * 0.25
-        + accompaniment * 0.25
+        + instrument.other_activity * 0.25
         + instrument.vocal_activity * 0.15,
     )
 
