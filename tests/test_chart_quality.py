@@ -112,6 +112,11 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.silent_range_evaluated_bar_count == 0
     assert report.silent_range_violation_count == 0
     assert report.silent_range_violation_rate == 0.0
+    assert report.fill_burst_aligned_count == 0
+    assert report.fill_burst_evaluated_count == 0
+    assert report.fill_burst_alignment == 1.0
+    assert report.rhythmic_quantization_evaluated_count == 0
+    assert report.rhythmic_quantization_error is None
 
 
 def test_quality_report_is_independent_of_notes_resolution():
@@ -162,6 +167,11 @@ def test_quality_report_is_independent_of_notes_resolution():
             report.silent_range_evaluated_bar_count,
             report.silent_range_violation_count,
             report.silent_range_violation_rate,
+            report.fill_burst_aligned_count,
+            report.fill_burst_evaluated_count,
+            report.fill_burst_alignment,
+            report.rhythmic_quantization_evaluated_count,
+            report.rhythmic_quantization_error,
             report.don_count,
             report.ka_count,
         )
@@ -351,6 +361,91 @@ def test_quality_report_records_internal_and_edge_silence_violations():
     assert report.silent_range_evaluated_bar_count == 3
     assert report.silent_range_violation_count == 3
     assert report.silent_range_violation_rate == 0.75
+
+
+def test_quality_report_aligns_special_notes_with_reliable_burst_ranges():
+    features = [
+        _feature(0, energy=0.5, grids=48, start_time=0.0, end_time=2.0),
+        _late_drum_burst_feature(1, start_time=2.0, end_time=4.0),
+    ]
+    first_notes = ["0"] * 48
+    second_notes = ["0"] * 48
+    first_notes[8] = "5"
+    first_notes[16] = "8"
+    second_notes[28] = "7"
+    second_notes[44] = "8"
+    bars = [
+        _chart_bar(0, "".join(first_notes)),
+        ChartBar(index=1, notes="".join(second_notes), balloon_counts=[8]),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.fill_burst_evaluated_count == 2
+    assert report.fill_burst_aligned_count == 1
+    assert report.fill_burst_alignment == 0.5
+
+
+def test_quality_report_aligns_ordinary_fill_with_structure_candidate():
+    features = [
+        _feature(0, energy=0.4),
+        _feature(1, energy=0.8, fill_candidate=True),
+        _feature(2, energy=0.4),
+    ]
+    bars = [
+        _chart_bar(0, _notes_with_hits(2)),
+        _chart_bar(1, _notes_with_hits(8)),
+        _chart_bar(2, _notes_with_hits(2)),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.fill_burst_evaluated_count == 1
+    assert report.fill_burst_aligned_count == 1
+    assert report.fill_burst_alignment == 1.0
+
+
+def test_quality_report_aligns_ordinary_fill_with_reliable_burst_span():
+    features = [
+        _feature(0, energy=0.4, grids=48, start_time=0.0, end_time=2.0),
+        _late_drum_burst_feature(1, start_time=2.0, end_time=4.0),
+        _feature(2, energy=0.4, grids=48, start_time=4.0, end_time=6.0),
+    ]
+    fill_notes = ["0"] * 48
+    for grid in (27, 30, 33, 36, 39, 42, 45):
+        fill_notes[grid] = "1"
+    bars = [
+        _chart_bar(0, _notes_with_hits(2, 48)),
+        _chart_bar(1, "".join(fill_notes)),
+        _chart_bar(2, _notes_with_hits(2, 48)),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.fill_burst_evaluated_count == 1
+    assert report.fill_burst_aligned_count == 1
+    assert report.fill_burst_alignment == 1.0
+
+
+def test_quality_report_records_canonical_tick_quantization_error():
+    feature = _reliable_onset_feature(
+        0,
+        start_time=0.0,
+        end_time=2.0,
+        onset_grids=[1, 4, 7, 10],
+    )
+    notes_16 = ["0"] * 16
+    notes_16[3] = "1"
+    notes_48 = ["0"] * 48
+    notes_48[10] = "1"
+
+    low_report = build_quality_report([_chart_bar(0, "".join(notes_16))], [feature])
+    high_report = build_quality_report([_chart_bar(0, "".join(notes_48))], [feature])
+
+    assert low_report.rhythmic_quantization_evaluated_count == 1
+    assert low_report.rhythmic_quantization_error == 1.0
+    assert high_report.rhythmic_quantization_evaluated_count == 1
+    assert high_report.rhythmic_quantization_error == 0.0
 
 
 def test_pattern_counts_normalizes_equivalent_resolutions():
@@ -748,6 +843,26 @@ def _feature(
         transition_role=transition_role,
         section_id=section_id,
         fill_candidate=fill_candidate,
+    )
+
+
+def _late_drum_burst_feature(
+    index: int,
+    *,
+    start_time: float,
+    end_time: float,
+) -> BarFeature:
+    return BarFeature(
+        index=index,
+        start_time=start_time,
+        end_time=end_time,
+        energy=0.6,
+        grids_per_bar=48,
+        instrument=InstrumentBarFeature(drum_activity=0.8),
+        instrument_grid_features=[
+            InstrumentGridFeature(grid=grid, drum_onset=0.9)
+            for grid in (27, 33, 39, 45)
+        ],
     )
 
 

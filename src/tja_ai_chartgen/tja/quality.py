@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.features.resolution import output_resolution_for_bar
-from tja_ai_chartgen.features.salience import ACTIVE_GRID_THRESHOLD, build_don_ka_salience
+from tja_ai_chartgen.features.salience import (
+    ACTIVE_GRID_THRESHOLD,
+    build_burst_salience,
+    is_reliable_burst,
+)
 from tja_ai_chartgen.features.salience_candidates import (
     SalienceCandidate,
     build_salience_candidate_bars,
@@ -18,7 +22,12 @@ from tja_ai_chartgen.features.salience_candidates import (
     rank_bar_salience_candidates,
 )
 from tja_ai_chartgen.features.silence import edge_silence_indexes, is_silent_bar
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ResolutionPlan
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    BarRhythmicSalience,
+    ChartBar,
+    ResolutionPlan,
+)
 
 
 NOTE_STREAM_MAX_GAP_SECONDS = 0.3
@@ -67,6 +76,11 @@ class QualityReport(BaseModel):
     silent_range_evaluated_bar_count: int = Field(default=0, ge=0)
     silent_range_violation_count: int = Field(default=0, ge=0)
     silent_range_violation_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    fill_burst_aligned_count: int = Field(default=0, ge=0)
+    fill_burst_evaluated_count: int = Field(default=0, ge=0)
+    fill_burst_alignment: float = Field(default=1.0, ge=0.0, le=1.0)
+    rhythmic_quantization_evaluated_count: int = Field(default=0, ge=0)
+    rhythmic_quantization_error: float | None = Field(default=None, ge=0.0)
     drumroll_count: int = Field(ge=0)
     balloon_count: int = Field(ge=0)
     special_note_count: int = Field(ge=0)
@@ -151,7 +165,7 @@ def build_quality_report(
     paired_notes_per_second = [0.0] * paired_count
     accent_candidate_count = 0
     accent_hit_count = 0
-    salience_bars = build_don_ka_salience(paired_feature_bars)
+    salience_bars = build_burst_salience(paired_feature_bars)
     canonical_candidate_bars = [
         rank_bar_salience_candidates(
             feature_bar,
@@ -251,6 +265,22 @@ def build_quality_report(
             canonical_candidate_bars,
             reliable_onset_times=reliable_onset_times,
         )
+    )
+    fill_burst_aligned_count, fill_burst_evaluated_count = (
+        _fill_burst_alignment_counts(
+            paired_chart_bars,
+            paired_feature_bars,
+            salience_bars,
+            special_note_ranges=special_note_ranges,
+        )
+    )
+    (
+        rhythmic_quantization_evaluated_count,
+        rhythmic_quantization_error,
+    ) = _rhythmic_quantization_metrics(
+        paired_chart_bars,
+        paired_feature_bars,
+        canonical_candidate_bars,
     )
     bar_notes_per_second = [
         hit_count / duration
@@ -352,6 +382,15 @@ def build_quality_report(
             if paired_activity_count
             else 0.0
         ),
+        fill_burst_aligned_count=fill_burst_aligned_count,
+        fill_burst_evaluated_count=fill_burst_evaluated_count,
+        fill_burst_alignment=_rounded_metric(
+            fill_burst_aligned_count / fill_burst_evaluated_count
+            if fill_burst_evaluated_count
+            else 1.0
+        ),
+        rhythmic_quantization_evaluated_count=rhythmic_quantization_evaluated_count,
+        rhythmic_quantization_error=rhythmic_quantization_error,
         drumroll_count=drumroll_count,
         balloon_count=balloon_count,
         special_note_count=special_note_count,
@@ -789,6 +828,156 @@ def _candidate_times(
             and (not require_reliable or candidate.reliable)
         )
     return sorted(times)
+
+
+def _fill_burst_alignment_counts(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+    salience_bars: list[BarRhythmicSalience],
+    *,
+    special_note_ranges: list[tuple[float, float]],
+) -> tuple[int, int]:
+    """统计特殊音符区间和普通 fill 小节对可靠 burst/fill 的响应。"""
+    reliable_burst_ranges = _reliable_burst_time_ranges(feature_bars, salience_bars)
+    aligned_special = sum(
+        any(_ranges_overlap(special_range, burst_range) for burst_range in reliable_burst_ranges)
+        for special_range in special_note_ranges
+    )
+
+    special_note_positions = {
+        position
+        for position, (chart_bar, feature_bar) in enumerate(
+            zip(chart_bars, feature_bars, strict=True)
+        )
+        if any(note in {"5", "7", "8"} for note in chart_bar.notes)
+        or any(
+            _ranges_overlap(
+                (feature_bar.start_time, feature_bar.end_time),
+                special_range,
+            )
+            for special_range in special_note_ranges
+        )
+    }
+    ordinary_fill_positions = _actual_fill_positions(chart_bars) - special_note_positions
+    aligned_ordinary = 0
+    for position in ordinary_fill_positions:
+        if position >= len(feature_bars) or position >= len(salience_bars):
+            continue
+        feature_bar = feature_bars[position]
+        salience = salience_bars[position]
+        if feature_bar.fill_candidate:
+            aligned_ordinary += 1
+            continue
+        if not is_reliable_burst(salience):
+            continue
+        start = salience.burst_start_grid
+        end = salience.burst_end_grid
+        if start is None or end is None or not chart_bars[position].notes:
+            continue
+        if any(
+            note in "1234"
+            and start
+            <= round(grid / len(chart_bars[position].notes) * feature_bar.grids_per_bar)
+            <= end
+            for grid, note in enumerate(chart_bars[position].notes)
+        ):
+            aligned_ordinary += 1
+
+    evaluated_count = len(special_note_ranges) + len(ordinary_fill_positions)
+    return aligned_special + aligned_ordinary, evaluated_count
+
+
+def _reliable_burst_time_ranges(
+    feature_bars: list[BarFeature],
+    salience_bars: list[BarRhythmicSalience],
+) -> list[tuple[float, float]]:
+    ranges: list[tuple[float, float]] = []
+    for feature_bar, salience in zip(feature_bars, salience_bars, strict=True):
+        duration = feature_bar.end_time - feature_bar.start_time
+        if (
+            not isfinite(duration)
+            or duration <= 0
+            or feature_bar.grids_per_bar <= 0
+            or not is_reliable_burst(salience)
+        ):
+            continue
+        start = salience.burst_start_grid
+        end = salience.burst_end_grid
+        if start is None or end is None or end <= start:
+            continue
+        ranges.append(
+            (
+                feature_bar.start_time + duration * start / feature_bar.grids_per_bar,
+                feature_bar.start_time + duration * end / feature_bar.grids_per_bar,
+            )
+        )
+    return ranges
+
+
+def _ranges_overlap(
+    first: tuple[float, float],
+    second: tuple[float, float],
+) -> bool:
+    return max(first[0], second[0]) <= min(first[1], second[1])
+
+
+def _rhythmic_quantization_metrics(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+    candidate_bars: list[list[SalienceCandidate]],
+) -> tuple[int, float | None]:
+    """计算普通 note 对最近可靠 salience 的平均 canonical tick 误差。"""
+    candidate_events: list[tuple[float, float]] = []
+    for feature_bar, candidates in zip(feature_bars, candidate_bars, strict=True):
+        duration = feature_bar.end_time - feature_bar.start_time
+        if (
+            not isfinite(duration)
+            or duration <= 0
+            or feature_bar.grids_per_bar <= 0
+        ):
+            continue
+        tick_seconds = duration / feature_bar.grids_per_bar
+        candidate_events.extend(
+            (
+                feature_bar.start_time + tick_seconds * candidate.grid,
+                tick_seconds,
+            )
+            for candidate in candidates
+            if candidate.reliable
+        )
+    candidate_events.sort(key=lambda item: item[0])
+    candidate_times = [time for time, _tick_seconds in candidate_events]
+    if not candidate_events:
+        return 0, None
+
+    errors: list[float] = []
+    for chart_bar, feature_bar in zip(chart_bars, feature_bars, strict=True):
+        duration = feature_bar.end_time - feature_bar.start_time
+        if not isfinite(duration) or duration <= 0 or not chart_bar.notes:
+            continue
+        for grid, note in enumerate(chart_bar.notes):
+            if note not in "1234":
+                continue
+            note_time = feature_bar.start_time + duration * grid / len(chart_bar.notes)
+            position = bisect_left(candidate_times, note_time)
+            nearby = [
+                candidate_events[index]
+                for index in (position - 1, position)
+                if 0 <= index < len(candidate_events)
+            ]
+            if not nearby:
+                continue
+            candidate_time, tick_seconds = min(
+                nearby,
+                key=lambda item: abs(item[0] - note_time),
+            )
+            error_seconds = abs(candidate_time - note_time)
+            if error_seconds > NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS:
+                continue
+            errors.append(error_seconds / tick_seconds)
+    if not errors:
+        return 0, None
+    return len(errors), _rounded_metric(sum(errors) / len(errors))
 
 
 def _unsupported_note_counts(

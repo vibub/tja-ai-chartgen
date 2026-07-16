@@ -1100,7 +1100,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 12.1 note/onset 对齐指标 | 已完成 | `QualityReport` 已基于完整 canonical salience 统计普通 note 附近可靠瞬态的命中数、评估数和 `note_onset_alignment`；固定使用 50 ms 时间容差，排除特殊音符并支持跨小节匹配。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，25 passed。 |
 | 12.2 强 onset 与 downbeat 响应 | 已完成 | `QualityReport` 已从完整 canonical salience 统一统计 `strong-transient` 与可靠 downbeat 的响应数、评估数和比例；强瞬态允许普通 note 或有效持续音符区间响应，downbeat 只允许普通 note，并分别使用 50 ms / 70 ms 容差。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，29 passed。 |
 | 12.3 无证据 note 指标 | 已完成 | `QualityReport` 已统计普通 note 的直接节奏证据与受限连接支持，输出无支持数、评估数和比例；静音违规扩展到首尾静音及曲中确定静音小节，并输出评估小节数、违规数和比例。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，32 passed。 |
-| 12.4 fill burst 对齐 | 部分完成 | 已有 fill candidate precision 和 instrument fill support；尚未加入纯节奏 burst。 | 现有 fill 测试可复用。 |
+| 12.4 fill burst 对齐 | 已完成 | `QualityReport` 已统一统计特殊音符区间与普通 fill 小节对可靠纯节奏 burst/结构 fill candidate 的对齐数、评估数和比例，并计算普通 note 对最近可靠 salience 的平均 canonical tick 量化误差。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，36 passed。 |
 | 12.5 report-only 校准 | 未开始 | 尚未实施新指标对比。 | 尚未执行。 |
 | 12.6 AI repair 门槛评审 | 未开始 | 尚未决定任何新阻断阈值。 | 尚未执行。 |
 | 12.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
@@ -1141,6 +1141,8 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 
 实际 fill 或特殊音符与可靠 burst/fill candidate 重叠的比例。
 
+当前实现将正确闭合的 `5` / `7`–`8` 持续区间作为独立特殊音符事件，只有其时间范围与 `is_reliable_burst()` 通过的纯节奏 burst 重叠时才算对齐；跨小节持续区间按同一事件统计。普通 fill 继续复用确定性密度突增识别，但排除与特殊音符区间重叠的小节，随后要求命中结构 `fill_candidate`，或在可靠 burst 的 canonical 起止格内实际存在普通 note。结果写入 `fill_burst_aligned_count`、`fill_burst_evaluated_count` 和 `fill_burst_alignment`；无实际 fill/特殊音符时比例为 1.0。该指标保持 report-only。
+
 ### `silent_range_violation`
 
 已知静音范围和首尾静音小节中的违规 note 数。
@@ -1150,6 +1152,8 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 ### `rhythmic_quantization_error`
 
 被选 note 对应音频 salience 位置量化到输出 resolution 后的平均误差。
+
+当前实现只评估普通 note `1`–`4`：将 note 与 50 ms 内最近的可靠 canonical salience 候选对应，再把时间偏差除以该候选所在小节的 canonical tick 时长，得到以 canonical tick 为单位的误差。结果写入 `rhythmic_quantization_evaluated_count` 和 `rhythmic_quantization_error`；没有可对应 note 时误差为 `null`。相同音乐位置在不同等价字符串 resolution 下使用同一 canonical 单位，指标不会因字符数量本身改变。该指标保持 report-only，并与 ResolutionPlan 的全曲 `resolution_quantization_error` 诊断分开。
 
 ### `salience_coverage_by_density`
 
@@ -1200,7 +1204,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - [x] 12.1 实现 `note_onset_alignment`
 - [x] 12.2 实现强 onset 与 downbeat 响应指标
 - [x] 12.3 实现 `unsupported_note_rate` 与静音违规指标
-- [ ] 12.4 实现 fill burst 对齐和节奏量化误差指标
+- [x] 12.4 实现 fill burst 对齐和节奏量化误差指标
 - [ ] 12.5 使用全部 fixture 校准 report-only 指标
 - [ ] 12.6 评审并选择少量指标进入 AI repair
 - [ ] 12.7 执行 Phase 6 阶段验收
