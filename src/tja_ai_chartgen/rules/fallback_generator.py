@@ -69,7 +69,6 @@ MINIMUM_SKELETON_HITS = {
 MAX_CONSECUTIVE_WEAK_HITS = 2
 GRID_ACTIVITY_EVIDENCE_THRESHOLD = 0.18
 SPECTRAL_GRID_EVIDENCE_THRESHOLD = 0.25
-INSTRUMENT_GRID_EVIDENCE_THRESHOLD = 0.35
 BIG_NOTE_LIMITS = {
     "easy": 1,
     "normal": 1,
@@ -306,7 +305,6 @@ def _feature_driven_events(
         color = _salience_color(
             color,
             candidates_by_grid.get(grid),
-            instrument_features.get(grid),
         )
         if template.name == "performance":
             color = "1" if color in {"1", "3"} else "2"
@@ -587,7 +585,6 @@ def _select_hit_grids(
         or _has_grid_evidence(
             feature,
             spectral_feature=spectral_features.get(grid),
-            instrument_feature=instrument_features.get(grid),
         )
     }
     has_supported_evidence = bool(reliable_grids or supported_grids)
@@ -749,7 +746,6 @@ def _has_grid_evidence(
     feature: GridFeature,
     *,
     spectral_feature: SpectralGridFeature | None,
-    instrument_feature: InstrumentGridFeature | None,
 ) -> bool:
     if (
         feature.onset
@@ -766,12 +762,7 @@ def _has_grid_evidence(
         spectral_feature.spectral_flux,
     ) >= SPECTRAL_GRID_EVIDENCE_THRESHOLD:
         return True
-    return instrument_feature is not None and max(
-        instrument_feature.drum_onset,
-        instrument_feature.bass_onset,
-        instrument_feature.vocal_onset,
-        instrument_feature.accompaniment_onset,
-    ) >= INSTRUMENT_GRID_EVIDENCE_THRESHOLD
+    return False
 
 
 def _would_exceed_weak_run(
@@ -833,10 +824,41 @@ def _grid_score(
             spectral_feature.high_onset_strength,
         ) * 2.0
     if instrument_feature is not None:
-        score += instrument_feature.drum_onset * 5.0
-        score += instrument_feature.bass_onset * 2.0
-        score += instrument_feature.accompaniment_onset * 2.0
-        score += instrument_feature.vocal_onset * 0.8
+        score += (
+            instrument_feature.drum_onset
+            * bar.instrument.drum_activity
+            * 5.0
+        )
+        if feature.beat is not None or feature.downbeat:
+            score += (
+                instrument_feature.bass_onset
+                * bar.instrument.bass_activity
+                * 1.5
+            )
+        has_base_evidence = _has_grid_evidence(
+            feature,
+            spectral_feature=spectral_feature,
+        )
+        if has_base_evidence and bar.transition_role in {
+            "build_up",
+            "peak",
+            "fill",
+            "cadence",
+        }:
+            score += (
+                instrument_feature.accompaniment_onset
+                * bar.instrument.other_activity
+                * 1.5
+            )
+        if has_base_evidence and (
+            bar.phrase_position in {"phrase_start", "phrase_end", "song_end"}
+            or bar.transition_role == "cadence"
+        ):
+            score += (
+                instrument_feature.vocal_onset
+                * bar.instrument.vocal_activity
+                * 0.6
+            )
     score += style_grid_bias(template, feature.grid, bar.grids_per_bar, bar.index)
 
     if selected:
@@ -853,7 +875,6 @@ def _grid_score(
 def _salience_color(
     color: str,
     candidate: SalienceCandidate | None,
-    instrument_feature: InstrumentGridFeature | None,
 ) -> str:
     """将 style 作为基础票，再用统一软倾向校准咚咔。"""
     base_color = "don" if color in {"1", "3"} else "ka"
@@ -862,18 +883,6 @@ def _salience_color(
     if candidate is not None:
         don_score += candidate.point.don_preference
         ka_score += candidate.point.ka_preference
-    if instrument_feature is not None:
-        neutral_drive = max(
-            instrument_feature.drum_onset,
-            instrument_feature.vocal_onset,
-            instrument_feature.accompaniment_onset,
-        )
-        if (
-            instrument_feature.bass_onset >= 0.35
-            and instrument_feature.bass_onset >= neutral_drive - 0.1
-        ):
-            don_score += instrument_feature.bass_onset * 0.18
-
     resolved = base_color
     if don_score - ka_score >= COLOR_OVERRIDE_MARGIN:
         resolved = "don"

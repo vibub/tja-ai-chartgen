@@ -98,6 +98,27 @@ def test_salience_candidates_follow_evidence_priority_and_score_order():
     assert candidates[0].score > candidates[1].score
 
 
+def test_salience_candidates_treat_reliable_drum_stem_onset_as_transient():
+    candidates = rank_bar_salience_candidates(
+        _bar(),
+        BarRhythmicSalience(
+            confidence=0.8,
+            points=[
+                RhythmicSaliencePoint(
+                    grid=12,
+                    hit=0.7,
+                    confidence=0.8,
+                    reasons=["stem:drum-onset"],
+                )
+            ],
+        ),
+        output_resolution=16,
+    )
+
+    assert candidates[0].kind == "strong-transient"
+    assert candidates[0].reliable is True
+
+
 def test_accent_candidates_unify_reliable_onset_structure_and_stable_downbeat():
     bar = _bar()
     salience = BarRhythmicSalience(

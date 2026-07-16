@@ -19,6 +19,8 @@ from tja_ai_chartgen.tja.model import (
     BarFeature,
     BarRhythmicSalience,
     GridFeature,
+    InstrumentBarFeature,
+    InstrumentGridFeature,
     RhythmicSaliencePoint,
     SpectralGridFeature,
 )
@@ -160,6 +162,45 @@ def test_canonical_rhythmic_evidence_aligns_all_base_channels():
     assert evidence[47].onset_strength == 1.0
 
 
+def test_canonical_rhythmic_evidence_aligns_stem_onsets_and_bar_activity():
+    bar = BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.5,
+        grids_per_bar=48,
+        instrument=InstrumentBarFeature(
+            vocal_activity=0.4,
+            drum_activity=0.8,
+            bass_activity=0.6,
+            other_activity=0.5,
+        ),
+        instrument_grid_features=[
+            InstrumentGridFeature(
+                grid=12,
+                vocal_onset=0.5,
+                drum_onset=0.9,
+                bass_onset=0.7,
+                accompaniment_onset=0.6,
+            ),
+            InstrumentGridFeature(grid=12, drum_onset=0.7),
+            InstrumentGridFeature(grid=60, drum_onset=1.0),
+        ],
+    )
+
+    evidence = build_canonical_rhythmic_evidence(bar)
+
+    assert evidence[12].vocal_onset == 0.5
+    assert evidence[12].drum_onset == 0.9
+    assert evidence[12].bass_onset == 0.7
+    assert evidence[12].accompaniment_onset == 0.6
+    assert evidence[12].vocal_activity == 0.4
+    assert evidence[12].drum_activity == 0.8
+    assert evidence[12].bass_activity == 0.6
+    assert evidence[12].accompaniment_activity == 0.5
+    assert sum(point.drum_onset > 0 for point in evidence) == 1
+
+
 def test_canonical_rhythmic_evidence_supports_compound_meter_and_ignores_invalid_grids():
     bar = BarFeature(
         index=2,
@@ -267,6 +308,86 @@ def test_hit_salience_does_not_create_hits_from_activity_alone():
     assert salience.points == []
     assert salience.active_ratio == 1.0
     assert salience.onset_evidence_count == 0
+
+
+def test_hit_salience_uses_activity_gated_drum_onset_and_rewards_agreement():
+    stem_only_bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        instrument=InstrumentBarFeature(drum_activity=0.8),
+        instrument_grid_features=[InstrumentGridFeature(grid=9, drum_onset=0.9)],
+    )
+    agreed_bar = stem_only_bar.model_copy(
+        update={
+            "grid_features": [GridFeature(grid=9, onset=True, strength=0.6)],
+        }
+    )
+
+    stem_only = build_bar_hit_salience(stem_only_bar)
+    agreed = build_bar_hit_salience(agreed_bar)
+
+    assert stem_only.points[0].grid == 9
+    assert stem_only.points[0].hit == 0.45
+    assert stem_only.points[0].reasons == ["stem:drum-onset"]
+    assert agreed.points[0].hit > stem_only.points[0].hit
+    assert agreed.points[0].reasons[:3] == [
+        "onset",
+        "stem:drum-onset",
+        "stem:drum-agreement",
+    ]
+    assert agreed.points[0].confidence > stem_only.points[0].confidence
+    assert agreed.onset_evidence_count == 1
+
+
+def test_hit_salience_rejects_ungated_stem_artifacts_and_non_drum_onsets():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        instrument=InstrumentBarFeature(
+            vocal_activity=0.8,
+            drum_activity=0.02,
+            bass_activity=0.8,
+            other_activity=0.8,
+        ),
+        instrument_grid_features=[
+            InstrumentGridFeature(grid=4, drum_onset=1.0),
+            InstrumentGridFeature(grid=8, vocal_onset=1.0),
+            InstrumentGridFeature(grid=12, bass_onset=1.0),
+            InstrumentGridFeature(grid=16, accompaniment_onset=1.0),
+        ],
+    )
+
+    salience = build_bar_hit_salience(bar)
+
+    assert salience.points == []
+    assert salience.onset_evidence_count == 0
+
+
+def test_hit_salience_uses_bass_onset_only_to_reinforce_beat_skeleton():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        beat_grids=[0, 12, 24, 36],
+        activity_grids=[0.0] * 12 + [0.5] + [0.0] * 35,
+        instrument=InstrumentBarFeature(bass_activity=0.8),
+        instrument_grid_features=[
+            InstrumentGridFeature(grid=7, bass_onset=0.9),
+            InstrumentGridFeature(grid=12, bass_onset=0.9),
+        ],
+    )
+
+    salience = build_bar_hit_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert 7 not in points
+    assert points[12].hit > 0.10
+    assert points[12].reasons == ["beat", "stem:bass-beat"]
 
 
 def test_hit_salience_keeps_strong_spectral_attack_when_mix_onset_is_missing():
@@ -434,6 +555,61 @@ def test_accent_salience_uses_downbeat_onset_peaks_and_legacy_hints():
     assert points[7].reasons[-1] == "accent:hint"
 
 
+def test_accent_salience_uses_drum_vocal_and_accompaniment_context():
+    bar = BarFeature(
+        index=2,
+        start_time=4.0,
+        end_time=6.0,
+        energy=0.6,
+        phrase_position="phrase_start",
+        transition_role="peak",
+        instrument=InstrumentBarFeature(
+            vocal_activity=0.7,
+            drum_activity=0.8,
+            other_activity=0.7,
+        ),
+        grid_features=[GridFeature(grid=6, onset=True, strength=0.5)],
+        instrument_grid_features=[
+            InstrumentGridFeature(
+                grid=6,
+                vocal_onset=0.8,
+                drum_onset=0.9,
+                accompaniment_onset=0.8,
+            )
+        ],
+    )
+
+    salience = build_bar_accent_salience(bar)
+    point = salience.points[0]
+
+    assert point.accent > 0.7
+    assert "accent:drum-onset" in point.reasons
+    assert "accent:vocal-context" in point.reasons
+    assert "accent:accompaniment-highlight" in point.reasons
+    assert "stem:accompaniment-support" in point.reasons
+
+
+def test_vocal_and_accompaniment_onsets_do_not_create_hits_without_base_evidence():
+    bar = BarFeature(
+        index=2,
+        start_time=4.0,
+        end_time=6.0,
+        energy=0.6,
+        phrase_position="phrase_start",
+        transition_role="peak",
+        instrument=InstrumentBarFeature(vocal_activity=0.8, other_activity=0.8),
+        instrument_grid_features=[
+            InstrumentGridFeature(
+                grid=6,
+                vocal_onset=1.0,
+                accompaniment_onset=1.0,
+            )
+        ],
+    )
+
+    assert build_bar_accent_salience(bar).points == []
+
+
 def test_accent_salience_rejects_weak_local_onset_peaks():
     bar = BarFeature(
         index=1,
@@ -563,6 +739,30 @@ def test_don_ka_salience_uses_dominant_frequency_and_keeps_mixed_evidence_neutra
     assert points[28].don_preference == 0.0
     assert points[28].ka_preference == 0.0
     assert not any(reason.startswith("color:") for reason in points[28].reasons)
+
+
+def test_don_ka_salience_uses_bass_onset_as_weak_don_evidence():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        beat_grids=[0, 12, 24, 36],
+        downbeat_grid=0,
+        instrument=InstrumentBarFeature(drum_activity=0.7, bass_activity=0.8),
+        instrument_grid_features=[
+            InstrumentGridFeature(grid=0, drum_onset=0.7, bass_onset=0.9),
+            InstrumentGridFeature(grid=6, drum_onset=0.7, bass_onset=0.9),
+        ],
+    )
+
+    salience = build_bar_don_ka_salience(bar)
+    points = {point.grid: point for point in salience.points}
+
+    assert points[0].don_preference > points[6].don_preference
+    assert points[6].don_preference < 0.40
+    assert "color:bass-onset" in points[0].reasons
+    assert "color:bass-onset" in points[6].reasons
 
 
 def test_don_ka_salience_requires_confident_band_attack_for_color_bias():
@@ -715,6 +915,31 @@ def test_don_ka_salience_breaks_long_strong_monochrome_runs():
     ]
     assert "color:balance" in salience.points[3].reasons
     assert all(point.don_preference <= 0.75 for point in salience.points)
+
+
+def test_burst_salience_uses_late_drum_onset_rise_without_mix_onsets():
+    bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.6,
+        grids_per_bar=48,
+        instrument=InstrumentBarFeature(drum_activity=0.8),
+        instrument_grid_features=[
+            InstrumentGridFeature(grid=27, drum_onset=0.9),
+            InstrumentGridFeature(grid=33, drum_onset=0.9),
+            InstrumentGridFeature(grid=39, drum_onset=0.9),
+            InstrumentGridFeature(grid=45, drum_onset=0.9),
+        ],
+    )
+
+    salience = build_bar_burst_salience(bar)
+
+    assert is_reliable_burst(salience)
+    assert salience.burst_start_grid == 27
+    assert salience.burst_end_grid == 45
+    assert "burst:onset-density" in salience.burst_reasons
+    assert "burst:drum-onset-rise" in salience.burst_reasons
 
 
 def test_burst_salience_detects_late_onset_flux_and_percussive_rise():

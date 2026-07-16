@@ -30,6 +30,13 @@ BURST_SALIENCE_THRESHOLD = 0.40
 BURST_CONFIDENCE_THRESHOLD = 0.50
 BURST_FLUX_GATE = 0.35
 BURST_GRID_EVIDENCE_GATE = 0.25
+STEM_ACTIVITY_GATE = 0.08
+STEM_ONSET_GATE = 0.18
+DRUM_CONFLICT_CAP = 0.45
+DRUM_AGREEMENT_BOOST = 0.12
+BASS_COLOR_GATE = 0.25
+VOCAL_CONTEXT_GATE = 0.35
+ACCOMPANIMENT_CONTEXT_GATE = 0.30
 SALIENCE_FALLBACK_EDGE_SILENCE = "edge-silence"
 SALIENCE_FALLBACK_SILENT_BAR = "silent-bar"
 SALIENCE_FALLBACK_NO_EVIDENCE = "no-rhythmic-evidence"
@@ -66,6 +73,14 @@ class CanonicalRhythmicEvidencePoint:
     mid_onset_strength: float = 0.0
     high_onset_strength: float = 0.0
     spectral_flux: float = 0.0
+    vocal_onset: float = 0.0
+    drum_onset: float = 0.0
+    bass_onset: float = 0.0
+    accompaniment_onset: float = 0.0
+    vocal_activity: float = 0.0
+    drum_activity: float = 0.0
+    bass_activity: float = 0.0
+    accompaniment_activity: float = 0.0
 
 
 def build_canonical_rhythmic_evidence(
@@ -133,6 +148,19 @@ def build_canonical_rhythmic_evidence(
         ):
             values[name] = max(values.get(name, 0.0), _unit_value(getattr(feature, name)))
 
+    instrument_values: list[dict[str, float]] = [{} for _ in range(grid_count)]
+    for feature in bar.instrument_grid_features:
+        if feature.grid < 0 or feature.grid >= grid_count:
+            continue
+        values = instrument_values[feature.grid]
+        for name in (
+            "vocal_onset",
+            "drum_onset",
+            "bass_onset",
+            "accompaniment_onset",
+        ):
+            values[name] = max(values.get(name, 0.0), _unit_value(getattr(feature, name)))
+
     return [
         CanonicalRhythmicEvidencePoint(
             grid=grid,
@@ -146,6 +174,17 @@ def build_canonical_rhythmic_evidence(
             mid_onset_strength=spectral_values[grid].get("mid_onset_strength", 0.0),
             high_onset_strength=spectral_values[grid].get("high_onset_strength", 0.0),
             spectral_flux=spectral_values[grid].get("spectral_flux", 0.0),
+            vocal_onset=instrument_values[grid].get("vocal_onset", 0.0),
+            drum_onset=instrument_values[grid].get("drum_onset", 0.0),
+            bass_onset=instrument_values[grid].get("bass_onset", 0.0),
+            accompaniment_onset=instrument_values[grid].get(
+                "accompaniment_onset",
+                0.0,
+            ),
+            vocal_activity=bar.instrument.vocal_activity,
+            drum_activity=bar.instrument.drum_activity,
+            bass_activity=bar.instrument.bass_activity,
+            accompaniment_activity=bar.instrument.other_activity,
         )
         for grid in range(grid_count)
     ]
@@ -176,7 +215,9 @@ def build_bar_hit_salience(
     """融合基础瞬态与节拍骨架，不让持续 activity 单独制造 hit。"""
     evidence = build_canonical_rhythmic_evidence(bar)
     has_transient_evidence = any(
-        item.onset or _spectral_strength(item) >= SPECTRAL_EVIDENCE_THRESHOLD
+        item.onset
+        or _spectral_strength(item) >= SPECTRAL_EVIDENCE_THRESHOLD
+        or _drum_onset_strength(item) >= STEM_ONSET_GATE
         for item in evidence
     )
     if force_silent:
@@ -202,10 +243,30 @@ def build_bar_hit_salience(
             reasons.append("onset")
         if spectral_strength >= SPECTRAL_EVIDENCE_THRESHOLD:
             reasons.append("spectral")
+        drum_strength = _drum_onset_strength(item, spectral_strength=spectral_strength)
+        if drum_strength >= STEM_ONSET_GATE:
+            reasons.append("stem:drum-onset")
+            if item.onset or spectral_strength >= ABSOLUTE_SPECTRAL_GATE:
+                reasons.append("stem:drum-agreement")
+        if (
+            max(_effective_onset_strength(item), spectral_strength, drum_strength) > 0
+            and _stem_onset_strength(
+                item.accompaniment_onset,
+                item.accompaniment_activity,
+            )
+            >= ACCOMPANIMENT_CONTEXT_GATE
+        ):
+            reasons.append("stem:accompaniment-support")
         if item.downbeat:
             reasons.append("downbeat")
         elif item.beat is not None:
             reasons.append("beat")
+        if (
+            (item.beat is not None or item.downbeat)
+            and _stem_onset_strength(item.bass_onset, item.bass_activity)
+            >= STEM_ONSET_GATE
+        ):
+            reasons.append("stem:bass-beat")
         if role_multiplier != 1.0:
             reasons.append(f"role:{bar.transition_role}")
 
@@ -230,12 +291,16 @@ def build_bar_hit_salience(
 
     active_grid_count = sum(item.activity >= ACTIVE_GRID_THRESHOLD for item in evidence)
     active_ratio = active_grid_count / len(evidence)
-    onset_evidence_count = sum(item.onset for item in evidence)
+    onset_evidence_count = sum(_has_primary_onset(item) for item in evidence)
     point_grids = {point.grid for point in points}
     transient_point_count = sum(
         item.grid in point_grids
         and (
-            _effective_onset_strength(item) >= ABSOLUTE_ONSET_GATE
+            max(
+                _effective_onset_strength(item),
+                _drum_onset_strength(item),
+            )
+            >= ABSOLUTE_ONSET_GATE
             or (
                 item.grid in spectral_peaks
                 and _spectral_strength(item) >= ABSOLUTE_SPECTRAL_GATE
@@ -326,6 +391,10 @@ def build_bar_accent_salience(
         if item.downbeat and onset_peak_strength >= STRONG_ONSET_ACCENT_THRESHOLD:
             accent = _unit_value(accent + DOWNBEAT_ONSET_ACCENT_BOOST)
             accent_reasons.append("accent:downbeat-onset")
+        drum_strength = _drum_onset_strength(item)
+        if drum_strength >= STRONG_ONSET_ACCENT_THRESHOLD:
+            accent = max(accent, 0.35 + drum_strength * 0.45)
+            accent_reasons.append("accent:drum-onset")
         if (
             item.grid in spectral_peaks
             and item.low_onset_strength >= SPECTRAL_EVIDENCE_THRESHOLD
@@ -338,6 +407,28 @@ def build_bar_accent_salience(
         if point.grid == first_hit_grid and bar.energy_delta > 0.10:
             accent = max(accent, 0.35 + bar.energy_delta * 0.35)
             accent_reasons.append("accent:energy-rise")
+        vocal_strength = _stem_onset_strength(item.vocal_onset, item.vocal_activity)
+        if (
+            point.grid == first_hit_grid
+            and vocal_strength >= VOCAL_CONTEXT_GATE
+            and (
+                resolved_start_reason is not None
+                or bar.phrase_position in {"phrase_end", "song_end"}
+                or bar.transition_role == "cadence"
+            )
+        ):
+            accent = max(accent, 0.25 + vocal_strength * 0.20)
+            accent_reasons.append("accent:vocal-context")
+        accompaniment_strength = _stem_onset_strength(
+            item.accompaniment_onset,
+            item.accompaniment_activity,
+        )
+        if (
+            accompaniment_strength >= ACCOMPANIMENT_CONTEXT_GATE
+            and bar.transition_role in {"build_up", "peak", "fill", "cadence"}
+        ):
+            accent = max(accent, 0.24 + accompaniment_strength * 0.18)
+            accent_reasons.append("accent:accompaniment-highlight")
 
         if accent >= ACCENT_OUTPUT_THRESHOLD and role_multiplier != 1.0:
             accent = _unit_value(accent * role_multiplier)
@@ -408,8 +499,8 @@ def build_bar_burst_salience(
     midpoint = bar.grids_per_bar // 2
     first_half = evidence[:midpoint]
     second_half = evidence[midpoint:]
-    first_onsets = sum(item.onset for item in first_half)
-    second_onsets = sum(item.onset for item in second_half)
+    first_onsets = sum(_has_primary_onset(item) for item in first_half)
+    second_onsets = sum(_has_primary_onset(item) for item in second_half)
     first_rate = first_onsets / max(1, len(first_half))
     second_rate = second_onsets / max(1, len(second_half))
     onset_support = min(1.0, second_onsets / 4)
@@ -424,10 +515,19 @@ def build_bar_burst_salience(
         max(0.0, second_flux - max(first_flux, BURST_FLUX_GATE * 0.5))
         / max(1.0 - BURST_FLUX_GATE * 0.5, 0.01)
     )
+    first_drum_onsets = sum(
+        _drum_onset_strength(item) >= STEM_ONSET_GATE for item in first_half
+    )
+    second_drum_onsets = sum(
+        _drum_onset_strength(item) >= STEM_ONSET_GATE for item in second_half
+    )
+    drum_burst_cue = _unit_value(
+        max(0.0, second_drum_onsets - first_drum_onsets) / 4
+    )
     burst_grids = [
         item.grid
         for item in second_half
-        if item.onset or item.spectral_flux >= BURST_GRID_EVIDENCE_GATE
+        if _has_primary_onset(item) or item.spectral_flux >= BURST_GRID_EVIDENCE_GATE
     ]
     burst_support = min(1.0, len(burst_grids) / 4)
     rhythmic_core = second_onsets >= 3 and density_cue >= 0.20
@@ -461,6 +561,8 @@ def build_bar_burst_salience(
         reasons.append("burst:onset-density")
     if flux_cue > 0:
         reasons.append("burst:spectral-flux")
+    if drum_burst_cue > 0:
+        reasons.append("burst:drum-onset-rise")
     if percussive_cue > 0:
         reasons.append("burst:percussive-rise")
     if contrast_cue > 0:
@@ -489,7 +591,14 @@ def build_bar_burst_salience(
         return base
 
     channel_count = sum(
-        cue > 0.0 for cue in (density_cue, flux_cue, percussive_cue, contrast_cue)
+        cue > 0.0
+        for cue in (
+            density_cue,
+            flux_cue,
+            drum_burst_cue,
+            percussive_cue,
+            contrast_cue,
+        )
     )
     confidence = _unit_value(
         burst_support * 0.40
@@ -499,6 +608,7 @@ def build_bar_burst_salience(
     score = _unit_value(
         density_cue * 0.40
         + flux_cue * 0.25
+        + drum_burst_cue * 0.15
         + percussive_cue * 0.15
         + contrast_cue * 0.10
         + burst_support * 0.10
@@ -607,6 +717,14 @@ def _apply_bar_don_ka_salience(
                     ka_preference + percussive_cue,
                 )
                 color_reasons.append("color:percussive-high")
+
+        bass_strength = _stem_onset_strength(item.bass_onset, item.bass_activity)
+        if bass_strength >= BASS_COLOR_GATE:
+            bass_cue = min(0.40, 0.18 + bass_strength * 0.22)
+            if item.downbeat:
+                bass_cue = min(0.45, bass_cue + 0.05)
+            don_preference = max(don_preference, bass_cue)
+            color_reasons.append("color:bass-onset")
 
         if item.downbeat:
             don_preference = max(don_preference, 0.28)
@@ -799,6 +917,42 @@ def _spectral_strength(item: CanonicalRhythmicEvidencePoint) -> float:
     return max(band_attack, item.spectral_flux * 0.8)
 
 
+def _stem_onset_strength(onset: float, activity: float) -> float:
+    onset = _unit_value(onset)
+    activity = _unit_value(activity)
+    if onset < STEM_ONSET_GATE or activity < STEM_ACTIVITY_GATE:
+        return 0.0
+    return _unit_value(onset * (0.55 + activity * 0.45))
+
+
+def _drum_onset_strength(
+    item: CanonicalRhythmicEvidencePoint,
+    *,
+    spectral_strength: float | None = None,
+) -> float:
+    strength = _stem_onset_strength(item.drum_onset, item.drum_activity)
+    if strength <= 0:
+        return 0.0
+    resolved_spectral = (
+        _spectral_strength(item) if spectral_strength is None else spectral_strength
+    )
+    if item.onset or resolved_spectral >= ABSOLUTE_SPECTRAL_GATE:
+        return _unit_value(strength + DRUM_AGREEMENT_BOOST)
+    return min(DRUM_CONFLICT_CAP, strength * 0.75)
+
+
+def _has_primary_onset(item: CanonicalRhythmicEvidencePoint) -> bool:
+    return item.onset or _drum_onset_strength(item) >= STEM_ONSET_GATE
+
+
+def _combined_transient_strength(item: CanonicalRhythmicEvidencePoint) -> float:
+    return max(
+        _effective_onset_strength(item),
+        _spectral_strength(item),
+        _drum_onset_strength(item),
+    )
+
+
 def _point_confidence(
     item: CanonicalRhythmicEvidencePoint,
     spectral_strength: float,
@@ -818,6 +972,12 @@ def _point_confidence(
         if spectral_strength >= ABSOLUTE_SPECTRAL_GATE
         else 0.0
     )
+    drum_strength = _drum_onset_strength(item, spectral_strength=spectral_strength)
+    drum_confidence = (
+        0.30 + drum_strength * 0.45
+        if drum_strength >= STEM_ONSET_GATE
+        else 0.0
+    )
     drive = max(item.activity, _unit_value(bar_energy))
     beat_confidence = (
         0.20 + drive * 0.25
@@ -825,13 +985,34 @@ def _point_confidence(
         and drive >= ABSOLUTE_BEAT_DRIVE_GATE
         else 0.0
     )
-    confidence = max(onset_confidence, spectral_confidence, beat_confidence)
+    confidence = max(
+        onset_confidence,
+        spectral_confidence,
+        drum_confidence,
+        beat_confidence,
+    )
     if onset_confidence > 0 and spectral_confidence > 0:
+        confidence += 0.10
+    if drum_confidence > 0 and (onset_confidence > 0 or spectral_confidence > 0):
         confidence += 0.10
     if item.activity >= ACTIVE_GRID_THRESHOLD:
         confidence += 0.05
+    if (
+        (item.beat is not None or item.downbeat)
+        and _stem_onset_strength(item.bass_onset, item.bass_activity) >= STEM_ONSET_GATE
+    ):
+        confidence += 0.05
+    if (
+        max(onset_confidence, spectral_confidence, drum_confidence) > 0
+        and _stem_onset_strength(
+            item.accompaniment_onset,
+            item.accompaniment_activity,
+        )
+        >= ACCOMPANIMENT_CONTEXT_GATE
+    ):
+        confidence += 0.04
     confidence += _local_transient_margin(item.grid, evidence) * 0.10
-    transient_strength = max(onset_strength, spectral_strength)
+    transient_strength = max(onset_strength, spectral_strength, drum_strength)
     if global_transient_reference is not None and global_transient_reference > 0:
         confidence += min(1.0, transient_strength / global_transient_reference) * 0.05
     return _unit_value(confidence)
@@ -846,6 +1027,9 @@ def _global_transient_reference(bars: list[BarFeature]) -> float | None:
             onset_strength = _effective_onset_strength(item)
             if onset_strength >= ABSOLUTE_ONSET_GATE:
                 strengths.append(onset_strength)
+            drum_strength = _drum_onset_strength(item)
+            if drum_strength >= STEM_ONSET_GATE:
+                strengths.append(drum_strength)
             spectral_strength = _spectral_strength(item)
             if (
                 item.grid in spectral_peaks
@@ -873,25 +1057,12 @@ def _local_transient_margin(
     evidence: list[CanonicalRhythmicEvidencePoint],
 ) -> float:
     current = evidence[grid]
-    current_strength = max(
-        _effective_onset_strength(current),
-        _spectral_strength(current),
-    )
+    current_strength = _combined_transient_strength(current)
     neighbor_strengths = [0.0]
     if grid > 0:
-        neighbor_strengths.append(
-            max(
-                _effective_onset_strength(evidence[grid - 1]),
-                _spectral_strength(evidence[grid - 1]),
-            )
-        )
+        neighbor_strengths.append(_combined_transient_strength(evidence[grid - 1]))
     if grid + 1 < len(evidence):
-        neighbor_strengths.append(
-            max(
-                _effective_onset_strength(evidence[grid + 1]),
-                _spectral_strength(evidence[grid + 1]),
-            )
-        )
+        neighbor_strengths.append(_combined_transient_strength(evidence[grid + 1]))
     return _unit_value(current_strength - max(neighbor_strengths))
 
 
@@ -945,7 +1116,8 @@ def _transient_hit_strength(
         onset_strength = 0.0
     if spectral_strength < ABSOLUTE_SPECTRAL_GATE:
         spectral_strength = 0.0
-    return max(onset_strength, spectral_strength * 0.75)
+    drum_strength = _drum_onset_strength(item, spectral_strength=spectral_strength)
+    return max(onset_strength, spectral_strength * 0.75, drum_strength)
 
 
 def _beat_skeleton_strength(
@@ -958,7 +1130,9 @@ def _beat_skeleton_strength(
     if drive < ABSOLUTE_BEAT_DRIVE_GATE:
         return 0.0
     base = 0.26 if item.downbeat else 0.20
-    return base * drive
+    bass_strength = _stem_onset_strength(item.bass_onset, item.bass_activity)
+    bass_bonus = bass_strength * (0.10 if item.downbeat else 0.06)
+    return _unit_value(base * drive + bass_bonus)
 
 
 def _unit_value(value: float) -> float:

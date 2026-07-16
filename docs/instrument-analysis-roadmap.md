@@ -914,8 +914,8 @@ class TempoMeterCandidate(BaseModel):
 | --- | --- | --- | --- |
 | 11.1 复用 stem activity/onset | 已完成 | instrument-v1 已提供 vocals/drums/bass/other activity 与 onset。 | 现有 instrument 测试和真实模型 smoke 已覆盖。 |
 | 11.2 定义 stem-role 轻量模式 | 已完成 | 新增 `stem-role` profile：独立默认目录 `models/stem-role-v1/`、统一兼容 manifest、仅准备/校验/离线加载 htdemucs，并由 CLI、GenerationConfig 与 Web 显式选择；旧 `instrument-v1` full profile 继续兼容。 | `tests/test_instrument_models.py`、`tests/test_instruments.py`、`tests/test_cli_instruments.py`、`tests/test_cli_generate.py`、`tests/test_web.py`。 |
-| 11.3 接入 RhythmicSalience | 未开始 | 尚未通过统一 salience 融合 stem onset。 | 尚未执行。 |
-| 11.4 保持 partial/fallback | 部分完成 | `stem-role-v1` 在 Demucs 与 stem frame 成功后已正式返回 complete 且 classifier 为 `null`；旧 full profile 的 AST 失败仍保留 Demucs 证据并返回 partial，模型或分离失败继续 fallback。尚待随 salience 接入统一复核持久化与通知语义。 | 新增 stem-role complete 测试，现有 full partial/fallback 测试继续通过。 |
+| 11.3 接入 RhythmicSalience | 已完成 | canonical rhythmic evidence 已对齐 vocal/drum/bass/accompaniment onset 与对应 bar activity；drum onset 经活动门控后进入 hit/accent/burst，bass 只增强 beat/downbeat 与 don preference，vocal 和 accompaniment 只修正已有 phrase/cadence/highlight 候选。stem 与 mix/spectral 一致时提高强度和置信度，冲突时限制 drum 上限，非 drum stem 不独立制造 hit。 | `tests/test_rhythmic_salience.py`、`tests/test_salience_candidates.py`、`tests/test_fallback_generator.py`。 |
+| 11.4 保持 partial/fallback | 部分完成 | `stem-role-v1` 在 Demucs 与 stem frame 成功后已正式返回 complete 且 classifier 为 `null`；旧 full profile 的 AST 失败仍保留 Demucs 证据并返回 partial，模型或分离失败继续 fallback。salience 在没有 stem grid 时保持原结果，尚待独立复核全部持久化与通知语义。 | 新增 stem-role complete 与无 stem salience 回归测试，现有 full partial/fallback 测试继续通过。 |
 | 11.5 控制模型与性能成本 | 部分完成 | 已有设备选择、segment、overlap 和 CUDA OOM 重试。 | 尚未测量 stem-role 轻量 profile。 |
 | 11.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -1013,6 +1013,15 @@ stem-role-v1
 - stem 与 mix/spectral 一致时提高置信度；
 - stem 与基础证据冲突时保守降权。
 
+当前实现将 instrument grid 合并进 `CanonicalRhythmicEvidencePoint`，但不改变 `rhythmic-salience-v1` 的持久化 schema：
+
+- drum onset 必须同时通过 drum activity 门控；没有 mix/spectral 支持时限制为中等 hit，重合时增加 hit 与 confidence，并作为 transient candidate 供规则生成器优先消费；
+- drum onset 的后半小节密度上升参与 burst score/confidence 和范围检测；
+- bass onset 不独立制造 hit，只在 beat/downbeat 上增加骨架强度，并对已有点提供有上限的 don preference；
+- vocal onset 只在歌曲、乐句起点或 cadence 上修正首个已有 hit 的 accent；
+- accompaniment onset 只在 build-up、peak、fill、cadence 等 highlight 上修正已有候选；
+- fallback generator 不再把非 drum stem onset 直接视为独立格点证据，避免绕过统一 salience 门控。
+
 ## 11.5 退出条件
 
 - 用户可以只准备 `htdemucs` 声部模型，不下载 AST；
@@ -1026,7 +1035,7 @@ stem-role-v1
 
 - [x] 11.1 复用现有 vocals、drums、bass、other activity/onset
 - [x] 11.2 定义只需要 `htdemucs` 的 stem-role 轻量模式
-- [ ] 11.3 将 stem activity/onset 接入 `RhythmicSalience`
+- [x] 11.3 将 stem activity/onset 接入 `RhythmicSalience`
 - [ ] 11.4 调整 complete、partial、fallback 与旧 instrument-v1 兼容语义
 - [ ] 11.5 验证模型准备、离线加载、设备和性能成本
 - [ ] 11.6 执行 Phase 5 阶段验收

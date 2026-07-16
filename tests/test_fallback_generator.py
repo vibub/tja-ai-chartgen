@@ -305,8 +305,8 @@ def test_breakdown_without_grid_evidence_does_not_add_style_skeleton():
     assert playable_hit_count(notes) == 0
 
 
-def test_instrument_attacks_prioritize_drums_and_bass_with_soft_don_bias():
-    bar = _feature(0, energy=0.3, downbeat=None).model_copy(
+def test_stem_salience_prioritizes_drums_and_uses_bass_only_on_beats():
+    bar = _feature(0, energy=0.3, beats=[11], downbeat=None).model_copy(
         update={
             "instrument": InstrumentBarFeature(
                 drum_activity=0.8,
@@ -329,6 +329,34 @@ def test_instrument_attacks_prioritize_drums_and_bass_with_soft_don_bias():
 
     assert _hit_grids(notes) == {3, 11}
     assert notes[11] == "1"
+
+
+def test_non_drum_stem_onsets_do_not_bypass_salience_as_independent_hits():
+    bar = _feature(
+        0,
+        energy=0.5,
+        downbeat=None,
+        transition_role="breakdown",
+    ).model_copy(
+        update={
+            "instrument": InstrumentBarFeature(
+                vocal_activity=0.8,
+                bass_activity=0.8,
+                other_activity=0.8,
+            ),
+            "instrument_grid_features": [
+                InstrumentGridFeature(grid=3, bass_onset=1.0),
+                InstrumentGridFeature(grid=7, vocal_onset=1.0),
+                InstrumentGridFeature(grid=11, accompaniment_onset=1.0),
+            ],
+        }
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar], density="max", course="Oni", level=10
+    )[0].notes
+
+    assert playable_hit_count(notes) == 0
 
 
 def test_missing_onsets_falls_back_to_downbeat_and_beats():

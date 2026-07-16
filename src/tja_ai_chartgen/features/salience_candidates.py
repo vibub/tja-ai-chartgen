@@ -175,7 +175,11 @@ def _candidate_kind(
         point.confidence >= MIN_USABLE_BAR_CONFIDENCE
         and bar_confidence >= MIN_USABLE_BAR_CONFIDENCE
     )
-    transient = "onset" in reasons or "spectral" in reasons
+    transient = (
+        "onset" in reasons
+        or "spectral" in reasons
+        or "stem:drum-onset" in reasons
+    )
     if reliable and transient and point.hit >= STRONG_TRANSIENT_HIT_THRESHOLD:
         return "strong-transient"
     if reliable and transient:
