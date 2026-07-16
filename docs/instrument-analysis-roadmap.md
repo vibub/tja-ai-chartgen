@@ -1250,7 +1250,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 13.3 AI payload 移除具体乐器依赖 | 已完成 | `compact-v7` 持久化版本化紧凑 salience、可表达候选与可靠 burst；`bar_instruments` 只保留粗粒度 stem-role，dominant source/confidence 从四类 activity 重新派生，不读取具体乐器 taxonomy 或旧混合 confidence。 | `tests/test_ai_client.py`、Phase 5 payload taxonomy 独立性验收及旧 compact-v4 sidecar 兼容测试。 |
 | 13.4 QualityReport 收敛 | 已完成 | 以 `quality-report-rhythm-alignment-v1` 固定七类 rhythm alignment 主指标；AI repair 只消费三个已校准极端指标，其余主指标与 density coverage 保持 report-only，具体乐器指标仅保留兼容诊断。 | `tests/test_chart_quality.py` 锁定指标策略、instrument 诊断隔离与既有计算；`tests/test_ai_client.py` 锁定 sidecar gate 对统一策略版本和主指标的引用。 |
 | 13.5 旧 instrument-v1 兼容 | 已完成 | 固定旧 `instrument-v1 partial`、`analysis_schema_version=5`、无版本 GenerationConfig、compact-v4 AI input 与旧 AI output 快照；读取时保留历史字段和值，不静默迁移。 | `tests/test_legacy_compatibility.py`、`tests/fixtures/compatibility/`。 |
-| 13.6 UI 与 notice 调整 | 未开始 | 尚未区分 stem-role 与具体乐器分类。 | 尚未执行。 |
+| 13.6 UI 与 notice 调整 | 已完成 | CLI/Web 新任务默认推荐 `stem-role`，`full` 明确标记为旧具体乐器分类兼容诊断；进度、结果摘要、远程权限提示与 notices 均区分基础节奏、BeatNet、声部增强和旧 taxonomy。 | `tests/test_cli_instruments.py`、`tests/test_cli_generate.py`、`tests/test_generation.py`、`tests/test_web.py` 覆盖默认 profile、帮助语义、动态进度、notice 与结果摘要。 |
 | 13.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
 ## 13.1 Structure
@@ -1363,7 +1363,13 @@ prompt 明确要求 AI 优先消费 reliable salience、只使用短的受支持
 
 如果最终停止准备 AST，应提供清晰迁移说明，而不是静默改变现有命令。
 
-## 13.6 退出条件
+当前新任务的交互默认已经切换到推荐的 `stem-role`：不带 `--profile` 的 `prepare-instrument-models` 准备 `models/stem-role-v1/`，CLI `generate --use-instrument-analysis` 与 Web 表单未显式选择 profile 时也使用 `stem-role`。旧无版本/版本 1 `GenerationConfig` 缺少 `instrument_profile` 时仍按 13.5 兼容规则回到 `full`，因此新交互默认调整不会静默改变历史复跑语义。需要旧 AST taxonomy 时必须显式选择 `--profile full` 或 `--instrument-profile full`。
+
+CLI help、准备命令输出和分析阶段输出把 `stem-role` 描述为推荐的 Demucs 声部节奏增强，把 `full` 描述为旧 Demucs + AST taxonomy 兼容诊断。Web 首页使用“声部节奏增强”开关，默认选中“推荐：声部节奏（仅 Demucs）”，旧 full 模式单独标记；远程模式仍由 `--allow-instrument-analysis` 统一授权两类重型推理，未授权时明确说明声部增强和旧 full 均不可用。
+
+Web 进度会按实际 profile 区分 Demucs 声部 activity/onset 与旧 full 的 AST 分类诊断。结果页对 `stem-role-v1` 只显示 vocals/drums/bass/other 粗粒度汇总，并明确不运行具体乐器分类；仅旧 `instrument-v1` 才展示具体乐器兼容诊断，同时注明 taxonomy 不决定当前谱面落点或 QualityReport 主线。analysis notice 同样把 stem-role 成功、full 成功、classifier-only 降级、旧 partial 和基础 fallback 分开说明，其中 AST 失败但 stem-role 完整时明确不会损失核心生成能力。
+
+## 13.7 退出条件
 
 - 未准备任何重型模型时，完整节奏优先路径可运行；
 - 启用 `htdemucs` 时只增加声部活动/onset 证据；
@@ -1379,7 +1385,7 @@ prompt 明确要求 AI 优先消费 reliable salience、只使用短的受支持
 - [x] 13.2 让 fallback 使用 hit、accent、don/ka 和 burst salience
 - [x] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
 - [x] 13.4 将 QualityReport 主线收敛到节奏对齐指标
-- [ ] 13.6 调整 CLI/Web 开关、进度、notice 和文档
+- [x] 13.6 调整 CLI/Web 开关、进度、notice 和文档
 - [ ] 13.7 执行 Phase 7 阶段验收
 
 ---

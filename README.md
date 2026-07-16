@@ -20,14 +20,14 @@
 pip install -e ".[dev]"
 ```
 
-启用可选的人声与乐器分析：
+启用可选的声部节奏增强：
 
 ```bash
 pip install -e ".[dev,instrument]"
 tja-ai-chartgen prepare-instrument-models
 ```
 
-模型准备命令默认把固定版本的 Demucs `htdemucs` 与 AST AudioSet 权重下载到项目根目录的 `models/instrument-v1/`。`models/` 已加入 `.gitignore`；生成命令不会隐式下载模型，也不会把权重或分离后的 stem 写入输出目录。
+模型准备命令默认只准备推荐的 Demucs `htdemucs` 声部模型，并写入项目根目录的 `models/stem-role-v1/`。需要兼容旧具体乐器 taxonomy 诊断时，可显式运行 `tja-ai-chartgen prepare-instrument-models --profile full`，把 Demucs 与固定 AST AudioSet 权重写入 `models/instrument-v1/`。已经只准备过旧 `models/instrument-v1/` 的用户可以继续显式使用 `--instrument-profile full`，或再运行一次默认准备命令迁移到推荐声部路径。`models/` 已加入 `.gitignore`；生成命令不会隐式下载模型，也不会把权重或分离后的 stem 写入输出目录。
 
 ## 开发验证
 
@@ -124,9 +124,11 @@ tja-ai-chartgen generate song.mp3 \
 
 `spectral-v1` 使用 HPSS 分离 harmonic/percussive 成分，并提取低/中/高频 onset、spectral flux、brightness、harmonic novelty、texture novelty 和 percussive ratio。逐帧特征会汇总为小节结构字段，可靠的瞬态位置还会以稀疏 `spectral_events` 进入 AI payload；规则 fallback 会把频谱瞬态作为落点辅助，并将低频攻击视为弱咚证据、高频攻击视为弱咔证据。短音频或 librosa 频谱步骤失败时不会中断现有 onset/RMS 流水线，而会产生 `spectral-analysis-fallback` notice，并继续生成可检查的谱面草稿。
 
-可选 `instrument-v1` 使用本地 Demucs `htdemucs` 分离 vocals、drums、bass、other，再使用固定版本的 AST AudioSet 模型从 mix 与 other stem 中识别 guitar、piano/keyboard、strings、brass、woodwind、synth、organ 等稳定类别。stem 活动、人声 presence、主导声部、主导乐器和稀疏 vocal/drum/bass/accompaniment onset 会映射到 canonical 小节与格点，用于补强乐句边界、build-up、peak、breakdown、cadence、fill、AI motif 和规则落点。识别结果始终是软证据，不会逐音节映射人声，也不会绕过静音、难度、NPS、occupancy、resolution 或可玩性限制。
+可选声部节奏增强默认使用 `stem-role-v1`：本地 Demucs `htdemucs` 分离 vocals、drums、bass、other，并把粗粒度声部活动与稀疏 vocal/drum/bass/accompaniment onset 映射到 canonical 小节和格点。统一 salience、structure、fallback 与 AI 只把这些信息作为节奏、乐句和 motif 的受限软证据，不会逐音节映射人声，也不会绕过静音、难度、NPS、occupancy、resolution 或可玩性限制。
 
-启用方式：
+旧 `full` profile 继续兼容 `instrument-v1`：在 Demucs 后追加固定 AST AudioSet 分类，保留 guitar、piano/keyboard、strings、brass、woodwind、synth、organ 等历史 taxonomy 字段。这些具体乐器类别现在只用于兼容诊断，不决定谱面落点、AI payload 或 QualityReport 主线；新任务只有显式指定 `--instrument-profile full` 才会运行 AST。
+
+启用推荐声部增强：
 
 ```bash
 tja-ai-chartgen generate song.mp3 \
@@ -135,7 +137,7 @@ tja-ai-chartgen generate song.mp3 \
   --instrument-device auto
 ```
 
-`--instrument-device` 支持 `auto`、`cpu`、`cuda` 和 `mps`；也可用 `--instrument-model-dir` 指定已经准备好的本地模型目录。缺少依赖、模型或设备，以及 Demucs/AST 推理失败时，基础生成仍会继续，并通过 `instrument-analysis-partial`、`instrument-models-missing`、`instrument-dependencies-unavailable`、`instrument-device-unavailable` 或 `instrument-analysis-fallback` notice 告知用户。
+`--instrument-device` 支持 `auto`、`cpu`、`cuda` 和 `mps`；也可用 `--instrument-model-dir` 指定已经准备好的本地模型目录。新 CLI/Web 任务默认选择 `stem-role`，旧保存配置缺少 profile 时仍按兼容规则解释为 `full`。缺少依赖、模型或设备时基础生成继续使用节奏与频谱特征；旧 full 模式只有 AST 失败时会自动降级为完整 `stem-role-v1`，notice 会明确说明核心生成能力未受影响。
 
 尝试使用可选 BeatNet 增强 downbeat、meter 和小节起点分析：
 
@@ -221,7 +223,7 @@ tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote --allow-instrument-analysis
 ```
 
-Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则或 AI 增强谱面片段。生成完成后会进入游玩预览，支持播放 OGG、自动演奏谱面、拖动进度条以及播放咚/咔命中音效。分析置信度不足、BeatNet 未生效、`spectral-v1` fallback、`instrument-v1` complete/partial/fallback、基础 resolution 降级、AI fallback 和最终写入错误会通过结构化 `GenerationNotice` 同时显示在进度页与结果页，并持久化为 `generation_notices*.json`；CLI 也会写入同类 sidecar 和 `report.txt`。折叠的 AI 参数区可设置单次请求超时和 0–5 次 transport 重试；全曲生成会保存这两项非敏感设置供结果页沿用，局部 regenerate 的同步 AI 调用在线程池中执行，不阻塞 FastAPI 事件循环。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件，且公开进度/结果会隐藏服务器路径、连接地址和 provider 响应详情。远程模式默认禁用 Demucs/AST 重型推理，只有服务器管理员额外提供 `--allow-instrument-analysis` 后，请求方才能启用阶段 C。
+Web UI 支持上传音频、预览 BPM/OFFSET/小节能量分析、手动覆盖 BPM/OFFSET/拍号，并按指定小节范围重新生成规则或 AI 增强谱面片段。生成完成后会进入游玩预览，支持播放 OGG、自动演奏谱面、拖动进度条以及播放咚/咔命中音效。分析置信度不足、BeatNet 未生效、`spectral-v1` fallback、`stem-role-v1` 成功、旧 `instrument-v1` 兼容状态、classifier-only 降级、基础 resolution 降级、AI fallback 和最终写入错误会通过结构化 `GenerationNotice` 同时显示在进度页与结果页，并持久化为 `generation_notices*.json`；CLI 也会写入同类 sidecar 和 `report.txt`。折叠的 AI 参数区可设置单次请求超时和 0–5 次 transport 重试；全曲生成会保存这两项非敏感设置供结果页沿用，局部 regenerate 的同步 AI 调用在线程池中执行，不阻塞 FastAPI 事件循环。默认监听 `127.0.0.1:8000`，任务文件写入 `output/web/`。监听非回环地址时必须显式提供 `--allow-remote`；该选项只确认暴露风险，不提供认证或多用户数据隔离，公开部署仍需额外的反向代理认证和访问控制。单个上传文件最大为 100 MiB；远程模式禁用请求方指定服务器目录的导出能力，任务下载端点只公开预览 OGG 和生成的 TJA，不公开 AI sidecar 或内部状态文件，且公开进度/结果会隐藏服务器路径、连接地址和 provider 响应详情。远程模式默认禁用 Demucs 声部增强和旧 full AST 兼容推理，只有服务器管理员额外提供 `--allow-instrument-analysis` 后，请求方才能启用；Web 表单、进度与结果摘要会明确区分推荐 stem-role 与旧具体乐器诊断。
 
 ## 输出文件
 
@@ -260,7 +262,7 @@ output/
 
 ## 质量评测
 
-规则生成器的四难度负荷已使用匿名真实四难度谱面聚合结果进行初步校准，并通过项目代码生成的 120 BPM sparse、180 BPM dense、16/24/48 自适应分辨率，以及稳定段→build-up→peak→drop 的结构 WAV 夹具执行可重复真实音频回归；同一流水线还验证 `spectral-v1` envelope 对齐、非空 flux、小节/稀疏格点映射和失败降级。`quality_report*.json` 除总体平均和单小节峰值 notes/sec 外，还记录活跃小节平均 notes/sec、最长连续流数量/时长、重音覆盖率、归一化 pattern 重复率、结构密度相关性、高潮对比、build-up 斜率一致性、收束变化率、fill 候选精度、重复 section motif 一致性、鼓点命中覆盖、贝斯主拍对齐、人声乐句响应、乐器切换响应、阶段 C 高置信小节比例、乐器支持 fill，以及 resolution 切换/量化误差。普通 hit 数、NPS、连续流、重音和重复统计按真实时间或小节相对位置计算，不会因等价节奏编码成 16/24/48 格而改变。普通负荷只统计 `1`–`4`，特殊音符继续单独统计；新增结构指标目前只用于报告，不参与统一加权总分或 AI repair 门控。
+规则生成器的四难度负荷已使用匿名真实四难度谱面聚合结果进行初步校准，并通过项目代码生成的 120 BPM sparse、180 BPM dense、16/24/48 自适应分辨率，以及稳定段→build-up→peak→drop 的结构 WAV 夹具执行可重复真实音频回归；同一流水线还验证 `spectral-v1` envelope 对齐、非空 flux、小节/稀疏格点映射和失败降级。`quality_report*.json` 除总体平均和单小节峰值 notes/sec 外，还记录活跃小节平均 notes/sec、最长连续流数量/时长、重音覆盖率、归一化 pattern 重复率、结构密度相关性、高潮对比、build-up 斜率一致性、收束变化率、fill 候选精度、重复 section motif 一致性、鼓点命中覆盖、贝斯主拍对齐、人声乐句响应、乐器切换响应、阶段 C 高置信小节比例、乐器支持 fill，以及 resolution 切换/量化误差。普通 hit 数、NPS、连续流、重音和重复统计按真实时间或小节相对位置计算，不会因等价节奏编码成 16/24/48 格而改变。当前质量主线固定为 note/onset、strong onset、unsupported note、downbeat、fill burst、rhythmic quantization 和 silent range 七类节奏对齐指标；只有三个经过 fixture 校准的极端错误进入 AI repair。普通负荷只统计 `1`–`4`，特殊音符继续单独统计；structure、instrument、resolution 等指标只用于兼容诊断，不参与统一加权总分。
 
 可用 `python tools/analyze_reference_dataset.py <reference-dir>` 离线分析用户提供的同 stem 音频/TJA 目录，输出多 course、BPMCHANGE、MEASURE、GOGO 和可变 resolution 的匿名聚合指标；也可用 `python tools/build_reference_windows.py <reference-dir> --output src/tja_ai_chartgen/ai/reference_windows.json` 离线重建连续参考窗口。运行时生成不读取该目录，也不会把参考音频、标题、原始 notes 或绝对路径写入仓库。自动门槛覆盖静音保护、四难度梯度、稀疏音乐不过度填充、高 BPM 上限、dense Hard/Oni 区分、结构角色、乐句级稳定分辨率、确定性和结构化 preflight。配色、手感、fill 趣味性和星级体感仍需人工游玩与试听。指标定义、匿名校准范围、复现流程和人工检查清单见 [docs/quality-evaluation.md](docs/quality-evaluation.md)。
 
@@ -278,7 +280,7 @@ output/
 - `--style technical|stamina|hybrid|performance` 会选择风格模板，影响规则谱面的节奏倾向、咚咔配色、特殊音符候选门槛和 AI prompt；普通落点仍优先跟随分析得到的音乐特征。
 - `--special-notes` 只会在结构分析确认的活跃 fill 候选中生成单小节滚奏和动态击打数气球；仍不支持跨小节滚奏、复杂滚奏演出或分支语法。
 - `--use-beatnet` 需要额外安装 `BeatNet`；如果 BeatNet 不可用或分析失败，会自动保留默认 librosa 分析结果。
-- `--use-instrument-analysis` 需要预先安装可选依赖并准备本地模型；Demucs 分轨和 AST 分类会显著增加分析时间、内存和模型磁盘占用。人声与乐器类别是概率性软证据，密集混音、分轨泄漏和分类误差仍需人工检查。
+- `--use-instrument-analysis` 需要预先安装可选依赖并准备本地模型；默认 `stem-role` 只运行 Demucs 声部分离，仍会增加分析时间和内存占用。只有显式 `--instrument-profile full` 才运行旧 AST 具体乐器分类；taxonomy 只作兼容诊断，分轨泄漏和分类结果仍需人工检查。
 - `--use-ai` 仍然可能因为模型不可用、输出多次修复失败或凭据配置问题回退到规则生成器。
 - Web UI 是本地 MVP，支持上传、分析、游玩预览、局部重新生成和结果导出，但不提供账号、持久任务管理或完整的全曲谱面编辑器。
 - MVP 不支持 BPM 变化、分歧谱面、复杂滚奏演出、滚动演出等复杂语法。

@@ -100,7 +100,7 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "time_signature": None,
         "use_beatnet": False,
         "use_instrument_analysis": False,
-        "instrument_profile": "full",
+        "instrument_profile": "stem-role",
         "instrument_device": "auto",
         "instrument_model_dir": None,
         "special_notes": False,
@@ -181,7 +181,7 @@ def test_generate_with_instrument_analysis_records_config_and_analysis(tmp_path,
     input_audio = tmp_path / "song.mp3"
     input_audio.write_bytes(b"fake audio")
     output_dir = tmp_path / "output"
-    model_dir = tmp_path / "models" / "instrument-v1"
+    model_dir = tmp_path / "models" / "stem-role-v1"
     _patch_audio_pipeline(monkeypatch)
     calls = []
 
@@ -206,8 +206,6 @@ def test_generate_with_instrument_analysis_records_config_and_analysis(tmp_path,
             "--output-dir",
             str(output_dir),
             "--use-instrument-analysis",
-            "--instrument-profile",
-            "stem-role",
             "--instrument-device",
             "cpu",
             "--instrument-model-dir",
@@ -216,6 +214,7 @@ def test_generate_with_instrument_analysis_records_config_and_analysis(tmp_path,
     )
 
     assert result.exit_code == 0, result.output
+    assert "recommended Demucs stem-role rhythm enhancement" in result.output
     saved_config = json.loads((output_dir / "generation_config.json").read_text(encoding="utf-8"))
     analysis = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
     notices = json.loads(

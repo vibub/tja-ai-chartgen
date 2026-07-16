@@ -15,7 +15,11 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import ValidationError
 
-from tja_ai_chartgen.audio.instrument_models import InstrumentModelProfile
+from tja_ai_chartgen.audio.instrument_models import (
+    INSTRUMENT_FEATURE_VERSION,
+    STEM_ROLE_FEATURE_VERSION,
+    InstrumentModelProfile,
+)
 from tja_ai_chartgen.cancellation import GenerationCancelledError, raise_if_cancelled
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
 from tja_ai_chartgen.generation import (
@@ -1839,7 +1843,7 @@ def create_app(
         time_signature: Annotated[str, Form()] = "",
         use_beatnet: Annotated[bool, Form()] = False,
         use_instrument_analysis: Annotated[bool, Form()] = False,
-        instrument_profile: Annotated[str, Form()] = "full",
+        instrument_profile: Annotated[str, Form()] = "stem-role",
         instrument_device: Annotated[str, Form()] = "auto",
         course: Annotated[str, Form()] = "Oni",
         level: Annotated[int, Form()] = 10,
@@ -1864,7 +1868,7 @@ def create_app(
                 raise ValueError("Instrument device must be auto, cpu, cuda, or mps")
             if use_instrument_analysis and not app.state.allow_instrument_analysis:
                 raise ValueError(
-                    "Remote instrument analysis is disabled by the server administrator"
+                    "Remote stem-role enhancement and legacy full analysis are disabled by the server administrator"
                 )
             if ai_repair_retries < 0:
                 raise ValueError("AI repair retries must be greater than or equal to 0")
@@ -2383,6 +2387,14 @@ def _run_tracked_analyze_job(
             cancellation_registry.pop(job_dir.name, None)
 
 
+def _instrument_progress_message(profile: str) -> str:
+    if profile == "stem-role":
+        return (
+            "正在使用本地 Demucs 提取人声、鼓、贝斯和伴奏的声部活动与 onset。"
+        )
+    return "正在运行旧 full 兼容模式：Demucs 声部分离与 AST 具体乐器分类诊断。"
+
+
 def _run_analyze_job(
     *,
     job_dir: Path,
@@ -2437,7 +2449,7 @@ def _run_analyze_job(
                     job_dir,
                     status=_PROGRESS_RUNNING,
                     step="instruments",
-                    message="正在使用本地模型分析人声、鼓、贝斯和伴奏乐器。",
+                    message=_instrument_progress_message(instrument_profile),
                 )
 
         analysis = build_song_analysis(
@@ -3193,9 +3205,9 @@ def _resolve_web_ai_credentials(ai_base_url: str, ai_api_key: str) -> tuple[str 
 def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
     instrument_disabled = "" if allow_instrument_analysis else " disabled"
     instrument_hint = (
-        "需要先为所选 profile 运行 prepare-instrument-models；stem-role 只需 Demucs，分析会增加耗时和内存占用，启用 AI 时还会增加输入上下文与 token 消耗。"
+        "推荐 stem-role：只用本地 Demucs 提取人声、鼓、贝斯和伴奏的活动/onset；full 是保留 AST 具体乐器分类的旧兼容诊断模式。需要先运行 prepare-instrument-models，分析会增加耗时和内存占用。"
         if allow_instrument_analysis
-        else "远程模式未由服务器管理员开放重型分析。"
+        else "远程模式未由服务器管理员开放声部节奏增强或旧 full 兼容分析。"
     )
     return f"""
 <section class="hero" aria-labelledby="page-title">
@@ -3261,13 +3273,13 @@ def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
         </label>
         <label class="checkbox-card field-wide">
           <input name="use_instrument_analysis" type="checkbox" value="true"{instrument_disabled}>
-          <span>人声与乐器分析 <span class="field-hint">{_escape(instrument_hint)}</span></span>
+          <span>声部节奏增强 <span class="field-hint">{_escape(instrument_hint)}</span></span>
         </label>
         <label class="field">
-          分析模式
+          增强模式
           <select name="instrument_profile"{instrument_disabled}>
-            <option value="full">完整（Demucs + AST）</option>
-            <option value="stem-role">轻量声部（仅 Demucs）</option>
+            <option value="stem-role" selected>推荐：声部节奏（仅 Demucs）</option>
+            <option value="full">旧兼容：具体乐器分类（Demucs + AST）</option>
           </select>
         </label>
         <label class="field">
@@ -3757,36 +3769,49 @@ def _instrument_analysis_summary(analysis: SongAnalysis) -> str:
         source: sum(bar.instrument.dominant_source == source for bar in analysis.bars)
         for source in ("vocals", "drums", "bass", "other")
     }
-    label_names = {
-        "guitar": "吉他",
-        "piano_keyboard": "钢琴/键盘",
-        "strings": "弦乐",
-        "brass": "铜管",
-        "woodwind": "木管",
-        "synth": "合成器",
-        "organ": "风琴",
-        "other_instrument": "其他乐器",
-    }
-    detected = [
-        display
-        for field, display in label_names.items()
-        if max((getattr(bar.instrument, field) for bar in analysis.bars), default=0.0)
-        >= 0.25
-    ]
-    detected_text = "、".join(detected) if detected else "未得到高置信细分类别"
+    feature_version = analysis.instrument_feature_version
+    if feature_version == STEM_ROLE_FEATURE_VERSION:
+        mode_text = "推荐声部节奏模式（Demucs）"
+        classifier_diagnostic = (
+            "当前模式不运行具体乐器分类；核心生成只使用粗粒度声部活动/onset 与统一 salience。"
+        )
+    else:
+        mode_text = "旧 full 兼容模式（Demucs + AST）"
+        label_names = {
+            "guitar": "吉他",
+            "piano_keyboard": "钢琴/键盘",
+            "strings": "弦乐",
+            "brass": "铜管",
+            "woodwind": "木管",
+            "synth": "合成器",
+            "organ": "风琴",
+            "other_instrument": "其他乐器",
+        }
+        detected = [
+            display
+            for field, display in label_names.items()
+            if max((getattr(bar.instrument, field) for bar in analysis.bars), default=0.0)
+            >= 0.25
+        ]
+        detected_text = "、".join(detected) if detected else "未得到高置信细分类别"
+        classifier_diagnostic = (
+            f"具体乐器兼容诊断：{detected_text}。taxonomy 不决定当前谱面落点或质量主线。"
+        )
+    if feature_version not in {STEM_ROLE_FEATURE_VERSION, INSTRUMENT_FEATURE_VERSION}:
+        mode_text = f"兼容分析（{feature_version or 'unknown'}）"
     device = analysis.instrument_analysis_device or "未记录"
     return f"""
   <section class="panel" aria-labelledby="instrument-summary-heading">
-    <p class="eyebrow">阶段 C</p>
-    <h2 id="instrument-summary-heading">人声与乐器分析</h2>
-    <p class="lede">状态：{_escape(status_text)}；设备：{_escape(device)}。</p>
+    <p class="eyebrow">可选重型增强</p>
+    <h2 id="instrument-summary-heading">声部节奏增强</h2>
+    <p class="lede">模式：{_escape(mode_text)}；状态：{_escape(status_text)}；设备：{_escape(device)}。</p>
     <div class="helper-strip">
       <span>人声主导 {source_counts['vocals']} 小节</span>
       <span>鼓组主导 {source_counts['drums']} 小节</span>
       <span>贝斯主导 {source_counts['bass']} 小节</span>
       <span>伴奏主导 {source_counts['other']} 小节</span>
     </div>
-    <p class="field-hint">主要乐器：{_escape(detected_text)}。识别结果只作为结构和谱面生成的软证据。</p>
+    <p class="field-hint">{_escape(classifier_diagnostic)}</p>
   </section>
 """
 
@@ -4061,8 +4086,8 @@ _PROGRESS_STEPS = (
     },
     {
         "key": "instruments",
-        "label": "识别人声与乐器",
-        "detail": "显式启用时使用本地 Demucs 与 AST 模型提取语义。",
+        "label": "增强声部节奏",
+        "detail": "显式启用时优先使用本地 Demucs；旧 full 模式才追加 AST 分类诊断。",
     },
     {
         "key": "generate",

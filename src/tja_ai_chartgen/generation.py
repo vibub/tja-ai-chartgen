@@ -335,8 +335,8 @@ def build_analysis_notices(
                     level="warning",
                     stage="analysis",
                     message=(
-                        "声部角色分析已完整生效；具体乐器分类未生效，"
-                        "生成将继续使用 stem activity/onset。"
+                        "推荐的声部节奏增强已完整生效；旧具体乐器分类未生效，"
+                        "核心生成仍继续使用 stem activity/onset 与统一 salience。"
                     ),
                     detail=(
                         f"feature_version={STEM_ROLE_FEATURE_VERSION}; "
@@ -346,9 +346,12 @@ def build_analysis_notices(
             )
         elif status == "complete":
             message = (
-                "声部角色分析已完成。"
+                "推荐的声部节奏增强已完成，已提取人声、鼓、贝斯和伴奏活动/onset。"
                 if feature_version == STEM_ROLE_FEATURE_VERSION
-                else "人声与乐器语义分析已完成。"
+                else (
+                    "旧 full 兼容分析已完成；具体乐器 taxonomy 仅保留为诊断，"
+                    "核心生成继续使用声部与 salience。"
+                )
             )
             notices.append(
                 GenerationNotice(
@@ -367,9 +370,12 @@ def build_analysis_notices(
                     level="warning",
                     stage="analysis",
                     message=(
-                        "旧 instrument-v1 分析仅部分生效，已兼容使用其中的 stem 证据。"
+                        (
+                            "旧 instrument-v1 兼容分析仅部分生效；具体乐器字段只作诊断，"
+                            "已继续使用其中可用的 stem 证据。"
+                        )
                         if legacy
-                        else "声部分析仅部分生效，已使用可用证据继续生成。"
+                        else "声部节奏增强仅部分生效，已使用可用证据继续生成。"
                     ),
                     detail=(
                         f"feature_version={feature_version or 'unknown'}; "
@@ -463,21 +469,21 @@ def _instrument_fallback_notice(reason: str) -> tuple[str, str]:
     if reason.startswith("missing-dependency:"):
         return (
             "instrument-dependencies-unavailable",
-            "人声与乐器分析依赖不可用，已继续使用基础音频特征。",
+            "声部节奏增强依赖不可用，已继续使用基础节奏与频谱特征。",
         )
     if reason.startswith(("missing-model:", "invalid-model-manifest")):
         return (
             "instrument-models-missing",
-            "人声与乐器模型未准备完整，已继续使用基础音频特征。",
+            "所选声部/兼容分析模型未准备完整，已继续使用基础节奏与频谱特征。",
         )
     if reason.startswith("device-unavailable:"):
         return (
             "instrument-device-unavailable",
-            "指定的人声与乐器分析设备不可用，已继续使用基础音频特征。",
+            "指定的声部节奏增强设备不可用，已继续使用基础节奏与频谱特征。",
         )
     return (
         "instrument-analysis-fallback",
-        "人声与乐器分析未生效，已继续使用基础音频特征。",
+        "声部节奏增强未生效，已继续使用基础节奏与频谱特征。",
     )
 
 

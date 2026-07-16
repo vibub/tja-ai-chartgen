@@ -13,12 +13,20 @@ from tja_ai_chartgen.audio.analyze import AudioAnalysisRaw
 from tja_ai_chartgen.audio.instruments import InstrumentAnalysisRaw
 from tja_ai_chartgen.audio.spectral import SpectralAnalysisRaw
 from tja_ai_chartgen.cancellation import raise_if_cancelled
-from tja_ai_chartgen.tja.model import ChartBar, SongAnalysis, TempoAnalysisDecision
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    ChartBar,
+    InstrumentBarFeature,
+    SongAnalysis,
+    TempoAnalysisDecision,
+)
 from tja_ai_chartgen.tja.writer import TJA_FILE_ENCODING
 from tja_ai_chartgen.web import (
     WEB_UPLOAD_MAX_BYTES,
     UploadTooLargeError,
     _export_chart_files,
+    _instrument_analysis_summary,
+    _instrument_progress_message,
     _read_progress,
     _save_upload,
     create_app,
@@ -42,10 +50,13 @@ def test_web_index_shows_upload_form(tmp_path):
     assert 'name="use_beatnet" type="checkbox" value="true" checked' not in response.text
     assert 'name="use_instrument_analysis" type="checkbox" value="true"' in response.text
     assert 'select name="instrument_profile"' in response.text
-    assert 'value="stem-role">轻量声部（仅 Demucs）' in response.text
+    assert (
+        'value="stem-role" selected>推荐：声部节奏（仅 Demucs）' in response.text
+    )
+    assert 'value="full">旧兼容：具体乐器分类（Demucs + AST）' in response.text
     assert 'select name="instrument_device"' in response.text
     assert "prepare-instrument-models" in response.text
-    assert "启用 AI 时还会增加输入上下文与 token 消耗" in response.text
+    assert "full 是保留 AST 具体乐器分类的旧兼容诊断模式" in response.text
     assert '<select name="course">' in response.text
     assert '魔王（Oni）' in response.text
     assert 'name="level" type="number" min="1" max="10" value="8"' in response.text
@@ -66,7 +77,52 @@ def test_web_remote_mode_disables_instrument_analysis_without_server_opt_in(tmp_
     assert 'name="use_instrument_analysis" type="checkbox" value="true" disabled' in response.text
     assert 'select name="instrument_profile" disabled' in response.text
     assert 'select name="instrument_device" disabled' in response.text
-    assert "远程模式未由服务器管理员开放重型分析" in response.text
+    assert "远程模式未由服务器管理员开放声部节奏增强或旧 full 兼容分析" in response.text
+
+
+def test_web_instrument_progress_distinguishes_recommended_and_legacy_profiles():
+    stem_role = _instrument_progress_message("stem-role")
+    full = _instrument_progress_message("full")
+
+    assert "Demucs" in stem_role
+    assert "声部活动与 onset" in stem_role
+    assert "推荐" not in full
+    assert "旧 full 兼容模式" in full
+    assert "AST 具体乐器分类诊断" in full
+
+
+def test_web_full_profile_summary_marks_taxonomy_as_compatibility_diagnostic():
+    analysis = SongAnalysis(
+        title="Song",
+        audio_file="song.wav",
+        ogg_file="song.ogg",
+        bpm=120.0,
+        offset=0.0,
+        instrument_feature_version="instrument-v1",
+        instrument_analysis_status="complete",
+        instrument_analysis_device="cpu",
+        bars=[
+            BarFeature(
+                index=0,
+                start_time=0.0,
+                end_time=2.0,
+                energy=0.8,
+                instrument=InstrumentBarFeature(
+                    drum_activity=0.8,
+                    guitar=0.9,
+                    dominant_source="drums",
+                    dominant_instrument="guitar",
+                    confidence=0.9,
+                ),
+            )
+        ],
+    )
+
+    summary = _instrument_analysis_summary(analysis)
+
+    assert "旧 full 兼容模式（Demucs + AST）" in summary
+    assert "具体乐器兼容诊断：吉他" in summary
+    assert "taxonomy 不决定当前谱面落点或质量主线" in summary
 
 
 def test_web_upload_limit_is_100_mib():
@@ -194,7 +250,6 @@ def test_web_instrument_analysis_success_is_persisted_and_rendered(tmp_path, mon
             "max_bars": "1",
             "bpm": "120",
             "use_instrument_analysis": "true",
-            "instrument_profile": "stem-role",
             "instrument_device": "cpu",
         },
         files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
@@ -208,8 +263,11 @@ def test_web_instrument_analysis_success_is_persisted_and_rendered(tmp_path, mon
         for notice in status["notices"]
     )
     result = client.get(f"/jobs/{job_dir.name}/result")
-    assert "人声与乐器分析" in result.text
+    assert "声部节奏增强" in result.text
+    assert "推荐声部节奏模式（Demucs）" in result.text
     assert "状态：完整" in result.text
+    assert "当前模式不运行具体乐器分类" in result.text
+    assert "具体乐器兼容诊断" not in result.text
     analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
     options = json.loads((job_dir / "chart_options.json").read_text(encoding="utf-8"))
     assert analysis["instrument_feature_version"] == "stem-role-v1"
@@ -257,7 +315,8 @@ def test_web_classifier_failure_keeps_complete_stem_role_result(tmp_path, monkey
         item for item in notices if item["code"] == "instrument-classifier-fallback"
     )
     assert classifier_notice["level"] == "warning"
-    assert "声部角色分析已完整生效" in classifier_notice["message"]
+    assert "推荐的声部节奏增强已完整生效" in classifier_notice["message"]
+    assert "核心生成仍继续使用" in classifier_notice["message"]
 
 
 def test_web_instrument_model_fallback_notice_is_persisted_and_rendered(
@@ -278,6 +337,7 @@ def test_web_instrument_model_fallback_notice_is_persisted_and_rendered(
             "max_bars": "1",
             "bpm": "120",
             "use_instrument_analysis": "true",
+            "instrument_profile": "full",
         },
         files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
     )
@@ -290,7 +350,7 @@ def test_web_instrument_model_fallback_notice_is_persisted_and_rendered(
         for notice in status["notices"]
     )
     result = client.get(f"/jobs/{job_dir.name}/result")
-    assert "人声与乐器模型未准备完整" in result.text
+    assert "所选声部/兼容分析模型未准备完整" in result.text
     assert "状态：已降级" in result.text
     notices = json.loads((job_dir / "generation_notices.json").read_text(encoding="utf-8"))
     instrument_notice = next(
@@ -313,7 +373,7 @@ def test_web_remote_mode_rejects_instrument_analysis_without_server_opt_in(
     )
 
     assert response.status_code == 400
-    assert "Remote instrument analysis is disabled" in response.text
+    assert "Remote stem-role enhancement and legacy full analysis are disabled" in response.text
     assert not list(tmp_path.iterdir())
 
 

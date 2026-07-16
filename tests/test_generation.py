@@ -495,6 +495,8 @@ def test_build_analysis_notices_reports_instrument_analysis_status(
     assert instrument_notice.stage == "analysis"
     if status == "complete":
         assert instrument_notice.detail == "feature_version=instrument-v1"
+        assert "旧 full 兼容分析已完成" in instrument_notice.message
+        assert "taxonomy 仅保留为诊断" in instrument_notice.message
     elif status == "partial":
         assert instrument_notice.detail == (
             f"feature_version=instrument-v1; legacy=true; reason={reason}"
@@ -529,13 +531,16 @@ def test_build_analysis_notices_distinguishes_stem_role_success_and_classifier_f
         "instrument-analysis-succeeded"
     ]
     assert success_notices[0].level == "info"
-    assert success_notices[0].message == "声部角色分析已完成。"
+    assert success_notices[0].message == (
+        "推荐的声部节奏增强已完成，已提取人声、鼓、贝斯和伴奏活动/onset。"
+    )
     assert success_notices[0].detail == "feature_version=stem-role-v1"
     assert [notice.code for notice in fallback_notices] == [
         "instrument-classifier-fallback"
     ]
     assert fallback_notices[0].level == "warning"
-    assert "声部角色分析已完整生效" in fallback_notices[0].message
+    assert "推荐的声部节奏增强已完整生效" in fallback_notices[0].message
+    assert "核心生成仍继续使用" in fallback_notices[0].message
     assert fallback_notices[0].detail == (
         "feature_version=stem-role-v1; reason=classifier-load-error:OSError"
     )

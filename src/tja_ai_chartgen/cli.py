@@ -58,16 +58,24 @@ def prepare_instrument_models_command(
         help="Local model directory. Defaults to the selected profile directory.",
     ),
     profile: str = typer.Option(
-        "full",
+        "stem-role",
         "--profile",
-        help="Model profile: full (Demucs + AST) or stem-role (Demucs only).",
+        help=(
+            "Model profile: stem-role (recommended Demucs rhythm enhancement) or "
+            "full (legacy Demucs + AST taxonomy diagnostics)."
+        ),
     ),
 ) -> None:
     if profile not in {"full", "stem-role"}:
         _fail("--profile must be full or stem-role.")
     resolved_profile = cast(InstrumentModelProfile, profile)
     target = resolve_instrument_model_dir(model_dir, profile=resolved_profile)
-    console.print(f"Preparing instrument models in: {target}")
+    capability = (
+        "recommended stem-role rhythm enhancement"
+        if resolved_profile == "stem-role"
+        else "legacy full taxonomy diagnostics"
+    )
+    console.print(f"Preparing {capability} models in: {target}")
     try:
         manifest = prepare_local_instrument_models(target, profile=resolved_profile)
     except InstrumentModelError as error:
@@ -78,6 +86,10 @@ def prepare_instrument_models_command(
     if manifest.classifier_model is not None:
         components = f"{components}, {manifest.classifier_model}"
     console.print(f"Instrument models prepared ({manifest.profile}): {components}")
+    if manifest.profile == "full":
+        console.print(
+            "Note: full is a legacy compatibility profile; AST taxonomy is diagnostic-only."
+        )
 
 
 @app.command()
@@ -114,12 +126,18 @@ def generate(
     use_instrument_analysis: bool = typer.Option(
         False,
         "--use-instrument-analysis",
-        help="Use optional local Demucs stem analysis, with AST in the full profile.",
+        help=(
+            "Enable optional local stem-role rhythm enhancement. The legacy full "
+            "profile additionally runs AST taxonomy diagnostics."
+        ),
     ),
     instrument_profile: str = typer.Option(
-        "full",
+        "stem-role",
         "--instrument-profile",
-        help="Instrument profile: full (Demucs + AST) or stem-role (Demucs only).",
+        help=(
+            "Analysis profile: stem-role (recommended Demucs rhythm enhancement) or "
+            "full (legacy Demucs + AST taxonomy diagnostics)."
+        ),
     ),
     instrument_device: str = typer.Option(
         "auto",
@@ -254,7 +272,10 @@ def web(
     allow_instrument_analysis: bool = typer.Option(
         False,
         "--allow-instrument-analysis",
-        help="Allow remote Web requests to run local Demucs and optional AST inference.",
+        help=(
+            "Allow remote Web requests to run local stem-role enhancement and the "
+            "optional legacy AST compatibility classifier."
+        ),
     ),
 ) -> None:
     import asyncio
@@ -403,9 +424,13 @@ def run_generate(
             instrument_device=instrument_device,
             instrument_model_dir=instrument_model_dir,
             stage_callback=lambda stage: console.print(
-                "Analyzing vocals and instruments..."
+                (
+                    "Running recommended Demucs stem-role rhythm enhancement..."
+                    if resolved_instrument_profile == "stem-role"
+                    else "Running legacy full Demucs + AST taxonomy diagnostics..."
+                )
                 if stage == "instruments"
-                else "Analyzing audio..."
+                else "Analyzing audio rhythm and structure..."
             )
             if stage in {"analyze", "instruments"}
             else None,
