@@ -1,0 +1,20 @@
+{
+  "input_audio": "legacy-song.wav",
+  "title": "Legacy Song",
+  "artist": "Compatibility Fixture",
+  "output_dir": "output/legacy",
+  "course": "Oni",
+  "level": 10,
+  "style": "technical",
+  "density": "high",
+  "use_beatnet": true,
+  "use_instrument_analysis": true,
+  "instrument_device": "cpu",
+  "instrument_model_dir": "models/instrument-v1",
+  "special_notes": false,
+  "use_ai": true,
+  "model": "openai/legacy-model",
+  "ai_repair_retries": 2,
+  "ai_base_url": "https://legacy.example.invalid/v1",
+  "ai_api_key": "[REDACTED]"
+}

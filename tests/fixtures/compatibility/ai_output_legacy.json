@@ -1,0 +1,23 @@
+{
+  "model": "openai/legacy-model",
+  "api_base": "https://legacy.example.invalid/v1",
+  "api_key_provided": true,
+  "max_repair_attempts": 2,
+  "attempts": [
+    {
+      "attempt": 1,
+      "status": "ok",
+      "raw": "{\"bars\":[{\"index\":0,\"notes\":\"1000100010001000\",\"balloon_counts\":[]}]}"
+    }
+  ],
+  "fallback_reason": null,
+  "final": {
+    "bars": [
+      {
+        "index": 0,
+        "notes": "1000100010001000",
+        "balloon_counts": []
+      }
+    ]
+  }
+}

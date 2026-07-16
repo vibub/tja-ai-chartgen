@@ -1,0 +1,16 @@
+{
+  "model": "openai/legacy-model",
+  "api_base": "https://legacy.example.invalid/v1",
+  "api_key_provided": true,
+  "max_repair_attempts": 2,
+  "attempts": [
+    {
+      "attempt": 1,
+      "status": "validation_error",
+      "raw": "{\"bars\":[{\"index\":0,\"notes\":\"1111111111111111\"}]}",
+      "errors": ["bar 1 has too many repeated notes"]
+    }
+  ],
+  "fallback_reason": "content_repair_exhausted",
+  "final": null
+}

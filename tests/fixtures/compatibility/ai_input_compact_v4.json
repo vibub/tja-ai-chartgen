@@ -1,0 +1,26 @@
+{
+  "schema": "tja-ai-chartgen-compact-v4",
+  "legend": {
+    "instrument_bar_columns": [
+      "vocal_activity",
+      "vocal_presence_ratio",
+      "drum_activity",
+      "bass_activity",
+      "other_activity",
+      "dominant_source",
+      "dominant_instrument",
+      "confidence",
+      "active_instruments"
+    ],
+    "bar_columns": ["index", "start_time", "end_time"]
+  },
+  "title": "Legacy Song",
+  "course": "Oni",
+  "level": 10,
+  "instrument_feature_version": "instrument-v1",
+  "instrument_analysis_status": "partial",
+  "bar_instruments": [
+    [300, 400, 900, 500, 600, "drums", "guitar", 800, [["guitar", 750], ["synth", 400]]]
+  ],
+  "bars": [[0, 0.25, 2.25]]
+}

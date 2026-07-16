@@ -1,0 +1,71 @@
+{
+  "analysis_schema_version": 5,
+  "beatnet_analysis_status": "unavailable",
+  "beatnet_analysis_reason": null,
+  "spectral_feature_version": "spectral-v1",
+  "spectral_analysis_status": "complete",
+  "spectral_analysis_reason": null,
+  "instrument_feature_version": "instrument-v1",
+  "instrument_analysis_status": "partial",
+  "instrument_analysis_reason": "classifier-load-error:OSError",
+  "instrument_demucs_model": "htdemucs",
+  "instrument_classifier_model": "MIT/ast-finetuned-audioset-10-10-0.4593",
+  "instrument_analysis_device": "cpu",
+  "structure_feature_version": "structure-v1",
+  "structure_confidence": 0.7,
+  "title": "Legacy Song",
+  "artist": "Compatibility Fixture",
+  "audio_file": "legacy-song.wav",
+  "ogg_file": "legacy-song.ogg",
+  "bpm": 120.0,
+  "offset": 0.25,
+  "time_signature": "4/4",
+  "analyzer": "librosa+onset-grid",
+  "bars": [
+    {
+      "index": 0,
+      "start_time": 0.25,
+      "end_time": 2.25,
+      "energy": 0.6,
+      "time_signature": "4/4",
+      "grids_per_bar": 16,
+      "onset_16": [0, 4, 8, 12],
+      "accent_16": [0, 8],
+      "activity_16": [0.8, 0.7, 0.6, 0.5, 0.8, 0.7, 0.6, 0.5, 0.8, 0.7, 0.6, 0.5, 0.8, 0.7, 0.6, 0.5],
+      "grid_features": [],
+      "spectral_grid_features": [],
+      "instrument_grid_features": [
+        {
+          "grid": 0,
+          "vocal_onset": 0.1,
+          "drum_onset": 0.8,
+          "bass_onset": 0.3,
+          "accompaniment_onset": 0.2
+        }
+      ],
+      "instrument": {
+        "vocal_activity": 0.3,
+        "vocal_presence_ratio": 0.4,
+        "drum_activity": 0.9,
+        "bass_activity": 0.5,
+        "other_activity": 0.6,
+        "guitar": 0.75,
+        "piano_keyboard": 0.1,
+        "strings": 0.2,
+        "brass": 0.0,
+        "woodwind": 0.0,
+        "synth": 0.4,
+        "organ": 0.0,
+        "other_instrument": 0.1,
+        "dominant_source": "drums",
+        "dominant_instrument": "guitar",
+        "confidence": 0.8
+      },
+      "beat_grids": [0, 4, 8, 12],
+      "downbeat_grid": 0,
+      "phrase_position": "start",
+      "fill_candidate": false,
+      "section": "verse"
+    }
+  ]
+}

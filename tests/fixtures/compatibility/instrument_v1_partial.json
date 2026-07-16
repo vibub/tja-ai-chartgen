@@ -1,0 +1,23 @@
+{
+  "feature_version": "instrument-v1",
+  "status": "partial",
+  "reason": "classifier-load-error:OSError",
+  "demucs_model": "htdemucs",
+  "classifier_model": "MIT/ast-finetuned-audioset-10-10-0.4593",
+  "device": "cpu",
+  "analyzed_duration": 2.0,
+  "stem_frames": [
+    {
+      "time": 0.0,
+      "vocals": 0.1,
+      "drums": 0.8,
+      "bass": 0.3,
+      "other": 0.2,
+      "vocal_onset": 0.0,
+      "drum_onset": 0.7,
+      "bass_onset": 0.2,
+      "accompaniment_onset": 0.1
+    }
+  ],
+  "classification_windows": []
+}

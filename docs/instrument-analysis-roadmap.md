@@ -1249,7 +1249,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 13.2 fallback 消费 salience | 未开始 | 尚未实施统一消费。 | 尚未执行。 |
 | 13.3 AI payload 移除具体乐器依赖 | 未开始 | 当前 compact payload 仍含 bar instruments。 | 尚未执行。 |
 | 13.4 QualityReport 收敛 | 未开始 | 尚未以 rhythm alignment 指标替代具体乐器主线指标。 | 尚未执行。 |
-| 13.5 旧 instrument-v1 兼容 | 部分完成 | 当前 schema 已有兼容默认值；尚未定义降级后的长期读取策略。 | 现有旧 JSON 测试可复用。 |
+| 13.5 旧 instrument-v1 兼容 | 已完成 | 固定旧 `instrument-v1 partial`、`analysis_schema_version=5`、无版本 GenerationConfig、compact-v4 AI input 与旧 AI output 快照；读取时保留历史字段和值，不静默迁移。 | `tests/test_legacy_compatibility.py`、`tests/fixtures/compatibility/`。 |
 | 13.6 UI 与 notice 调整 | 未开始 | 尚未区分 stem-role 与具体乐器分类。 | 尚未执行。 |
 | 13.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -1318,7 +1318,19 @@ fallback 使用：
 - rhythmic quantization error；
 - silent range violation。
 
-## 13.5 UI 与 Notice
+## 13.5 旧格式兼容策略
+
+旧产物采用“原值读取、增量默认、不静默迁移”的长期策略：
+
+- 历史 `instrument-v1` 继续表示 Demucs + AST 具体乐器语义；旧 `partial`、reason、模型 ID、设备、stem frame 和 classification window 按原值恢复，不自动改写为 `stem-role-v1 complete`；
+- 旧 `analysis.json` 缺少后续新增字段时使用模型默认值，继续接受 `onset_16` / `accent_16` / `activity_16` 别名，并保留 `InstrumentBarFeature` 中的具体乐器 taxonomy；
+- 无 `schema_version` 的旧 `generation_config.json` 继续按版本 1 解释，`use_instrument_analysis`、device 和 model dir 保持可读，新增的 `instrument_profile` 默认回到兼容的 `full`；历史 `ai_api_key` / `ai_base_url` 字段只在旧无版本配置中丢弃，不进入当前持久化模型；
+- 历史 AI input/output/attempt sidecar 视为审计文档，不要求原地升级到当前 compact schema。`ai.sidecars.load_ai_sidecar()` 只验证 UTF-8 JSON 对象边界并原样返回未知旧字段，避免具体乐器列、旧 notes 输出或缺少新诊断字段导致读取失败；
+- 当前 prompt、生成和质量主线不得要求旧具体乐器字段存在。旧 analysis 可以作为输入，但新 compact payload 只投影当前所需的粗粒度声部与 salience 字段。
+
+兼容契约由 `tests/fixtures/compatibility/` 中的历史形状快照和 `tests/test_legacy_compatibility.py` 锁定，覆盖 `instrument-v1 partial`、`analysis_schema_version=5`、无版本配置、compact-v4 AI input 与旧 AI output。后续删除或迁移这些字段前，必须先设计显式版本升级与弃用周期。
+
+## 13.6 UI 与 Notice
 
 用户界面应明确区分：
 
@@ -1340,7 +1352,7 @@ fallback 使用：
 
 ## Phase 7 任务划分列表
 
-- [ ] 13.5 先锁定旧 instrument-v1、analysis、config 和 sidecar 兼容行为
+- [x] 13.5 先锁定旧 instrument-v1、analysis、config 和 sidecar 兼容行为
 - [ ] 13.1 让 structure 消费统一 salience 与可选 stem-role
 - [ ] 13.2 让 fallback 使用 hit、accent、don/ka 和 burst salience
 - [ ] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
