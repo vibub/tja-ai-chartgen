@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "acceptance_version": "phase-four-acceptance-v1",
+  "phase": "Phase 4",
+  "passed": true,
+  "fixture_set_version": "phase-four-fixtures-v1",
+  "fixture_count": 6,
+  "checks": {
+    "adaptive_arbitration": {
+      "passed": true,
+      "scenario_count": 6,
+      "scenarios": {
+        "rejected_invalid_beatnet": {"passed": true, "selected_source": "librosa+onset-grid", "rejection": "incomplete-beat-numbers"},
+        "selected_stronger_beatnet": {"passed": true, "selected_source": "beatnet"},
+        "partial_meter_downbeat_adoption": {"passed": true, "analyzer": "librosa+onset-grid+beatnet-meter", "bpm": 120.0, "time_signature": "3/4"},
+        "ambiguous_alias_fallback": {"passed": true, "selected_source": "librosa+onset-grid", "reason": "ambiguous-candidates"},
+        "manual_override_precedence": {"passed": true, "analyzer": "librosa+onset-grid+beatnet-meter+manual-override", "bpm": 128.0, "offset": 0.4},
+        "tempo_variation_classification": {"passed": true, "classifications": {"stable": "stable", "tempo_change": "possible-tempo-change", "rubato": "possible-rubato", "live_performance": "possible-live-performance"}}
+      }
+    },
+    "stable_four_four_non_regression": {"passed": true, "bpm_regression_count": 0, "beat_f1_regression_count": 0, "downbeat_f1_regression_count": 0, "stable_four_four_preserved": true},
+    "meter_pickup_alias_coverage": {"passed": true, "required_categories": ["half-double-ambiguity", "meter-3/4", "meter-6/8", "pickup", "stable-4/4", "weak-rhythm"], "covered_categories": ["half-double-ambiguity", "meter-3/4", "meter-6/8", "pickup", "stable-4/4", "weak-rhythm"], "half_time_error_count": 0, "double_time_error_count": 0, "pickup_regression_count": 0},
+    "beatnet_rejection_or_contribution": {"passed": true, "beatnet_complete_count": 6, "rejected_fixture_count": 6, "full_selection_count": 0, "partial_adoption_count": 0, "synthetic_partial_adoption": {"passed": true, "analyzer": "librosa+onset-grid+beatnet-meter", "bpm": 120.0, "time_signature": "3/4"}},
+    "analysis_explainability": {"passed": true, "explained_fixture_count": 6, "fixture_count": 6},
+    "default_path_without_beatnet": {"passed": true, "audio": "click_4_4.wav", "analyzer": "librosa+onset-grid", "bpm": 120.0, "beatnet_analysis_status": "unavailable", "candidate_sources": ["librosa", "librosa+onset-grid"], "selected_source": "librosa+onset-grid", "decision_version": "tempo-arbitration-v3"},
+    "fixed_bpm_limitation_diagnostic": {"passed": true, "fixture_classifications": {"click_4_4.wav": "stable", "meter_3_4_120.wav": "stable", "meter_6_8_120.wav": "stable", "pickup_120.wav": "stable", "tempo_ambiguity_120.wav": "stable", "harmonic_sparse_120.wav": "stable"}},
+    "deterministic_offline_acceptance": {"passed": true, "network_blocked": true, "fixture_runs_stable": true, "behavior_runs_stable": true, "default_runs_stable": true, "run_count": 2}
+  },
+  "fixture_evidence": {
+    "schema_version": 1,
+    "fixture_set_version": "phase-four-fixtures-v1",
+    "fixture_count": 6,
+    "categories": ["stable-4/4", "meter-3/4", "meter-6/8", "pickup", "half-double-ambiguity", "weak-rhythm"],
+    "summary": {"beatnet_complete_count": 6, "rejected_fixture_count": 6, "full_selection_count": 0, "partial_adoption_count": 0, "bpm_regression_count": 0, "beat_f1_regression_count": 0, "downbeat_f1_regression_count": 0, "pickup_regression_count": 0, "half_time_error_count": 0, "double_time_error_count": 0, "stable_four_four_preserved": true},
+    "fixtures": [
+      {
+        "audio": "click_4_4.wav", "category": "stable-4/4", "expected_bpm": 120.0, "expected_time_signature": "4/4",
+        "baseline": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": true, "first_downbeat_absolute_error_seconds": 0.00976, "beat_f1": 0.969697, "downbeat_f1": 0.888889, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "enhanced": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": true, "first_downbeat_absolute_error_seconds": 0.00976, "beat_f1": 0.969697, "downbeat_f1": 0.888889, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "beatnet_analysis_status": "complete",
+        "decision": {"decision_version": "tempo-arbitration-v3", "selected_source": "librosa+onset-grid", "tempo_source": "librosa+onset-grid", "meter_source": "librosa+onset-grid", "partial_adoption": false, "ambiguous": false, "accepted": false, "reason": "incomplete-beat-numbers", "candidate_rejections": {"beatnet": "incomplete-beat-numbers", "beatnet+onset-grid": "incomplete-beat-numbers"}, "candidate_sources": ["librosa", "librosa+onset-grid", "beatnet", "beatnet+onset-grid"], "selected_candidate_count": 1, "tempo_variation_version": "tempo-variation-v1", "tempo_variation_source": "beatnet", "tempo_variation_classification": "stable", "fixed_bpm_constrained": false}
+      },
+      {
+        "audio": "meter_3_4_120.wav", "category": "meter-3/4", "expected_bpm": 120.0, "expected_time_signature": "3/4",
+        "baseline": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": false, "first_downbeat_absolute_error_seconds": 0.008769, "beat_f1": 0.96, "downbeat_f1": 0.266667, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "enhanced": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": false, "first_downbeat_absolute_error_seconds": 0.008769, "beat_f1": 0.96, "downbeat_f1": 0.266667, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "beatnet_analysis_status": "complete",
+        "decision": {"decision_version": "tempo-arbitration-v3", "selected_source": "librosa+onset-grid", "tempo_source": "librosa+onset-grid", "meter_source": "librosa+onset-grid", "partial_adoption": false, "ambiguous": false, "accepted": false, "reason": "incomplete-beat-numbers", "candidate_rejections": {"beatnet": "incomplete-beat-numbers", "beatnet+onset-grid": "incomplete-beat-numbers"}, "candidate_sources": ["librosa", "librosa+onset-grid", "beatnet", "beatnet+onset-grid"], "selected_candidate_count": 1, "tempo_variation_version": "tempo-variation-v1", "tempo_variation_source": "beatnet", "tempo_variation_classification": "stable", "fixed_bpm_constrained": false}
+      },
+      {
+        "audio": "meter_6_8_120.wav", "category": "meter-6/8", "expected_bpm": 120.0, "expected_time_signature": "6/8",
+        "baseline": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": false, "first_downbeat_absolute_error_seconds": 0.008162, "beat_f1": 0.96, "downbeat_f1": 0.266667, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "enhanced": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": false, "first_downbeat_absolute_error_seconds": 0.008162, "beat_f1": 0.96, "downbeat_f1": 0.266667, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "beatnet_analysis_status": "complete",
+        "decision": {"decision_version": "tempo-arbitration-v3", "selected_source": "librosa+onset-grid", "tempo_source": "librosa+onset-grid", "meter_source": "librosa+onset-grid", "partial_adoption": false, "ambiguous": false, "accepted": false, "reason": "incomplete-beat-numbers", "candidate_rejections": {"beatnet": "incomplete-beat-numbers", "beatnet+onset-grid": "incomplete-beat-numbers"}, "candidate_sources": ["librosa", "librosa+onset-grid", "beatnet", "beatnet+onset-grid"], "selected_candidate_count": 1, "tempo_variation_version": "tempo-variation-v1", "tempo_variation_source": "beatnet", "tempo_variation_classification": "stable", "fixed_bpm_constrained": false}
+      },
+      {
+        "audio": "pickup_120.wav", "category": "pickup", "expected_bpm": 120.0, "expected_time_signature": "4/4",
+        "baseline": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": true, "first_downbeat_absolute_error_seconds": 0.508076, "beat_f1": 0.955224, "downbeat_f1": 0.0, "pickup_recall": 1.0, "half_time_error": false, "double_time_error": false},
+        "enhanced": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": true, "first_downbeat_absolute_error_seconds": 0.508076, "beat_f1": 0.955224, "downbeat_f1": 0.0, "pickup_recall": 1.0, "half_time_error": false, "double_time_error": false},
+        "beatnet_analysis_status": "complete",
+        "decision": {"decision_version": "tempo-arbitration-v3", "selected_source": "librosa+onset-grid", "tempo_source": "librosa+onset-grid", "meter_source": "librosa+onset-grid", "partial_adoption": false, "ambiguous": false, "accepted": false, "reason": "incomplete-beat-numbers", "candidate_rejections": {"beatnet": "incomplete-beat-numbers", "beatnet+onset-grid": "incomplete-beat-numbers"}, "candidate_sources": ["librosa", "librosa+onset-grid", "beatnet", "beatnet+onset-grid"], "selected_candidate_count": 1, "tempo_variation_version": "tempo-variation-v1", "tempo_variation_source": "beatnet", "tempo_variation_classification": "stable", "fixed_bpm_constrained": false}
+      },
+      {
+        "audio": "tempo_ambiguity_120.wav", "category": "half-double-ambiguity", "expected_bpm": 120.0, "expected_time_signature": "4/4",
+        "baseline": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": true, "first_downbeat_absolute_error_seconds": 0.009364, "beat_f1": 0.969697, "downbeat_f1": 0.941176, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "enhanced": {"analyzer": "librosa+onset-grid", "estimated_bpm": 120.0, "bpm_absolute_error": 0.0, "estimated_time_signature": "4/4", "meter_correct": true, "first_downbeat_absolute_error_seconds": 0.009364, "beat_f1": 0.969697, "downbeat_f1": 0.941176, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "beatnet_analysis_status": "complete",
+        "decision": {"decision_version": "tempo-arbitration-v3", "selected_source": "librosa+onset-grid", "tempo_source": "librosa+onset-grid", "meter_source": "librosa+onset-grid", "partial_adoption": false, "ambiguous": false, "accepted": false, "reason": "incomplete-beat-numbers", "candidate_rejections": {"beatnet": "incomplete-beat-numbers", "beatnet+onset-grid": "incomplete-beat-numbers"}, "candidate_sources": ["librosa", "librosa+onset-grid", "beatnet", "beatnet+onset-grid"], "selected_candidate_count": 1, "tempo_variation_version": "tempo-variation-v1", "tempo_variation_source": "beatnet", "tempo_variation_classification": "stable", "fixed_bpm_constrained": false}
+      },
+      {
+        "audio": "harmonic_sparse_120.wav", "category": "weak-rhythm", "expected_bpm": 120.0, "expected_time_signature": "4/4",
+        "baseline": {"analyzer": "librosa", "estimated_bpm": 120.185, "bpm_absolute_error": 0.185, "estimated_time_signature": "4/4", "meter_correct": true, "first_downbeat_absolute_error_seconds": 1.009297, "beat_f1": 0.638298, "downbeat_f1": 0.0, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "enhanced": {"analyzer": "librosa", "estimated_bpm": 120.185, "bpm_absolute_error": 0.185, "estimated_time_signature": "4/4", "meter_correct": true, "first_downbeat_absolute_error_seconds": 1.009297, "beat_f1": 0.638298, "downbeat_f1": 0.0, "pickup_recall": null, "half_time_error": false, "double_time_error": false},
+        "beatnet_analysis_status": "complete",
+        "decision": {"decision_version": "tempo-arbitration-v3", "selected_source": "librosa", "tempo_source": "librosa", "meter_source": "librosa", "partial_adoption": false, "ambiguous": true, "accepted": false, "reason": "ambiguous-candidates", "candidate_rejections": {"librosa+onset-grid": "local-rejection:ambiguous_candidates", "beatnet": "incomplete-beat-numbers", "beatnet+onset-grid": "local-rejection:ambiguous_candidates"}, "candidate_sources": ["librosa", "librosa+onset-grid", "beatnet", "beatnet+onset-grid"], "selected_candidate_count": 1, "tempo_variation_version": "tempo-variation-v1", "tempo_variation_source": "beatnet", "tempo_variation_classification": "stable", "fixed_bpm_constrained": false}
+      }
+    ]
+  },
+  "behavior_matrix": {
+    "schema_version": 1,
+    "matrix_version": "phase-four-behavior-matrix-v1",
+    "passed": true,
+    "scenarios": {
+      "rejected_invalid_beatnet": {"passed": true, "selected_source": "librosa+onset-grid", "rejection": "incomplete-beat-numbers"},
+      "selected_stronger_beatnet": {"passed": true, "selected_source": "beatnet"},
+      "partial_meter_downbeat_adoption": {"passed": true, "analyzer": "librosa+onset-grid+beatnet-meter", "bpm": 120.0, "time_signature": "3/4"},
+      "ambiguous_alias_fallback": {"passed": true, "selected_source": "librosa+onset-grid", "reason": "ambiguous-candidates"},
+      "manual_override_precedence": {"passed": true, "analyzer": "librosa+onset-grid+beatnet-meter+manual-override", "bpm": 128.0, "offset": 0.4},
+      "tempo_variation_classification": {"passed": true, "classifications": {"stable": "stable", "tempo_change": "possible-tempo-change", "rubato": "possible-rubato", "live_performance": "possible-live-performance"}}
+    }
+  },
+  "default_path_evidence": {"audio": "click_4_4.wav", "passed": true, "analyzer": "librosa+onset-grid", "bpm": 120.0, "beatnet_analysis_status": "unavailable", "candidate_sources": ["librosa", "librosa+onset-grid"], "selected_source": "librosa+onset-grid", "decision_version": "tempo-arbitration-v3"}
+}

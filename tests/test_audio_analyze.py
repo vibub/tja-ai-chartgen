@@ -252,6 +252,32 @@ def test_arbitration_promotes_local_onset_grid_ambiguity_to_decision():
     }
 
 
+def test_arbitration_does_not_duplicate_local_rejection_prefix():
+    baseline = _arbitration_candidate("librosa")
+    ambiguous_grid = _arbitration_candidate("librosa+onset-grid").model_copy(
+        update={"accepted": False, "reason": "ambiguous_candidates"}
+    )
+    first_candidates, _ = arbitrate_tempo_candidates(
+        [baseline, ambiguous_grid],
+        fallback_source="librosa",
+    )
+
+    second_candidates, decision = arbitrate_tempo_candidates(
+        first_candidates,
+        fallback_source="librosa",
+    )
+
+    rejected = next(
+        candidate
+        for candidate in second_candidates
+        if candidate.source == "librosa+onset-grid"
+    )
+    assert rejected.reason == "local-rejection:ambiguous_candidates"
+    assert decision.candidate_rejections["librosa+onset-grid"] == (
+        "local-rejection:ambiguous_candidates"
+    )
+
+
 def test_arbitration_keeps_fallback_for_close_speed_alias_candidates():
     baseline = _arbitration_candidate("librosa+onset-grid", bpm=120)
     beatnet = _arbitration_candidate("beatnet", bpm=240)

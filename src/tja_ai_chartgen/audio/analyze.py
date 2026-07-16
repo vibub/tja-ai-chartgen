@@ -1024,7 +1024,8 @@ def _tempo_candidate_rejection(
     if source == baseline.source:
         return None
     if source.endswith("+onset-grid") and not candidate.accepted:
-        return f"local-rejection:{candidate.reason or 'unknown'}"
+        reason = candidate.reason or "unknown"
+        return reason if reason.startswith("local-rejection:") else f"local-rejection:{reason}"
     if not source.startswith("beatnet"):
         return None
 

@@ -786,7 +786,7 @@ AI payload 建议发送：
 | 10.3 实现候选仲裁 | 已完成 | 新增 `tempo-arbitration-v1`：按 onset、覆盖率、interval、候选差距及 BeatNet beat number/meter/downbeat 证据评分，执行本地门控、跨候选拒绝、确定性择优，并在结论冲突且分差不足或 onset-grid 自身歧义时保守回退。 | `pytest tests/test_audio_analyze.py tests/test_audio_pipeline_integration.py tests/test_generation.py`；完整测试与 audio benchmark 测试。 |
 | 10.4 支持部分采用 | 已完成 | 新增 `tempo-arbitration-v2` 部分采用模式：当基础 BPM 与 BeatNet 四分音符 BPM 一致、tracker/meter/downbeat 证据可靠且候选不处于 ambiguity 时，保留基础 BPM，仅采用 BeatNet 拍号、downbeat 和小节相位。 | `pytest tests/test_audio_analyze.py tests/test_generation.py -q`；完整测试与 audio benchmark 测试。 |
 | 10.5 变速诊断 | 已完成 | 新增 `tempo-variation-v1`：对原始 tracker beat 序列计算固定 BPM 平均/P95/最大误差、归一化误差、interval CV、异常 interval 比例、前后段漂移和相邻 interval 跳变，并区分稳定、疑似 tempo change、rubato 与非严格定速演奏；当前仍保守输出固定 BPM。 | `pytest tests/test_audio_analyze.py tests/test_audio_pipeline_integration.py tests/test_generation.py tests/test_cli_generate.py -q`；完整测试。 |
-| 10.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
+| 10.6 阶段退出条件 | 已完成 | 新增 `phase-four-acceptance-v1`，在禁网环境双跑 6 个聚焦 fixture 与 6 类确定性行为场景，验证稳定 4/4 不退化、3/4/6/8/弱起/半倍速歧义/弱节奏覆盖、候选拒绝/完整选择/部分采用/ambiguity、手动覆盖、诊断可解释性、默认路径不加载 BeatNet 和固定 BPM 限制。 | `run_phase_four_acceptance()` 禁网双跑：PASS；`pytest tests/test_phase_four_acceptance.py tests/test_audio_analyze.py -q`；完整测试。 |
 
 ## 10.1 候选模型
 
@@ -883,6 +883,10 @@ class TempoMeterCandidate(BaseModel):
 - 缺少 BeatNet 依赖不影响默认分析；
 - fixture benchmark 覆盖 3/4、4/4、6/8、弱起和半速/倍速模式。
 
+`phase-four-acceptance-v1` 已满足上述工程退出条件。验收在禁用 socket 连接时独立运行两次：真实 BeatNet 聚焦矩阵覆盖稳定 4/4、3/4、6/8、真正弱起、半速/倍速歧义和弱节奏 6 个 fixture；确定性行为矩阵覆盖候选拒绝、强候选完整胜出、仅采用 meter/downbeat、速度别名 ambiguity、手动覆盖优先级，以及 stable/tempo-change/rubato/live-performance 诊断。两次真实 fixture 结果、行为矩阵和默认路径证据均完全一致，BPM、beat、downbeat 与 pickup 无回归，half/double tempo 错误均为 0，每个结果恰有一个最终候选且持久化 `tempo-arbitration-v3` / `tempo-variation-v1` 诊断。
+
+当前 BeatNet 在这 6 个合成 fixture 上均因 `incomplete-beat-numbers` 或局部 ambiguity 被保守拒绝，3/4 与 6/8 meter/downbeat 尚未优于基础结果；因此 Phase 4 的“可拒绝、可部分采用、可解释”工程边界已经验收通过，但 `--use-beatnet` 仍保持默认关闭。真实音乐上的默认启用评估不属于本阶段退出条件。验收产物写入 `phase_four_acceptance.json` 与 `.md`。
+
 ## Phase 4 任务划分列表
 
 - [x] 10.1 将 librosa、onset-grid 和 BeatNet 统一为节拍候选模型
@@ -890,7 +894,7 @@ class TempoMeterCandidate(BaseModel):
 - [x] 10.3 实现候选评分、拒绝、择优和 ambiguity 决策
 - [x] 10.4 支持保留原 BPM、仅采用 BeatNet meter/downbeat
 - [x] 10.5 增加固定 BPM 拟合误差与疑似变速诊断
-- [ ] 10.6 执行 Phase 4 阶段验收
+- [x] 10.6 执行 Phase 4 阶段验收
 
 ---
 
