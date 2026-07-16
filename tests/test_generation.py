@@ -212,7 +212,7 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
     monkeypatch.setattr("tja_ai_chartgen.generation.analyze_audio", lambda *_args, **_kwargs: raw)
     monkeypatch.setattr(
         "tja_ai_chartgen.generation.resolve_instrument_model_dir",
-        lambda value: tmp_path / "models" if value is None else value,
+        lambda value, **_kwargs: tmp_path / "models" if value is None else value,
     )
 
     def fake_analyze(path, **kwargs):
@@ -240,6 +240,7 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
             ogg_path,
             {
                 "model_dir": tmp_path / "models",
+                "profile": "full",
                 "device": "cpu",
                 "analysis_sample_rate": 22_050,
                 "analysis_hop_length": 512,

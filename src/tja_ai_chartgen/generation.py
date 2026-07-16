@@ -50,6 +50,7 @@ class GenerationConfig(BaseModel):
     time_signature: str | None = None
     use_beatnet: bool = False
     use_instrument_analysis: bool = False
+    instrument_profile: Literal["full", "stem-role"] = "full"
     instrument_device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
     instrument_model_dir: Path | None = None
     special_notes: bool = False
@@ -125,6 +126,7 @@ def build_song_analysis(
     time_signature_override: str | None = None,
     use_beatnet: bool = False,
     use_instrument_analysis: bool = False,
+    instrument_profile: Literal["full", "stem-role"] = "full",
     instrument_device: str = "auto",
     instrument_model_dir: Path | None = None,
     stage_callback: GenerationStageCallback | None = None,
@@ -141,14 +143,18 @@ def build_song_analysis(
 
     if use_instrument_analysis:
         _report_stage(stage_callback, "instruments")
-        model_dir = resolve_instrument_model_dir(instrument_model_dir)
+        model_dir = resolve_instrument_model_dir(
+            instrument_model_dir,
+            profile=instrument_profile,
+        )
         instrument_result = analyze_instruments(
             ogg_path,
             model_dir=model_dir,
+            profile=instrument_profile,
             device=instrument_device,
             analysis_sample_rate=raw.sample_rate or 22_050,
             analysis_hop_length=raw.hop_length,
-            max_duration=_instrument_analysis_duration(raw, max_bars),
+            max_duration=_instrument_analysis_duration(raw, max_bars, instrument_profile),
         )
         raw = raw.model_copy(
             update={
@@ -207,12 +213,17 @@ def build_song_analysis(
     )
 
 
-def _instrument_analysis_duration(raw: AudioAnalysisRaw, max_bars: int | None) -> float | None:
+def _instrument_analysis_duration(
+    raw: AudioAnalysisRaw,
+    max_bars: int | None,
+    profile: Literal["full", "stem-role"],
+) -> float | None:
     if max_bars is None:
         return None
     meter = get_meter_spec(raw.time_signature)
     bar_length = meter.beats_per_bar * 60.0 / raw.bpm
-    requested_end = max(0.0, raw.offset + max_bars * bar_length + AST_WINDOW_SECONDS)
+    classifier_padding = AST_WINDOW_SECONDS if profile == "full" else 0.0
+    requested_end = max(0.0, raw.offset + max_bars * bar_length + classifier_padding)
     return min(raw.duration, requested_end)
 
 

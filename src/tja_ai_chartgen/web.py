@@ -7,7 +7,7 @@ from pathlib import Path
 from shutil import copy2, rmtree
 from threading import Event, Lock, Thread
 from time import sleep
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -15,6 +15,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import ValidationError
 
+from tja_ai_chartgen.audio.instrument_models import InstrumentModelProfile
 from tja_ai_chartgen.cancellation import GenerationCancelledError, raise_if_cancelled
 from tja_ai_chartgen.features.meter import get_meter_spec, validate_time_signature
 from tja_ai_chartgen.generation import (
@@ -1838,6 +1839,7 @@ def create_app(
         time_signature: Annotated[str, Form()] = "",
         use_beatnet: Annotated[bool, Form()] = False,
         use_instrument_analysis: Annotated[bool, Form()] = False,
+        instrument_profile: Annotated[str, Form()] = "full",
         instrument_device: Annotated[str, Form()] = "auto",
         course: Annotated[str, Form()] = "Oni",
         level: Annotated[int, Form()] = 10,
@@ -1856,6 +1858,8 @@ def create_app(
         try:
             validate_density(density)
             validate_style(style)
+            if instrument_profile not in {"full", "stem-role"}:
+                raise ValueError("Instrument profile must be full or stem-role")
             if instrument_device not in {"auto", "cpu", "cuda", "mps"}:
                 raise ValueError("Instrument device must be auto, cpu, cuda, or mps")
             if use_instrument_analysis and not app.state.allow_instrument_analysis:
@@ -1897,6 +1901,7 @@ def create_app(
                     "time_signature": time_signature,
                     "use_beatnet": use_beatnet,
                     "use_instrument_analysis": use_instrument_analysis,
+                    "instrument_profile": instrument_profile,
                     "instrument_device": instrument_device,
                     "course": course,
                     "level": level,
@@ -2390,6 +2395,7 @@ def _run_analyze_job(
     time_signature: str,
     use_beatnet: bool,
     use_instrument_analysis: bool,
+    instrument_profile: str,
     instrument_device: str,
     course: str,
     level: int,
@@ -2445,6 +2451,7 @@ def _run_analyze_job(
             time_signature_override=time_signature or None,
             use_beatnet=use_beatnet,
             use_instrument_analysis=use_instrument_analysis,
+            instrument_profile=cast(InstrumentModelProfile, instrument_profile),
             instrument_device=instrument_device,
             stage_callback=report_analysis_stage,
         )
@@ -2506,6 +2513,7 @@ def _run_analyze_job(
                 "course": course,
                 "level": level,
                 "use_instrument_analysis": use_instrument_analysis,
+                "instrument_profile": instrument_profile,
                 "instrument_device": instrument_device,
                 "use_ai": use_ai,
                 "ai_failure": ai_failure if use_ai else None,
@@ -3185,7 +3193,7 @@ def _resolve_web_ai_credentials(ai_base_url: str, ai_api_key: str) -> tuple[str 
 def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
     instrument_disabled = "" if allow_instrument_analysis else " disabled"
     instrument_hint = (
-        "需要先运行 prepare-instrument-models；分析会增加耗时和内存占用，启用 AI 时还会增加输入上下文与 token 消耗。"
+        "需要先为所选 profile 运行 prepare-instrument-models；stem-role 只需 Demucs，分析会增加耗时和内存占用，启用 AI 时还会增加输入上下文与 token 消耗。"
         if allow_instrument_analysis
         else "远程模式未由服务器管理员开放重型分析。"
     )
@@ -3254,6 +3262,13 @@ def _analysis_form(*, allow_instrument_analysis: bool = True) -> str:
         <label class="checkbox-card field-wide">
           <input name="use_instrument_analysis" type="checkbox" value="true"{instrument_disabled}>
           <span>人声与乐器分析 <span class="field-hint">{_escape(instrument_hint)}</span></span>
+        </label>
+        <label class="field">
+          分析模式
+          <select name="instrument_profile"{instrument_disabled}>
+            <option value="full">完整（Demucs + AST）</option>
+            <option value="stem-role">轻量声部（仅 Demucs）</option>
+          </select>
         </label>
         <label class="field">
           分析设备

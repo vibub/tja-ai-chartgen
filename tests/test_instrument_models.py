@@ -10,6 +10,7 @@ from tja_ai_chartgen.audio.instrument_models import (
     InstrumentModelError,
     InstrumentModelManifest,
     MODEL_VALIDATION_ERROR_PREFIX,
+    STEM_ROLE_FEATURE_VERSION,
     _parse_demucs_remote_files,
     _publish_staging_directory,
     _replace_path_with_retry,
@@ -53,6 +54,18 @@ def test_resolve_project_root_and_default_models_directory(tmp_path):
     )
 
 
+def test_model_directory_defaults_to_stem_role_profile_directory(tmp_path):
+    project = tmp_path / "project"
+    (project / "src" / "tja_ai_chartgen").mkdir(parents=True)
+    (project / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+
+    assert resolve_instrument_model_dir(
+        start=project,
+        environ={},
+        profile="stem-role",
+    ) == (project / "models" / STEM_ROLE_FEATURE_VERSION)
+
+
 def test_model_directory_explicit_value_precedes_environment(tmp_path):
     explicit = tmp_path / "explicit"
     configured = tmp_path / "configured"
@@ -86,6 +99,30 @@ def test_validate_instrument_model_dir_accepts_complete_local_tree(tmp_path):
     assert result.demucs_model == DEMUCS_MODEL_NAME
     assert result.classifier_model == AST_MODEL_ID
     assert result.classifier_revision == AST_MODEL_REVISION
+
+
+def test_validate_instrument_model_dir_accepts_stem_role_tree_without_ast(tmp_path):
+    demucs_dir = tmp_path / "demucs"
+    demucs_dir.mkdir()
+    (demucs_dir / "htdemucs.yaml").write_text("models: [test]\n", encoding="utf-8")
+    (demucs_dir / "test-deadbeef.th").write_bytes(b"demucs")
+    manifest = InstrumentModelManifest(
+        feature_version="stem-role-v1",
+        profile="stem-role",
+        demucs_revision="test-deadbeef.th",
+        classifier_model=None,
+        classifier_revision=None,
+        files={},
+    )
+    write_json(tmp_path / "instrument_models.json", manifest)
+
+    result = validate_instrument_model_dir(tmp_path, profile="stem-role")
+
+    assert result == manifest
+    assert not (tmp_path / "ast").exists()
+    with pytest.raises(InstrumentModelError) as captured:
+        validate_instrument_model_dir(tmp_path, profile="full")
+    assert captured.value.reason == "model-profile-mismatch"
 
 
 def test_validate_instrument_model_dir_reports_stable_missing_manifest(tmp_path):
@@ -257,6 +294,48 @@ def test_prepare_instrument_models_replaces_target_only_after_validation(tmp_pat
     assert not (target / "old.txt").exists()
     assert (target / "instrument_models.json").is_file()
     assert validate_instrument_model_dir(target, verify_hashes=True) == manifest
+
+
+def test_prepare_stem_role_models_skips_ast_and_records_separate_licenses(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "models" / "stem-role-v1"
+    ast_called = False
+
+    def fake_demucs(path: Path) -> str:
+        path.mkdir(parents=True)
+        (path / "htdemucs.yaml").write_text("models: [test]\n", encoding="utf-8")
+        (path / "test-deadbeef.th").write_bytes(b"demucs")
+        return "test-deadbeef.th"
+
+    def fail_ast(_path: Path) -> None:
+        nonlocal ast_called
+        ast_called = True
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.audio.instrument_models._prepare_demucs",
+        fake_demucs,
+    )
+    monkeypatch.setattr("tja_ai_chartgen.audio.instrument_models._prepare_ast", fail_ast)
+    monkeypatch.setattr(
+        "tja_ai_chartgen.audio.instrument_models._validate_offline_loading",
+        lambda _path: None,
+    )
+
+    manifest = prepare_instrument_models(target, profile="stem-role")
+
+    assert ast_called is False
+    assert manifest.profile == "stem-role"
+    assert manifest.feature_version == "stem-role-v1"
+    assert manifest.classifier_model is None
+    assert manifest.code_licenses == {"demucs": "MIT"}
+    assert manifest.weight_licenses == {"htdemucs": "CC-BY-NC-4.0"}
+    assert validate_instrument_model_dir(
+        target,
+        profile="stem-role",
+        verify_hashes=True,
+    ) == manifest
 
 
 def test_prepare_instrument_models_preserves_existing_target_on_failure(tmp_path, monkeypatch):

@@ -100,6 +100,7 @@ def test_generate_writes_generation_config(tmp_path, monkeypatch):
         "time_signature": None,
         "use_beatnet": False,
         "use_instrument_analysis": False,
+        "instrument_profile": "full",
         "instrument_device": "auto",
         "instrument_model_dir": None,
         "special_notes": False,
@@ -187,10 +188,9 @@ def test_generate_with_instrument_analysis_records_config_and_analysis(tmp_path,
     def fake_instruments(path, **kwargs):
         calls.append((path, kwargs))
         return InstrumentAnalysisRaw(
-            feature_version="instrument-v1",
+            feature_version="stem-role-v1",
             status="complete",
             demucs_model="htdemucs",
-            classifier_model="ast",
             device="cpu",
         )
 
@@ -206,6 +206,8 @@ def test_generate_with_instrument_analysis_records_config_and_analysis(tmp_path,
             "--output-dir",
             str(output_dir),
             "--use-instrument-analysis",
+            "--instrument-profile",
+            "stem-role",
             "--instrument-device",
             "cpu",
             "--instrument-model-dir",
@@ -220,11 +222,14 @@ def test_generate_with_instrument_analysis_records_config_and_analysis(tmp_path,
         (output_dir / "generation_notices.json").read_text(encoding="utf-8")
     )
     assert saved_config["use_instrument_analysis"] is True
+    assert saved_config["instrument_profile"] == "stem-role"
     assert saved_config["instrument_device"] == "cpu"
     assert saved_config["instrument_model_dir"] == str(model_dir)
     assert analysis["analysis_schema_version"] == 11
+    assert analysis["instrument_feature_version"] == "stem-role-v1"
     assert analysis["instrument_analysis_status"] == "complete"
-    assert calls and calls[0][1]["device"] == "cpu"
+    assert calls and calls[0][1]["profile"] == "stem-role"
+    assert calls[0][1]["device"] == "cpu"
     assert calls[0][1]["model_dir"] == model_dir
     assert any(item["code"] == "instrument-analysis-succeeded" for item in notices)
 

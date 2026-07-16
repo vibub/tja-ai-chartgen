@@ -183,7 +183,7 @@ def test_analyze_instruments_returns_complete_result_from_both_models(tmp_path, 
     stems = {name: mix.copy() for name in ("vocals", "drums", "bass", "other")}
     monkeypatch.setattr(
         "tja_ai_chartgen.audio.instruments.validate_instrument_model_dir",
-        lambda _path: None,
+        lambda _path, **_kwargs: None,
     )
     monkeypatch.setattr("tja_ai_chartgen.audio.instruments._import_torch", _fake_torch)
     monkeypatch.setattr(
@@ -213,6 +213,45 @@ def test_analyze_instruments_returns_complete_result_from_both_models(tmp_path, 
     assert result.classification_windows == [window]
 
 
+def test_analyze_instruments_stem_role_skips_classifier(tmp_path, monkeypatch):
+    audio_path = tmp_path / "song.ogg"
+    audio_path.write_bytes(b"audio")
+    frame = StemActivityFrame(time=0.0, drums=0.8)
+    mix = np.zeros((2, 800), dtype=np.float32)
+    stems = {name: mix.copy() for name in ("vocals", "drums", "bass", "other")}
+    monkeypatch.setattr(
+        "tja_ai_chartgen.audio.instruments.validate_instrument_model_dir",
+        lambda _path, **_kwargs: None,
+    )
+    monkeypatch.setattr("tja_ai_chartgen.audio.instruments._import_torch", _fake_torch)
+    monkeypatch.setattr(
+        "tja_ai_chartgen.audio.instruments._separate_stems",
+        lambda *_args, **_kwargs: (mix, stems, 800),
+    )
+    monkeypatch.setattr(
+        "tja_ai_chartgen.audio.instruments._build_stem_frames",
+        lambda *_args, **_kwargs: [frame],
+    )
+    monkeypatch.setattr(
+        "tja_ai_chartgen.audio.instruments._classify_stems",
+        lambda *_args, **_kwargs: pytest.fail("stem-role must not load AST"),
+    )
+
+    result = analyze_instruments(
+        audio_path,
+        model_dir=tmp_path / "models",
+        profile="stem-role",
+        analysis_sample_rate=800,
+        analysis_hop_length=100,
+    )
+
+    assert result.feature_version == "stem-role-v1"
+    assert result.status == "complete"
+    assert result.classifier_model is None
+    assert result.stem_frames == [frame]
+    assert result.classification_windows == []
+
+
 def test_analyze_instruments_keeps_demucs_evidence_when_classifier_fails(tmp_path, monkeypatch):
     audio_path = tmp_path / "song.ogg"
     audio_path.write_bytes(b"audio")
@@ -221,7 +260,7 @@ def test_analyze_instruments_keeps_demucs_evidence_when_classifier_fails(tmp_pat
     stems = {name: mix.copy() for name in ("vocals", "drums", "bass", "other")}
     monkeypatch.setattr(
         "tja_ai_chartgen.audio.instruments.validate_instrument_model_dir",
-        lambda _path: None,
+        lambda _path, **_kwargs: None,
     )
     monkeypatch.setattr("tja_ai_chartgen.audio.instruments._import_torch", _fake_torch)
     monkeypatch.setattr(

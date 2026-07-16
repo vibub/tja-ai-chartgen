@@ -1,7 +1,7 @@
 import os
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import typer
 from dotenv import load_dotenv
@@ -10,6 +10,7 @@ from rich.console import Console
 from tja_ai_chartgen import __version__
 from tja_ai_chartgen.audio.instrument_models import (
     InstrumentModelError,
+    InstrumentModelProfile,
     prepare_instrument_models as prepare_local_instrument_models,
     resolve_instrument_model_dir,
 )
@@ -54,21 +55,29 @@ def prepare_instrument_models_command(
     model_dir: Path | None = typer.Option(
         None,
         "--model-dir",
-        help="Local instrument model directory. Defaults to <project-root>/models/instrument-v1.",
+        help="Local model directory. Defaults to the selected profile directory.",
+    ),
+    profile: str = typer.Option(
+        "full",
+        "--profile",
+        help="Model profile: full (Demucs + AST) or stem-role (Demucs only).",
     ),
 ) -> None:
-    target = resolve_instrument_model_dir(model_dir)
+    if profile not in {"full", "stem-role"}:
+        _fail("--profile must be full or stem-role.")
+    resolved_profile = cast(InstrumentModelProfile, profile)
+    target = resolve_instrument_model_dir(model_dir, profile=resolved_profile)
     console.print(f"Preparing instrument models in: {target}")
     try:
-        manifest = prepare_local_instrument_models(target)
+        manifest = prepare_local_instrument_models(target, profile=resolved_profile)
     except InstrumentModelError as error:
         _fail(f"Instrument model preparation failed: {error.reason}")
     except Exception as error:  # noqa: BLE001 - CLI boundary should hide tracebacks.
         _fail(f"Instrument model preparation failed: {type(error).__name__}")
-    console.print(
-        "Instrument models prepared: "
-        f"{manifest.demucs_model}, {manifest.classifier_model}"
-    )
+    components = manifest.demucs_model
+    if manifest.classifier_model is not None:
+        components = f"{components}, {manifest.classifier_model}"
+    console.print(f"Instrument models prepared ({manifest.profile}): {components}")
 
 
 @app.command()
@@ -105,7 +114,12 @@ def generate(
     use_instrument_analysis: bool = typer.Option(
         False,
         "--use-instrument-analysis",
-        help="Use optional local Demucs and AST models for vocal and instrument semantics.",
+        help="Use optional local Demucs stem analysis, with AST in the full profile.",
+    ),
+    instrument_profile: str = typer.Option(
+        "full",
+        "--instrument-profile",
+        help="Instrument profile: full (Demucs + AST) or stem-role (Demucs only).",
     ),
     instrument_device: str = typer.Option(
         "auto",
@@ -115,7 +129,7 @@ def generate(
     instrument_model_dir: Path | None = typer.Option(
         None,
         "--instrument-model-dir",
-        help="Local instrument model directory. Defaults to <project-root>/models/instrument-v1.",
+        help="Local model directory. Defaults to the selected profile directory.",
     ),
     special_notes: bool = typer.Option(
         False,
@@ -166,6 +180,7 @@ def generate(
         time_signature=time_signature,
         use_beatnet=use_beatnet,
         use_instrument_analysis=use_instrument_analysis,
+        instrument_profile=instrument_profile,
         instrument_device=instrument_device,
         instrument_model_dir=instrument_model_dir,
         special_notes=special_notes,
@@ -202,6 +217,7 @@ def generate_from_config(config_path: Path) -> None:
         time_signature=config.time_signature,
         use_beatnet=config.use_beatnet,
         use_instrument_analysis=config.use_instrument_analysis,
+        instrument_profile=config.instrument_profile,
         instrument_device=config.instrument_device,
         instrument_model_dir=config.instrument_model_dir,
         special_notes=config.special_notes,
@@ -238,7 +254,7 @@ def web(
     allow_instrument_analysis: bool = typer.Option(
         False,
         "--allow-instrument-analysis",
-        help="Allow remote Web requests to run local Demucs and AST inference.",
+        help="Allow remote Web requests to run local Demucs and optional AST inference.",
     ),
 ) -> None:
     import asyncio
@@ -285,6 +301,7 @@ def run_generate(
     time_signature: str | None,
     use_beatnet: bool,
     use_instrument_analysis: bool,
+    instrument_profile: str,
     instrument_device: str,
     instrument_model_dir: Path | None,
     special_notes: bool,
@@ -308,6 +325,9 @@ def run_generate(
             validate_time_signature(time_signature)
         except ValueError as error:
             _fail(str(error))
+    if instrument_profile not in {"full", "stem-role"}:
+        _fail("--instrument-profile must be full or stem-role.")
+    resolved_instrument_profile = cast(InstrumentModelProfile, instrument_profile)
     if instrument_device not in {"auto", "cpu", "cuda", "mps"}:
         _fail("--instrument-device must be auto, cpu, cuda, or mps.")
     if ai_repair_retries < 0:
@@ -354,6 +374,7 @@ def run_generate(
         time_signature=time_signature,
         use_beatnet=use_beatnet,
         use_instrument_analysis=use_instrument_analysis,
+        instrument_profile=resolved_instrument_profile,
         instrument_device=instrument_device,
         instrument_model_dir=instrument_model_dir,
         special_notes=special_notes,
@@ -378,6 +399,7 @@ def run_generate(
             time_signature_override=time_signature,
             use_beatnet=use_beatnet,
             use_instrument_analysis=use_instrument_analysis,
+            instrument_profile=resolved_instrument_profile,
             instrument_device=instrument_device,
             instrument_model_dir=instrument_model_dir,
             stage_callback=lambda stage: console.print(

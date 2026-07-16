@@ -19,6 +19,8 @@ from tja_ai_chartgen.utils.paths import write_json
 
 
 INSTRUMENT_FEATURE_VERSION = "instrument-v1"
+STEM_ROLE_FEATURE_VERSION = "stem-role-v1"
+InstrumentModelProfile = Literal["full", "stem-role"]
 DEMUCS_MODEL_NAME = "htdemucs"
 AST_MODEL_ID = "MIT/ast-finetuned-audioset-10-10-0.4593"
 AST_MODEL_REVISION = "f826b80d28226b62986cc218e5cec390b1096902"
@@ -32,12 +34,15 @@ MODEL_VALIDATION_ERROR_PREFIX = "instrument-model-validation-error:"
 
 class InstrumentModelManifest(BaseModel):
     schema_version: Literal[1] = 1
-    feature_version: Literal["instrument-v1"] = INSTRUMENT_FEATURE_VERSION
+    feature_version: Literal["instrument-v1", "stem-role-v1"] = INSTRUMENT_FEATURE_VERSION
+    profile: InstrumentModelProfile = "full"
     demucs_model: str = DEMUCS_MODEL_NAME
     demucs_revision: str
-    classifier_model: str = AST_MODEL_ID
-    classifier_revision: str = AST_MODEL_REVISION
+    classifier_model: str | None = AST_MODEL_ID
+    classifier_revision: str | None = AST_MODEL_REVISION
     licenses: dict[str, str] = Field(default_factory=dict)
+    code_licenses: dict[str, str] = Field(default_factory=dict)
+    weight_licenses: dict[str, str] = Field(default_factory=dict)
     files: dict[str, str] = Field(default_factory=dict)
 
 
@@ -62,6 +67,7 @@ def resolve_project_root(start: Path | None = None) -> Path:
 def resolve_instrument_model_dir(
     explicit: Path | None = None,
     *,
+    profile: InstrumentModelProfile = "full",
     start: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> Path:
@@ -71,7 +77,10 @@ def resolve_instrument_model_dir(
     configured = values.get(MODEL_DIR_ENV, "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return resolve_project_root(start) / "models" / INSTRUMENT_FEATURE_VERSION
+    feature_version = (
+        STEM_ROLE_FEATURE_VERSION if profile == "stem-role" else INSTRUMENT_FEATURE_VERSION
+    )
+    return resolve_project_root(start) / "models" / feature_version
 
 
 def load_instrument_model_manifest(model_dir: Path) -> InstrumentModelManifest:
@@ -85,7 +94,18 @@ def load_instrument_model_manifest(model_dir: Path) -> InstrumentModelManifest:
         raise InstrumentModelError("invalid-model-manifest") from error
     if manifest.demucs_model != DEMUCS_MODEL_NAME:
         raise InstrumentModelError("invalid-model-manifest")
-    if manifest.classifier_model != AST_MODEL_ID:
+    if manifest.profile == "stem-role":
+        if (
+            manifest.feature_version != STEM_ROLE_FEATURE_VERSION
+            or manifest.classifier_model is not None
+            or manifest.classifier_revision is not None
+        ):
+            raise InstrumentModelError("invalid-model-manifest")
+    elif (
+        manifest.feature_version != INSTRUMENT_FEATURE_VERSION
+        or manifest.classifier_model != AST_MODEL_ID
+        or manifest.classifier_revision != AST_MODEL_REVISION
+    ):
         raise InstrumentModelError("invalid-model-manifest")
     return manifest
 
@@ -93,21 +113,27 @@ def load_instrument_model_manifest(model_dir: Path) -> InstrumentModelManifest:
 def validate_instrument_model_dir(
     model_dir: Path,
     *,
+    profile: InstrumentModelProfile | None = None,
     verify_hashes: bool = False,
 ) -> InstrumentModelManifest:
     manifest = load_instrument_model_manifest(model_dir)
+    if profile is not None and manifest.profile != profile:
+        raise InstrumentModelError("model-profile-mismatch")
     demucs_dir = model_dir / "demucs"
-    ast_dir = model_dir / "ast"
     if not demucs_dir.is_dir() or not (demucs_dir / f"{DEMUCS_MODEL_NAME}.yaml").is_file():
         raise InstrumentModelError("missing-model:htdemucs")
     if not any(demucs_dir.glob("*.th")):
         raise InstrumentModelError("missing-model:htdemucs")
-    if not ast_dir.is_dir() or not (ast_dir / "config.json").is_file():
-        raise InstrumentModelError("missing-model:ast")
-    if not (ast_dir / "preprocessor_config.json").is_file():
-        raise InstrumentModelError("missing-model:ast")
-    if not any((ast_dir / name).is_file() for name in ("model.safetensors", "pytorch_model.bin")):
-        raise InstrumentModelError("missing-model:ast")
+    if manifest.profile == "full":
+        ast_dir = model_dir / "ast"
+        if not ast_dir.is_dir() or not (ast_dir / "config.json").is_file():
+            raise InstrumentModelError("missing-model:ast")
+        if not (ast_dir / "preprocessor_config.json").is_file():
+            raise InstrumentModelError("missing-model:ast")
+        if not any(
+            (ast_dir / name).is_file() for name in ("model.safetensors", "pytorch_model.bin")
+        ):
+            raise InstrumentModelError("missing-model:ast")
 
     for relative, expected_hash in manifest.files.items():
         candidate = _manifest_file(model_dir, relative)
@@ -118,26 +144,50 @@ def validate_instrument_model_dir(
     return manifest
 
 
-def prepare_instrument_models(model_dir: Path) -> InstrumentModelManifest:
+def prepare_instrument_models(
+    model_dir: Path,
+    *,
+    profile: InstrumentModelProfile = "full",
+) -> InstrumentModelManifest:
     target = model_dir.expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = target.with_name(f".{target.name}.prepare-{uuid4().hex}")
     staging.mkdir(parents=True)
     try:
         demucs_revision = _prepare_demucs(staging / "demucs")
-        _prepare_ast(staging / "ast")
+        if profile == "full":
+            _prepare_ast(staging / "ast")
         files = {
             path.relative_to(staging).as_posix(): _sha256(path)
             for path in sorted(staging.rglob("*"))
             if path.is_file() and MODEL_MANIFEST_NAME not in path.parts
         }
+        stem_role = profile == "stem-role"
         manifest = InstrumentModelManifest(
+            feature_version=(STEM_ROLE_FEATURE_VERSION if stem_role else INSTRUMENT_FEATURE_VERSION),
+            profile=profile,
             demucs_revision=demucs_revision,
-            licenses={"demucs": "MIT", "ast": "BSD-3-Clause"},
+            classifier_model=None if stem_role else AST_MODEL_ID,
+            classifier_revision=None if stem_role else AST_MODEL_REVISION,
+            licenses=(
+                {"demucs": "MIT"}
+                if stem_role
+                else {"demucs": "MIT", "ast": "BSD-3-Clause"}
+            ),
+            code_licenses=(
+                {"demucs": "MIT"}
+                if stem_role
+                else {"demucs": "MIT", "transformers": "Apache-2.0"}
+            ),
+            weight_licenses=(
+                {"htdemucs": "CC-BY-NC-4.0"}
+                if stem_role
+                else {"htdemucs": "CC-BY-NC-4.0", "ast": "BSD-3-Clause"}
+            ),
             files=files,
         )
         write_json(staging / MODEL_MANIFEST_NAME, manifest)
-        validate_instrument_model_dir(staging, verify_hashes=True)
+        validate_instrument_model_dir(staging, profile=profile, verify_hashes=True)
         _validate_offline_loading(staging)
         try:
             _replace_directory(staging, target)
@@ -258,11 +308,11 @@ def _validate_offline_loading(model_dir: Path) -> None:
 
 
 def _validate_offline_loading_in_process(model_dir: Path) -> None:
+    manifest = validate_instrument_model_dir(model_dir)
     try:
         from demucs.api import Separator
-        from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
     except ImportError as error:
-        module = str(getattr(error, "name", "optional"))
+        module = str(getattr(error, "name", "demucs"))
         raise InstrumentModelError(f"missing-dependency:{module}") from error
 
     separator = None
@@ -279,17 +329,23 @@ def _validate_offline_loading_in_process(model_dir: Path) -> None:
             raise InstrumentModelError(
                 f"invalid-model:htdemucs:{type(error).__name__}"
             ) from error
-        try:
-            feature_extractor = AutoFeatureExtractor.from_pretrained(
-                model_dir / "ast",
-                local_files_only=True,
-            )
-            classifier = AutoModelForAudioClassification.from_pretrained(
-                model_dir / "ast",
-                local_files_only=True,
-            )
-        except Exception as error:  # noqa: BLE001 - model validation must be contained.
-            raise InstrumentModelError(f"invalid-model:ast:{type(error).__name__}") from error
+        if manifest.profile == "full":
+            try:
+                from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+            except ImportError as error:
+                module = str(getattr(error, "name", "transformers"))
+                raise InstrumentModelError(f"missing-dependency:{module}") from error
+            try:
+                feature_extractor = AutoFeatureExtractor.from_pretrained(
+                    model_dir / "ast",
+                    local_files_only=True,
+                )
+                classifier = AutoModelForAudioClassification.from_pretrained(
+                    model_dir / "ast",
+                    local_files_only=True,
+                )
+            except Exception as error:  # noqa: BLE001 - model validation must be contained.
+                raise InstrumentModelError(f"invalid-model:ast:{type(error).__name__}") from error
     finally:
         del classifier, feature_extractor, separator
         gc.collect()

@@ -41,6 +41,8 @@ def test_web_index_shows_upload_form(tmp_path):
     assert 'name="use_beatnet" type="checkbox" value="true">' in response.text
     assert 'name="use_beatnet" type="checkbox" value="true" checked' not in response.text
     assert 'name="use_instrument_analysis" type="checkbox" value="true"' in response.text
+    assert 'select name="instrument_profile"' in response.text
+    assert 'value="stem-role">轻量声部（仅 Demucs）' in response.text
     assert 'select name="instrument_device"' in response.text
     assert "prepare-instrument-models" in response.text
     assert "启用 AI 时还会增加输入上下文与 token 消耗" in response.text
@@ -62,6 +64,7 @@ def test_web_remote_mode_disables_instrument_analysis_without_server_opt_in(tmp_
 
     assert response.status_code == 200
     assert 'name="use_instrument_analysis" type="checkbox" value="true" disabled' in response.text
+    assert 'select name="instrument_profile" disabled' in response.text
     assert 'select name="instrument_device" disabled' in response.text
     assert "远程模式未由服务器管理员开放重型分析" in response.text
 
@@ -191,6 +194,7 @@ def test_web_instrument_analysis_success_is_persisted_and_rendered(tmp_path, mon
             "max_bars": "1",
             "bpm": "120",
             "use_instrument_analysis": "true",
+            "instrument_profile": "stem-role",
             "instrument_device": "cpu",
         },
         files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
@@ -208,9 +212,11 @@ def test_web_instrument_analysis_success_is_persisted_and_rendered(tmp_path, mon
     assert "状态：完整" in result.text
     analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
     options = json.loads((job_dir / "chart_options.json").read_text(encoding="utf-8"))
-    assert analysis["instrument_feature_version"] == "instrument-v1"
+    assert analysis["instrument_feature_version"] == "stem-role-v1"
     assert analysis["instrument_analysis_status"] == "complete"
+    assert analysis["instrument_classifier_model"] is None
     assert options["use_instrument_analysis"] is True
+    assert options["instrument_profile"] == "stem-role"
     assert options["instrument_device"] == "cpu"
 
 
@@ -1636,13 +1642,14 @@ def _patch_web_audio_pipeline(
             ),
         )
 
-    def fake_analyze_instruments(*_args, **_kwargs):
+    def fake_analyze_instruments(*_args, **kwargs):
+        stem_role = kwargs.get("profile") == "stem-role"
         return InstrumentAnalysisRaw(
-            feature_version="instrument-v1",
+            feature_version="stem-role-v1" if stem_role else "instrument-v1",
             status=instrument_status or "complete",
             reason=instrument_reason,
             demucs_model="htdemucs",
-            classifier_model="ast",
+            classifier_model=None if stem_role else "ast",
             device="cpu",
         )
 

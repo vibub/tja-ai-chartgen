@@ -11,7 +11,9 @@ from tja_ai_chartgen.audio.instrument_models import (
     AST_MODEL_ID,
     DEMUCS_MODEL_NAME,
     INSTRUMENT_FEATURE_VERSION,
+    STEM_ROLE_FEATURE_VERSION,
     InstrumentModelError,
+    InstrumentModelProfile,
     validate_instrument_model_dir,
 )
 
@@ -120,27 +122,28 @@ def analyze_instruments(
     input_path: Path,
     *,
     model_dir: Path,
+    profile: InstrumentModelProfile = "full",
     device: str = "auto",
     analysis_sample_rate: int,
     analysis_hop_length: int,
     max_duration: float | None = None,
 ) -> InstrumentAnalysisRaw:
     if not input_path.is_file():
-        return instrument_fallback("audio-not-found")
+        return instrument_fallback("audio-not-found", profile=profile)
     if analysis_sample_rate <= 0:
-        return instrument_fallback("invalid-sample-rate")
+        return instrument_fallback("invalid-sample-rate", profile=profile)
     if analysis_hop_length <= 0:
-        return instrument_fallback("invalid-hop-length")
+        return instrument_fallback("invalid-hop-length", profile=profile)
     try:
-        validate_instrument_model_dir(model_dir)
+        validate_instrument_model_dir(model_dir, profile=profile)
     except InstrumentModelError as error:
-        return instrument_fallback(error.reason)
+        return instrument_fallback(error.reason, profile=profile)
 
     try:
         torch = _import_torch()
         selected_device = _select_device(torch, device)
     except InstrumentAnalysisError as error:
-        return instrument_fallback(error.reason)
+        return instrument_fallback(error.reason, profile=profile)
 
     try:
         mix, stems, model_sample_rate = _separate_stems(
@@ -160,14 +163,25 @@ def analyze_instruments(
         if not frames:
             raise InstrumentAnalysisError("invalid-model-output")
     except InstrumentAnalysisError as error:
-        return instrument_fallback(error.reason, device=selected_device)
+        return instrument_fallback(error.reason, profile=profile, device=selected_device)
     except Exception as error:  # noqa: BLE001 - optional enhancement must not block generation.
         return instrument_fallback(
             f"demucs-error:{type(error).__name__}",
+            profile=profile,
             device=selected_device,
         )
 
     analyzed_duration = mix.shape[-1] / model_sample_rate
+    if profile == "stem-role":
+        return InstrumentAnalysisRaw(
+            feature_version=STEM_ROLE_FEATURE_VERSION,
+            status="complete",
+            demucs_model=DEMUCS_MODEL_NAME,
+            device=selected_device,
+            analyzed_duration=round(float(analyzed_duration), 6),
+            stem_frames=frames,
+        )
+
     try:
         windows = _classify_stems(
             mix,
@@ -212,13 +226,19 @@ def analyze_instruments(
     )
 
 
-def instrument_fallback(reason: str, *, device: str | None = None) -> InstrumentAnalysisRaw:
+def instrument_fallback(
+    reason: str,
+    *,
+    profile: InstrumentModelProfile = "full",
+    device: str | None = None,
+) -> InstrumentAnalysisRaw:
+    stem_role = profile == "stem-role"
     return InstrumentAnalysisRaw(
-        feature_version=INSTRUMENT_FEATURE_VERSION,
+        feature_version=STEM_ROLE_FEATURE_VERSION if stem_role else INSTRUMENT_FEATURE_VERSION,
         status="fallback",
         reason=reason,
         demucs_model=DEMUCS_MODEL_NAME,
-        classifier_model=AST_MODEL_ID,
+        classifier_model=None if stem_role else AST_MODEL_ID,
         device=device,
     )
 

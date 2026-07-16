@@ -913,9 +913,9 @@ class TempoMeterCandidate(BaseModel):
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
 | 11.1 复用 stem activity/onset | 已完成 | instrument-v1 已提供 vocals/drums/bass/other activity 与 onset。 | 现有 instrument 测试和真实模型 smoke 已覆盖。 |
-| 11.2 定义 stem-role 轻量模式 | 未开始 | 尚未允许只准备/加载 separator 而不要求 AST。 | 尚未执行。 |
+| 11.2 定义 stem-role 轻量模式 | 已完成 | 新增 `stem-role` profile：独立默认目录 `models/stem-role-v1/`、统一兼容 manifest、仅准备/校验/离线加载 htdemucs，并由 CLI、GenerationConfig 与 Web 显式选择；旧 `instrument-v1` full profile 继续兼容。 | `tests/test_instrument_models.py`、`tests/test_instruments.py`、`tests/test_cli_instruments.py`、`tests/test_cli_generate.py`、`tests/test_web.py`。 |
 | 11.3 接入 RhythmicSalience | 未开始 | 尚未通过统一 salience 融合 stem onset。 | 尚未执行。 |
-| 11.4 保持 partial/fallback | 部分完成 | 当前 AST 失败时已保留 Demucs 证据；尚未形成无分类器的正式 complete 语义。 | 现有 partial 测试可复用。 |
+| 11.4 保持 partial/fallback | 部分完成 | `stem-role-v1` 在 Demucs 与 stem frame 成功后已正式返回 complete 且 classifier 为 `null`；旧 full profile 的 AST 失败仍保留 Demucs 证据并返回 partial，模型或分离失败继续 fallback。尚待随 salience 接入统一复核持久化与通知语义。 | 新增 stem-role complete 测试，现有 full partial/fallback 测试继续通过。 |
 | 11.5 控制模型与性能成本 | 部分完成 | 已有设备选择、segment、overlap 和 CUDA OOM 重试。 | 尚未测量 stem-role 轻量 profile。 |
 | 11.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -966,7 +966,14 @@ models/stem-role-v1/demucs/
 models/stem-role-v1/model_manifest.json
 ```
 
-或者在统一 manifest 中将 classifier 设为可选组件。
+实现采用第二种方案：继续使用统一 `instrument_models.json`，新增 `profile` 字段并将 classifier 设为可选组件。`full` profile 仍对应 `instrument-v1` 与 Demucs + AST；`stem-role` profile 对应 `stem-role-v1`，默认目录为 `models/stem-role-v1/`，manifest 中 classifier 字段为 `null`。两种 profile 都保存固定 revision、全文件 SHA-256，并分别记录模型代码许可证与权重许可证。
+
+模型准备与生成入口：
+
+```bash
+tja-ai-chartgen prepare-instrument-models --profile stem-role
+tja-ai-chartgen generate song.mp3 --title "Song" --use-instrument-analysis --instrument-profile stem-role
+```
 
 要求：
 
@@ -1018,7 +1025,7 @@ stem-role-v1
 ## Phase 5 任务划分列表
 
 - [x] 11.1 复用现有 vocals、drums、bass、other activity/onset
-- [ ] 11.2 定义只需要 `htdemucs` 的 stem-role 轻量模式
+- [x] 11.2 定义只需要 `htdemucs` 的 stem-role 轻量模式
 - [ ] 11.3 将 stem activity/onset 接入 `RhythmicSalience`
 - [ ] 11.4 调整 complete、partial、fallback 与旧 instrument-v1 兼容语义
 - [ ] 11.5 验证模型准备、离线加载、设备和性能成本
