@@ -1247,7 +1247,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | --- | --- | --- | --- |
 | 13.1 structure 消费 salience | 已完成 | structure vector 改由统一 hit/accent salience 生成 onset 强度、密度、accent 与 rhythm profile；stem-role onset 经 salience 门控后参与趋势与边界，声部上下文只使用 vocals/drums/bass/other。 | `tests/test_structure.py` 覆盖 stem onset 消费、具体乐器 taxonomy 独立性及原有 structure 回归。 |
 | 13.2 fallback 消费 salience | 已完成 | fallback 每次生成只构建一次完整 salience：普通落点、performance 重音、咚咔配色和特殊音符共享同一批 hit/accent/don-ka/burst 结果，并按 ResolutionPlan 过滤可表达点。 | `tests/test_salience_candidates.py`、`tests/test_fallback_generator.py` 及完整规则生成约束/对齐回归。 |
-| 13.3 AI payload 移除具体乐器依赖 | 未开始 | 当前 compact payload 仍含 bar instruments。 | 尚未执行。 |
+| 13.3 AI payload 移除具体乐器依赖 | 已完成 | `compact-v7` 持久化版本化紧凑 salience、可表达候选与可靠 burst；`bar_instruments` 只保留粗粒度 stem-role，dominant source/confidence 从四类 activity 重新派生，不读取具体乐器 taxonomy 或旧混合 confidence。 | `tests/test_ai_client.py`、Phase 5 payload taxonomy 独立性验收及旧 compact-v4 sidecar 兼容测试。 |
 | 13.4 QualityReport 收敛 | 未开始 | 尚未以 rhythm alignment 指标替代具体乐器主线指标。 | 尚未执行。 |
 | 13.5 旧 instrument-v1 兼容 | 已完成 | 固定旧 `instrument-v1 partial`、`analysis_schema_version=5`、无版本 GenerationConfig、compact-v4 AI input 与旧 AI output 快照；读取时保留历史字段和值，不静默迁移。 | `tests/test_legacy_compatibility.py`、`tests/fixtures/compatibility/`。 |
 | 13.6 UI 与 notice 调整 | 未开始 | 尚未区分 stem-role 与具体乐器分类。 | 尚未执行。 |
@@ -1309,6 +1309,12 @@ fallback 使用：
 
 旧 sidecar 继续可读取，但新 prompt 不要求这些字段存在。
 
+当前 `tja-ai-chartgen-compact-v7` payload 以 `rhythmic_salience_feature_version` 标记 `rhythmic-salience-v1`，并用 legend + 紧凑数组传递每小节 salience confidence/fallback、burst score/confidence/可表达范围，以及按当前 `ResolutionPlan` 过滤后的稀疏 point。每个 point 只包含 canonical grid、hit、accent、don/ka preference、sustained activity、confidence 和候选等级，连续强度统一压缩到 0–1000，避免重复长字段名和 AI 无法落点的细分坐标。
+
+`bar_instruments` 保留名称仅为旧 compact sidecar 与粗粒度上下文兼容，其列严格限制为 vocal activity/presence、drum、bass、other、dominant source 和 confidence。dominant source 与 confidence 在构建 payload 时只由四类 activity 和固定 source threshold/margin 重新派生，不读取 `dominant_instrument`，也不复用可能由 AST taxonomy 提高的历史 `InstrumentBarFeature.confidence`。因此仅改变 guitar、piano/keyboard、strings、brass、woodwind、synth、organ、other instrument、dominant instrument 或旧混合 confidence 时，整个新 payload 必须逐字段完全相同。
+
+prompt 明确要求 AI 优先消费 reliable salience、只使用短的受支持连接点，并把 stem-role 语义限制在乐句、motif 和段落上下文；具体乐器名称不是输入字段，也不能决定 note tick。旧 compact-v4 input/output/attempt sidecar 继续通过兼容读取器保留原值，但不会重新进入当前 prompt。
+
 ## 13.4 QualityReport
 
 具体乐器相关指标可以：
@@ -1365,7 +1371,7 @@ fallback 使用：
 - [x] 13.5 先锁定旧 instrument-v1、analysis、config 和 sidecar 兼容行为
 - [x] 13.1 让 structure 消费统一 salience 与可选 stem-role
 - [x] 13.2 让 fallback 使用 hit、accent、don/ka 和 burst salience
-- [ ] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
+- [x] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
 - [ ] 13.4 将 QualityReport 主线收敛到节奏对齐指标
 - [ ] 13.6 调整 CLI/Web 开关、进度、notice 和文档
 - [ ] 13.7 执行 Phase 7 阶段验收

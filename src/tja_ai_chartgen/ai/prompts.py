@@ -14,8 +14,11 @@ from tja_ai_chartgen.features.salience import (
 from tja_ai_chartgen.features.salience_candidates import rank_bar_salience_candidates
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.rules.styles import get_style_template
-from tja_ai_chartgen.tja.model import BarFeature, SongAnalysis
+from tja_ai_chartgen.tja.model import BarFeature, InstrumentBarFeature, SongAnalysis
 
+
+STEM_ROLE_ACTIVITY_MINIMUM = 0.12
+STEM_ROLE_MARGIN_MINIMUM = 0.08
 
 DENSITY_TARGETS = {
     "low": {
@@ -187,6 +190,10 @@ def build_chart_generation_payload(
             "salience_point_columns": SALIENCE_POINT_COLUMNS,
             "salience_scale": "0..1000=normalized strength/confidence; kind is the ranked evidence class",
             "instrument_bar_columns": INSTRUMENT_BAR_COLUMNS,
+            "instrument_bar_semantics": (
+                "coarse stem roles only; dominant_source and confidence are derived from "
+                "vocal/drum/bass/other activity; concrete instrument taxonomy is excluded"
+            ),
             "bar_density_hint_columns": BAR_DENSITY_HINT_COLUMNS,
             "bar_structure_columns": BAR_STRUCTURE_COLUMNS,
             "phrase_columns": PHRASE_COLUMNS,
@@ -424,15 +431,33 @@ def _compact_bar_structures(analysis: SongAnalysis) -> list[list[Any]]:
 
 def _compact_bar_instrument(bar: BarFeature) -> list[Any]:
     instrument = bar.instrument
+    dominant_source, confidence = _stem_role_summary(instrument)
     return [
         _compact_number(instrument.vocal_activity),
         _compact_number(instrument.vocal_presence_ratio),
         _compact_number(instrument.drum_activity),
         _compact_number(instrument.bass_activity),
         _compact_number(instrument.other_activity),
-        instrument.dominant_source,
-        _compact_number(instrument.confidence),
+        dominant_source,
+        _compact_number(confidence),
     ]
+
+
+def _stem_role_summary(instrument: InstrumentBarFeature) -> tuple[str | None, float]:
+    activities = {
+        "vocals": instrument.vocal_activity,
+        "drums": instrument.drum_activity,
+        "bass": instrument.bass_activity,
+        "other": instrument.other_activity,
+    }
+    ranked = sorted(activities.items(), key=lambda item: (-item[1], item[0]))
+    strongest_source, strongest = ranked[0]
+    runner_up = ranked[1][1]
+    margin = strongest - runner_up
+    if strongest < STEM_ROLE_ACTIVITY_MINIMUM or margin < STEM_ROLE_MARGIN_MINIMUM:
+        return None, 0.0
+    confidence = min(1.0, strongest * 0.7 + margin * 0.6)
+    return strongest_source, confidence
 
 
 def _compact_phrase_plan(analysis: SongAnalysis) -> list[list[Any]]:

@@ -474,6 +474,8 @@ def test_build_chart_generation_payload_includes_compact_instrument_semantics():
     assert payload["instrument_analysis_status"] == "complete"
     assert payload["bar_instruments"][0][columns.index("vocal_activity")] == 0.7
     assert payload["bar_instruments"][0][columns.index("dominant_source")] == "drums"
+    assert payload["bar_instruments"][0][columns.index("confidence")] == 0.75
+    assert "coarse stem roles only" in payload["legend"]["instrument_bar_semantics"]
     assert "dominant_instrument" not in columns
     assert "active_instruments" not in columns
     assert "guitar" not in str(payload["bar_instruments"])
@@ -484,6 +486,87 @@ def test_build_chart_generation_payload_includes_compact_instrument_semantics():
     assert audio_channels[audio_columns.index("drum_onset")][4] == 900
     assert audio_channels[audio_columns.index("bass_onset")][4] == 600
     assert audio_channels[audio_columns.index("accompaniment_onset")][4] == 400
+
+
+def test_build_chart_generation_payload_is_independent_of_concrete_instrument_taxonomy():
+    analysis = _analysis().model_copy(
+        update={
+            "instrument_feature_version": "instrument-v1",
+            "instrument_analysis_status": "complete",
+        }
+    )
+    role_values = {
+        "vocal_activity": 0.2,
+        "vocal_presence_ratio": 0.3,
+        "drum_activity": 0.8,
+        "bass_activity": 0.4,
+        "other_activity": 0.5,
+    }
+    role_only_bar = analysis.bars[0].model_copy(
+        update={
+            "instrument": InstrumentBarFeature(
+                **role_values,
+                dominant_source=None,
+                confidence=0.0,
+            )
+        }
+    )
+    taxonomy_bar = analysis.bars[0].model_copy(
+        update={
+            "instrument": InstrumentBarFeature(
+                **role_values,
+                guitar=0.95,
+                strings=0.8,
+                synth=0.7,
+                dominant_source="drums",
+                dominant_instrument="guitar",
+                confidence=0.99,
+            )
+        }
+    )
+
+    role_only_payload = build_chart_generation_payload(
+        analysis.model_copy(update={"bars": [role_only_bar]}),
+        "Oni",
+        10,
+        "technical",
+    )
+    taxonomy_payload = build_chart_generation_payload(
+        analysis.model_copy(update={"bars": [taxonomy_bar]}),
+        "Oni",
+        10,
+        "technical",
+    )
+
+    assert taxonomy_payload == role_only_payload
+
+
+def test_build_chart_generation_payload_rejects_ambiguous_stored_dominant_source():
+    analysis = _analysis()
+    bar = analysis.bars[0].model_copy(
+        update={
+            "instrument": InstrumentBarFeature(
+                drum_activity=0.5,
+                other_activity=0.46,
+                guitar=0.95,
+                dominant_source="drums",
+                dominant_instrument="guitar",
+                confidence=0.99,
+            )
+        }
+    )
+
+    payload = build_chart_generation_payload(
+        analysis.model_copy(update={"bars": [bar]}),
+        "Oni",
+        10,
+        "technical",
+    )
+
+    columns = payload["legend"]["instrument_bar_columns"]
+    instrument_row = payload["bar_instruments"][0]
+    assert instrument_row[columns.index("dominant_source")] is None
+    assert instrument_row[columns.index("confidence")] == 0.0
 
 
 def test_build_chart_generation_payload_can_include_static_reference_prompt():
