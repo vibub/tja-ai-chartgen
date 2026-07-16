@@ -4,6 +4,7 @@ from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bar
 from tja_ai_chartgen.tja.model import (
     BarFeature,
     ChartBar,
+    GridFeature,
     InstrumentBarFeature,
     InstrumentGridFeature,
     ResolutionDecision,
@@ -96,6 +97,9 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.accent_candidate_count == 0
     assert report.accent_hit_count == 0
     assert report.accent_coverage_rate == 1.0
+    assert report.note_onset_aligned_count == 0
+    assert report.note_onset_evaluated_count == 0
+    assert report.note_onset_alignment == 1.0
 
 
 def test_quality_report_is_independent_of_notes_resolution():
@@ -131,12 +135,65 @@ def test_quality_report_is_independent_of_notes_resolution():
             report.accent_candidate_count,
             report.accent_hit_count,
             report.accent_coverage_rate,
+            report.note_onset_aligned_count,
+            report.note_onset_evaluated_count,
+            report.note_onset_alignment,
             report.don_count,
             report.ka_count,
         )
         for report in reports
     ]
     assert comparable[0] == comparable[1] == comparable[2]
+
+
+def test_quality_report_records_note_onset_alignment_with_time_tolerance():
+    feature = _reliable_onset_feature(0, start_time=0.0, end_time=2.0)
+    notes = ["0"] * 48
+    notes[11] = "1"  # 距 grid 12 的可靠瞬态约 42 ms。
+    notes[14] = "2"  # 距 grid 12 的可靠瞬态约 83 ms。
+    notes[24] = "5"  # 特殊音符不属于普通 note 指标。
+
+    report = build_quality_report([_chart_bar(0, "".join(notes))], [feature])
+
+    assert report.note_onset_aligned_count == 1
+    assert report.note_onset_evaluated_count == 2
+    assert report.note_onset_alignment == 0.5
+
+
+def test_quality_report_note_onset_alignment_uses_cross_bar_tolerance():
+    features = [
+        _reliable_onset_feature(0, start_time=0.0, end_time=1.0),
+        _reliable_onset_feature(1, start_time=1.0, end_time=2.0),
+    ]
+    first_notes = ["0"] * 48
+    first_notes[47] = "1"
+
+    report = build_quality_report(
+        [_chart_bar(0, "".join(first_notes)), _chart_bar(1, "0" * 48)],
+        features,
+    )
+
+    assert report.note_onset_aligned_count == 1
+    assert report.note_onset_evaluated_count == 1
+    assert report.note_onset_alignment == 1.0
+
+
+def test_quality_report_note_onset_alignment_requires_reliable_transient():
+    feature = _feature(0, energy=0.8).model_copy(
+        update={
+            "grid_features": [
+                GridFeature(grid=0, beat=0, downbeat=True, activity=0.8),
+            ],
+            "beat_grids": [0, 4, 8, 12],
+            "downbeat_grid": 0,
+        }
+    )
+
+    report = build_quality_report([_chart_bar(0, "1000000000000000")], [feature])
+
+    assert report.note_onset_aligned_count == 0
+    assert report.note_onset_evaluated_count == 1
+    assert report.note_onset_alignment == 0.0
 
 
 def test_pattern_counts_normalizes_equivalent_resolutions():
@@ -534,6 +591,40 @@ def _feature(
         transition_role=transition_role,
         section_id=section_id,
         fill_candidate=fill_candidate,
+    )
+
+
+def _reliable_onset_feature(
+    index: int,
+    *,
+    start_time: float,
+    end_time: float,
+) -> BarFeature:
+    onset_grids = [0, 12, 24, 36]
+    return BarFeature(
+        index=index,
+        start_time=start_time,
+        end_time=end_time,
+        energy=0.9,
+        time_signature="4/4",
+        grids_per_bar=48,
+        onset_grids=onset_grids,
+        activity_grids=list(range(48)),
+        grid_features=[
+            GridFeature(
+                grid=grid,
+                onset=True,
+                accent=grid in {0, 24},
+                beat=grid // 12,
+                downbeat=grid == 0,
+                strength=1.0,
+                activity=0.9,
+            )
+            for grid in onset_grids
+        ],
+        beat_grids=onset_grids,
+        downbeat_grid=0,
+        onset_count=len(onset_grids),
     )
 
 

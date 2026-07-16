@@ -1097,7 +1097,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
-| 12.1 note/onset 对齐指标 | 未开始 | 尚未实施统一指标。 | 尚未执行。 |
+| 12.1 note/onset 对齐指标 | 已完成 | `QualityReport` 已基于完整 canonical salience 统计普通 note 附近可靠瞬态的命中数、评估数和 `note_onset_alignment`；固定使用 50 ms 时间容差，排除特殊音符并支持跨小节匹配。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，25 passed。 |
 | 12.2 强 onset 与 downbeat 响应 | 部分完成 | 已有 accent、drum 和 bass 对齐指标；尚未统一到 salience。 | 现有 QualityReport 测试可复用。 |
 | 12.3 无证据 note 指标 | 未开始 | 尚未实施。 | 尚未执行。 |
 | 12.4 fill burst 对齐 | 部分完成 | 已有 fill candidate precision 和 instrument fill support；尚未加入纯节奏 burst。 | 现有 fill 测试可复用。 |
@@ -1110,6 +1110,8 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 ### `note_onset_alignment`
 
 普通 note `1`–`4` 中，位于可靠 salience/onset 容差范围内的比例。
+
+当前实现由 `QualityReport` 统一计算：先从完整 canonical `rhythmic-salience-v1` 中选择 `strong-transient` / `transient` 可靠候选，再把候选与普通 note 映射到全曲时间轴，以 50 ms 容差判断附近支持。统计结果包含 `note_onset_aligned_count`、`note_onset_evaluated_count` 和 `note_onset_alignment`；`5`、`7`、`8` 不进入分母，匹配允许跨小节边界，同一瞬态可合理支持容差内的多个普通 note。无普通 note 时指标为 1.0；有普通 note 但无可靠瞬态时为 0.0。该指标目前仅写入 report，不参与统一总分或 AI repair。
 
 ### `strong_onset_response`
 
@@ -1187,7 +1189,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 
 ## Phase 6 任务划分列表
 
-- [ ] 12.1 实现 `note_onset_alignment`
+- [x] 12.1 实现 `note_onset_alignment`
 - [ ] 12.2 实现强 onset 与 downbeat 响应指标
 - [ ] 12.3 实现 `unsupported_note_rate` 与静音违规指标
 - [ ] 12.4 实现 fill burst 对齐和节奏量化误差指标

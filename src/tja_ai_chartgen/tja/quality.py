@@ -7,16 +7,22 @@ from pydantic import BaseModel, Field
 
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.meter import get_meter_spec
+from tja_ai_chartgen.features.resolution import output_resolution_for_bar
+from tja_ai_chartgen.features.salience import build_don_ka_salience
 from tja_ai_chartgen.features.salience_candidates import (
     SalienceCandidate,
     build_salience_candidate_bars,
+    is_salience_grid_representable,
     rank_accent_candidates,
+    rank_bar_salience_candidates,
 )
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ResolutionPlan
 
 
 NOTE_STREAM_MAX_GAP_SECONDS = 0.3
+NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS = 0.05
+RELIABLE_TRANSIENT_KINDS = {"strong-transient", "transient"}
 
 
 class QualityReport(BaseModel):
@@ -43,6 +49,9 @@ class QualityReport(BaseModel):
     accent_candidate_count: int = Field(ge=0)
     accent_hit_count: int = Field(ge=0)
     accent_coverage_rate: float = Field(ge=0.0, le=1.0)
+    note_onset_aligned_count: int = Field(default=0, ge=0)
+    note_onset_evaluated_count: int = Field(default=0, ge=0)
+    note_onset_alignment: float = Field(default=1.0, ge=0.0, le=1.0)
     drumroll_count: int = Field(ge=0)
     balloon_count: int = Field(ge=0)
     special_note_count: int = Field(ge=0)
@@ -114,10 +123,37 @@ def build_quality_report(
     paired_notes_per_second = [0.0] * paired_count
     accent_candidate_count = 0
     accent_hit_count = 0
-    salience_candidate_bars = build_salience_candidate_bars(
-        paired_feature_bars,
-        resolution_plan=resolution_plan,
-    )
+    salience_bars = build_don_ka_salience(paired_feature_bars)
+    canonical_candidate_bars = [
+        rank_bar_salience_candidates(
+            feature_bar,
+            salience,
+            output_resolution=feature_bar.grids_per_bar,
+        )
+        for feature_bar, salience in zip(
+            paired_feature_bars,
+            salience_bars,
+            strict=True,
+        )
+    ]
+    salience_candidate_bars = [
+        [
+            candidate
+            for candidate in candidates
+            if is_salience_grid_representable(
+                feature_bar,
+                candidate.grid,
+                output_resolution=output_resolution_for_bar(
+                    feature_bar,
+                    plan=resolution_plan,
+                    position=position,
+                ),
+            )
+        ]
+        for position, (feature_bar, candidates) in enumerate(
+            zip(paired_feature_bars, canonical_candidate_bars, strict=True)
+        )
+    ]
     for position, (chart_bar, feature_bar) in enumerate(
         zip(paired_chart_bars, paired_feature_bars, strict=True)
     ):
@@ -141,6 +177,15 @@ def build_quality_report(
     playable_note_count = sum(timed_hit_counts)
     playable_duration_seconds = sum(timed_durations)
     active_duration_seconds = sum(active_durations)
+    reliable_onset_times = _reliable_transient_times(
+        paired_feature_bars,
+        canonical_candidate_bars,
+    )
+    note_onset_aligned_count = _nearby_time_count(
+        note_times,
+        reliable_onset_times,
+        tolerance_seconds=NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS,
+    )
     bar_notes_per_second = [
         hit_count / duration
         for hit_count, duration in zip(timed_hit_counts, timed_durations, strict=True)
@@ -209,6 +254,11 @@ def build_quality_report(
             accent_hit_count / accent_candidate_count
             if accent_candidate_count
             else 1.0
+        ),
+        note_onset_aligned_count=note_onset_aligned_count,
+        note_onset_evaluated_count=len(note_times),
+        note_onset_alignment=_rounded_metric(
+            note_onset_aligned_count / len(note_times) if note_times else 1.0
         ),
         drumroll_count=drumroll_count,
         balloon_count=balloon_count,
@@ -618,6 +668,55 @@ def _average(values: list[float] | list[int]) -> float:
 
 def _rounded_metric(value: float) -> float:
     return round(float(value), 6)
+
+
+def _reliable_transient_times(
+    feature_bars: list[BarFeature],
+    candidate_bars: list[list[SalienceCandidate]],
+) -> list[float]:
+    """将完整 canonical salience 中的可靠瞬态转换为全曲时间。"""
+    times: list[float] = []
+    for feature_bar, candidates in zip(feature_bars, candidate_bars, strict=True):
+        duration = feature_bar.end_time - feature_bar.start_time
+        if (
+            not isfinite(duration)
+            or duration <= 0
+            or feature_bar.grids_per_bar <= 0
+        ):
+            continue
+        times.extend(
+            feature_bar.start_time
+            + duration * candidate.grid / feature_bar.grids_per_bar
+            for candidate in candidates
+            if candidate.kind in RELIABLE_TRANSIENT_KINDS
+        )
+    return sorted(times)
+
+
+def _nearby_time_count(
+    values: list[float],
+    candidates: list[float],
+    *,
+    tolerance_seconds: float,
+) -> int:
+    """统计有邻近候选的时间点；同一瞬态可支持多个普通 note。"""
+    if not values or not candidates or tolerance_seconds < 0:
+        return 0
+    ordered_values = sorted(values)
+    candidate_index = 0
+    matched = 0
+    for value in ordered_values:
+        while (
+            candidate_index < len(candidates)
+            and candidates[candidate_index] < value - tolerance_seconds
+        ):
+            candidate_index += 1
+        if (
+            candidate_index < len(candidates)
+            and candidates[candidate_index] <= value + tolerance_seconds
+        ):
+            matched += 1
+    return matched
 
 
 def playable_hit_count(notes: str) -> int:
