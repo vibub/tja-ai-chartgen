@@ -3,7 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from tja_ai_chartgen.tja.model import ChartBar, SongAnalysis
-from tja_ai_chartgen.tja.quality import build_quality_report
+from tja_ai_chartgen.tja.quality import (
+    AI_REPAIR_RHYTHM_METRICS,
+    REPORT_ONLY_RHYTHM_METRICS,
+    SUPPORTING_REPORT_ONLY_METRICS,
+    build_quality_metric_policy_metadata,
+    build_quality_report,
+)
 
 AI_RHYTHM_REPAIR_GATE_VERSION = "ai-rhythm-repair-gate-v1"
 AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED = 8
@@ -61,26 +67,30 @@ def selected_rhythm_quality_issues(
 
 
 def build_rhythm_repair_gate_metadata() -> dict[str, Any]:
+    quality_policy = build_quality_metric_policy_metadata()
+    thresholds = {
+        "silent_range_violation": {"maximum_violation_count": 0},
+        "unsupported_note_rate": {
+            "minimum_evaluated_count": AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED,
+            "minimum_unsupported_count": AI_REPAIR_UNSUPPORTED_NOTE_MIN_COUNT,
+            "repair_at_or_above_rate": AI_REPAIR_UNSUPPORTED_NOTE_RATE,
+        },
+        "strong_onset_response": {
+            "minimum_bar_count": AI_REPAIR_STRONG_ONSET_MIN_BARS,
+            "minimum_evaluated_count": AI_REPAIR_STRONG_ONSET_MIN_EVALUATED,
+            "minimum_responded_count": 1,
+        },
+    }
+    selected_metrics = {
+        metric: thresholds[metric] for metric in AI_REPAIR_RHYTHM_METRICS
+    }
     return {
         "version": AI_RHYTHM_REPAIR_GATE_VERSION,
-        "selected_metrics": {
-            "silent_range_violation": {"maximum_violation_count": 0},
-            "unsupported_note_rate": {
-                "minimum_evaluated_count": AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED,
-                "minimum_unsupported_count": AI_REPAIR_UNSUPPORTED_NOTE_MIN_COUNT,
-                "repair_at_or_above_rate": AI_REPAIR_UNSUPPORTED_NOTE_RATE,
-            },
-            "strong_onset_response": {
-                "minimum_bar_count": AI_REPAIR_STRONG_ONSET_MIN_BARS,
-                "minimum_evaluated_count": AI_REPAIR_STRONG_ONSET_MIN_EVALUATED,
-                "minimum_responded_count": 1,
-            },
-        },
+        "quality_metric_policy_version": quality_policy["version"],
+        "primary_metrics": quality_policy["primary_metrics"],
+        "selected_metrics": selected_metrics,
         "report_only_metrics": [
-            "note_onset_alignment",
-            "downbeat_response",
-            "fill_burst_alignment",
-            "rhythmic_quantization_error",
-            "salience_coverage_by_density",
+            *REPORT_ONLY_RHYTHM_METRICS,
+            *SUPPORTING_REPORT_ONLY_METRICS,
         ],
     }

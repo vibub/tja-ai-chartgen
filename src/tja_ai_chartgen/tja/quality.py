@@ -36,6 +36,35 @@ DOWNBEAT_RESPONSE_TOLERANCE_SECONDS = 0.07
 RELIABLE_TRANSIENT_KINDS = {"strong-transient", "transient"}
 STRONG_TRANSIENT_KINDS = {"strong-transient"}
 DENSITY_HINT_KINDS = ("silent", "rest", "sparse", "normal", "dense", "fill")
+QUALITY_REPORT_METRIC_POLICY_VERSION = "quality-report-rhythm-alignment-v1"
+PRIMARY_RHYTHM_ALIGNMENT_METRICS = (
+    "note_onset_alignment",
+    "strong_onset_response",
+    "unsupported_note_rate",
+    "downbeat_response",
+    "fill_burst_alignment",
+    "rhythmic_quantization_error",
+    "silent_range_violation",
+)
+AI_REPAIR_RHYTHM_METRICS = (
+    "silent_range_violation",
+    "unsupported_note_rate",
+    "strong_onset_response",
+)
+REPORT_ONLY_RHYTHM_METRICS = tuple(
+    metric
+    for metric in PRIMARY_RHYTHM_ALIGNMENT_METRICS
+    if metric not in AI_REPAIR_RHYTHM_METRICS
+)
+SUPPORTING_REPORT_ONLY_METRICS = ("salience_coverage_by_density",)
+INSTRUMENT_DIAGNOSTIC_FIELDS = (
+    "drum_onset_hit_coverage",
+    "bass_downbeat_alignment",
+    "vocal_phrase_response",
+    "instrument_transition_response",
+    "instrument_confident_bar_ratio",
+    "instrument_fill_support",
+)
 
 
 class SalienceDensityCoverage(BaseModel):
@@ -125,6 +154,20 @@ class QualityReport(BaseModel):
         ge=0.0,
         le=1.0,
     )
+
+
+def build_quality_metric_policy_metadata() -> dict[str, object]:
+    """描述 QualityReport 的主指标与兼容诊断边界。"""
+    return {
+        "version": QUALITY_REPORT_METRIC_POLICY_VERSION,
+        "primary_metrics": list(PRIMARY_RHYTHM_ALIGNMENT_METRICS),
+        "ai_repair_metrics": list(AI_REPAIR_RHYTHM_METRICS),
+        "report_only_primary_metrics": list(REPORT_ONLY_RHYTHM_METRICS),
+        "supporting_report_only_metrics": list(SUPPORTING_REPORT_ONLY_METRICS),
+        "instrument_diagnostic_fields": list(INSTRUMENT_DIAGNOSTIC_FIELDS),
+        "instrument_metrics_policy": "diagnostic-only",
+        "has_unified_quality_score": False,
+    }
 
 
 def build_quality_report(

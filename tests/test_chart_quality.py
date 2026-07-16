@@ -10,7 +10,18 @@ from tja_ai_chartgen.tja.model import (
     ResolutionDecision,
     ResolutionPlan,
 )
-from tja_ai_chartgen.tja.quality import build_quality_report, pattern_counts
+from tja_ai_chartgen.tja.quality import (
+    AI_REPAIR_RHYTHM_METRICS,
+    INSTRUMENT_DIAGNOSTIC_FIELDS,
+    PRIMARY_RHYTHM_ALIGNMENT_METRICS,
+    QUALITY_REPORT_METRIC_POLICY_VERSION,
+    REPORT_ONLY_RHYTHM_METRICS,
+    SUPPORTING_REPORT_ONLY_METRICS,
+    QualityReport,
+    build_quality_metric_policy_metadata,
+    build_quality_report,
+    pattern_counts,
+)
 
 
 def test_quality_report_records_density_compliance_and_silent_notes():
@@ -789,6 +800,33 @@ def test_feature_driven_fallback_quality_avoids_silence_and_exact_repetition():
     assert report.silent_bar_note_count == 0
     assert report.repeated_bar_count == 0
     assert report.longest_monochrome_run <= 4
+
+
+def test_quality_report_policy_prioritizes_rhythm_alignment_metrics():
+    policy = build_quality_metric_policy_metadata()
+
+    assert policy["version"] == QUALITY_REPORT_METRIC_POLICY_VERSION
+    assert tuple(policy["primary_metrics"]) == PRIMARY_RHYTHM_ALIGNMENT_METRICS
+    assert tuple(policy["ai_repair_metrics"]) == AI_REPAIR_RHYTHM_METRICS
+    assert tuple(policy["report_only_primary_metrics"]) == REPORT_ONLY_RHYTHM_METRICS
+    assert (
+        tuple(policy["supporting_report_only_metrics"])
+        == SUPPORTING_REPORT_ONLY_METRICS
+    )
+    assert set(AI_REPAIR_RHYTHM_METRICS) < set(PRIMARY_RHYTHM_ALIGNMENT_METRICS)
+    assert not set(INSTRUMENT_DIAGNOSTIC_FIELDS).intersection(
+        PRIMARY_RHYTHM_ALIGNMENT_METRICS
+    )
+    assert not set(INSTRUMENT_DIAGNOSTIC_FIELDS).intersection(AI_REPAIR_RHYTHM_METRICS)
+    assert policy["instrument_metrics_policy"] == "diagnostic-only"
+    assert policy["has_unified_quality_score"] is False
+
+
+def test_quality_report_keeps_instrument_fields_as_compatible_diagnostics():
+    policy = build_quality_metric_policy_metadata()
+
+    assert tuple(policy["instrument_diagnostic_fields"]) == INSTRUMENT_DIAGNOSTIC_FIELDS
+    assert set(INSTRUMENT_DIAGNOSTIC_FIELDS).issubset(QualityReport.model_fields)
 
 
 def test_quality_report_records_instrument_alignment_metrics():

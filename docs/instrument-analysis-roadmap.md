@@ -1248,7 +1248,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 13.1 structure 消费 salience | 已完成 | structure vector 改由统一 hit/accent salience 生成 onset 强度、密度、accent 与 rhythm profile；stem-role onset 经 salience 门控后参与趋势与边界，声部上下文只使用 vocals/drums/bass/other。 | `tests/test_structure.py` 覆盖 stem onset 消费、具体乐器 taxonomy 独立性及原有 structure 回归。 |
 | 13.2 fallback 消费 salience | 已完成 | fallback 每次生成只构建一次完整 salience：普通落点、performance 重音、咚咔配色和特殊音符共享同一批 hit/accent/don-ka/burst 结果，并按 ResolutionPlan 过滤可表达点。 | `tests/test_salience_candidates.py`、`tests/test_fallback_generator.py` 及完整规则生成约束/对齐回归。 |
 | 13.3 AI payload 移除具体乐器依赖 | 已完成 | `compact-v7` 持久化版本化紧凑 salience、可表达候选与可靠 burst；`bar_instruments` 只保留粗粒度 stem-role，dominant source/confidence 从四类 activity 重新派生，不读取具体乐器 taxonomy 或旧混合 confidence。 | `tests/test_ai_client.py`、Phase 5 payload taxonomy 独立性验收及旧 compact-v4 sidecar 兼容测试。 |
-| 13.4 QualityReport 收敛 | 未开始 | 尚未以 rhythm alignment 指标替代具体乐器主线指标。 | 尚未执行。 |
+| 13.4 QualityReport 收敛 | 已完成 | 以 `quality-report-rhythm-alignment-v1` 固定七类 rhythm alignment 主指标；AI repair 只消费三个已校准极端指标，其余主指标与 density coverage 保持 report-only，具体乐器指标仅保留兼容诊断。 | `tests/test_chart_quality.py` 锁定指标策略、instrument 诊断隔离与既有计算；`tests/test_ai_client.py` 锁定 sidecar gate 对统一策略版本和主指标的引用。 |
 | 13.5 旧 instrument-v1 兼容 | 已完成 | 固定旧 `instrument-v1 partial`、`analysis_schema_version=5`、无版本 GenerationConfig、compact-v4 AI input 与旧 AI output 快照；读取时保留历史字段和值，不静默迁移。 | `tests/test_legacy_compatibility.py`、`tests/fixtures/compatibility/`。 |
 | 13.6 UI 与 notice 调整 | 未开始 | 尚未区分 stem-role 与具体乐器分类。 | 尚未执行。 |
 | 13.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
@@ -1334,6 +1334,12 @@ prompt 明确要求 AI 优先消费 reliable salience、只使用短的受支持
 - rhythmic quantization error；
 - silent range violation。
 
+当前由 `quality-report-rhythm-alignment-v1` 集中声明这七类主指标及其用途，避免评测、AI repair 和后续模型升级各自维护不同的“核心质量”定义。`silent_range_violation`、`unsupported_note_rate`、`strong_onset_response` 继续通过 `ai-rhythm-repair-gate-v1` 使用 Phase 6 已校准的宽松样本下限和极端阈值；note/onset、downbeat、fill burst 与 rhythmic quantization 保持 report-only，`salience_coverage_by_density` 作为支持解释不同 course/density 的辅助诊断，不升级为统一门槛。
+
+原有 structure、instrument、resolution、负荷、配色和重复度字段继续保留在 `QualityReport`，保证既有 JSON 消费方与历史对比可用，但不属于 rhythm alignment 主指标。尤其 drum onset、bass/downbeat、vocal phrase、instrument transition/confident bar/fill support 六类 instrument 指标统一标记为 `diagnostic-only`：有旧 `instrument-v1` 或当前 stem-role 证据时仍照常计算，没有证据时保持兼容默认值；它们不进入 AI repair、近期默认模型升级退出条件或任何统一加权总分。
+
+`build_quality_metric_policy_metadata()` 提供单一策略入口，`build_rhythm_repair_gate_metadata()` 会持久化对应策略版本和完整主指标列表，并从同一组常量派生 selected/report-only 范围。策略只描述指标角色，不向现有 `quality_report*.json` 增加必填字段，因此旧报告继续按原结构读取。
+
 ## 13.5 旧格式兼容策略
 
 旧产物采用“原值读取、增量默认、不静默迁移”的长期策略：
@@ -1372,7 +1378,7 @@ prompt 明确要求 AI 优先消费 reliable salience、只使用短的受支持
 - [x] 13.1 让 structure 消费统一 salience 与可选 stem-role
 - [x] 13.2 让 fallback 使用 hit、accent、don/ka 和 burst salience
 - [x] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
-- [ ] 13.4 将 QualityReport 主线收敛到节奏对齐指标
+- [x] 13.4 将 QualityReport 主线收敛到节奏对齐指标
 - [ ] 13.6 调整 CLI/Web 开关、进度、notice 和文档
 - [ ] 13.7 执行 Phase 7 阶段验收
 

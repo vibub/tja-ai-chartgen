@@ -1331,6 +1331,19 @@ def test_generate_chart_bars_with_ai_repairs_internal_silent_range_violation(mon
         "unsupported_note_rate",
         "strong_onset_response",
     }
+    assert (
+        raw["rhythm_repair_gate"]["quality_metric_policy_version"]
+        == "quality-report-rhythm-alignment-v1"
+    )
+    assert set(raw["rhythm_repair_gate"]["primary_metrics"]) == {
+        "note_onset_alignment",
+        "strong_onset_response",
+        "unsupported_note_rate",
+        "downbeat_response",
+        "fill_burst_alignment",
+        "rhythmic_quantization_error",
+        "silent_range_violation",
+    }
 
 
 def test_generate_chart_bars_with_ai_repairs_extreme_unsupported_note_rate(monkeypatch):
