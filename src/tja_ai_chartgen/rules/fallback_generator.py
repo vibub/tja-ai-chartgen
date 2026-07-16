@@ -5,6 +5,7 @@ from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.features.salience import (
     build_burst_salience,
+    build_don_ka_salience,
     project_reliable_burst_span,
 )
 from tja_ai_chartgen.features.salience_candidates import (
@@ -136,11 +137,14 @@ def generate_fallback_chart_bars(
     profile = _course_load_profile(course)
     template = get_style_template(style)
     density_hints = build_density_hints(bars)
+    salience_bars = (
+        build_burst_salience(bars) if special_notes else build_don_ka_salience(bars)
+    )
     salience_candidate_bars = build_salience_candidate_bars(
         bars,
         resolution_plan=resolution_plan,
+        salience_bars=salience_bars,
     )
-    burst_salience_bars = build_burst_salience(bars) if special_notes else []
     chart_bars: list[ChartBar] = []
     previous_was_special = False
     previous_ended_with_big_note = False
@@ -157,7 +161,7 @@ def generate_fallback_chart_bars(
         elif special_notes and not previous_was_special:
             events = _special_bar_events(
                 bar,
-                burst_salience=burst_salience_bars[position],
+                burst_salience=salience_bars[position],
                 density=density,
                 template=template,
                 profile=profile,

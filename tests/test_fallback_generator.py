@@ -3,10 +3,12 @@ import pytest
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
 from tja_ai_chartgen.tja.model import (
     BarFeature,
+    BarRhythmicSalience,
     GridFeature,
     InstrumentBarFeature,
     InstrumentGridFeature,
     ResolutionPlan,
+    RhythmicSaliencePoint,
     SpectralGridFeature,
 )
 from tja_ai_chartgen.tja.quality import build_quality_report, playable_hit_count
@@ -393,6 +395,38 @@ def test_generate_fallback_chart_bars_applies_style_coloring():
 
     assert len({technical, stamina, hybrid, performance}) == 4
     assert set(performance) & {"3", "4"}
+
+
+def test_fallback_reuses_full_salience_for_hit_accent_and_color(monkeypatch):
+    bar = _feature(0, energy=0.8)
+    full_salience = BarRhythmicSalience(
+        confidence=0.9,
+        points=[
+            RhythmicSaliencePoint(
+                grid=4,
+                hit=0.95,
+                accent=0.9,
+                ka_preference=0.95,
+                confidence=0.9,
+                reasons=["onset", "accent:onset-peak"],
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "tja_ai_chartgen.rules.fallback_generator.build_burst_salience",
+        lambda _bars: [full_salience],
+    )
+
+    chart_bar = generate_fallback_chart_bars(
+        [bar],
+        style="performance",
+        density="high",
+        special_notes=True,
+        course="Oni",
+        level=10,
+    )[0]
+
+    assert chart_bar.notes[4] == "4"
 
 
 def test_performance_style_uses_unified_accent_salience_with_easy_budget():

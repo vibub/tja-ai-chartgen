@@ -278,3 +278,38 @@ def test_build_salience_candidate_bars_uses_each_planned_resolution():
     assert all(candidate.grid != 2 for candidate in candidate_bars[0])
     assert any(candidate.grid == 3 for candidate in candidate_bars[0])
     assert any(candidate.grid == 2 for candidate in candidate_bars[1])
+
+
+def test_build_salience_candidate_bars_reuses_precomputed_full_salience():
+    bar = _bar()
+    salience = BarRhythmicSalience(
+        confidence=0.9,
+        burst_score=0.8,
+        burst_confidence=0.9,
+        burst_start_grid=24,
+        burst_end_grid=42,
+        points=[
+            RhythmicSaliencePoint(
+                grid=6,
+                hit=0.9,
+                accent=0.8,
+                ka_preference=0.75,
+                confidence=0.9,
+                reasons=["onset", "accent:onset-peak"],
+            )
+        ],
+    )
+
+    candidate_bars = build_salience_candidate_bars(
+        [bar],
+        salience_bars=[salience],
+    )
+
+    assert [candidate.grid for candidate in candidate_bars[0]] == [6]
+    assert candidate_bars[0][0].point.accent == 0.8
+    assert candidate_bars[0][0].point.ka_preference == 0.75
+
+
+def test_build_salience_candidate_bars_rejects_mismatched_precomputed_count():
+    with pytest.raises(ValueError, match="Salience bar count must match"):
+        build_salience_candidate_bars([_bar()], salience_bars=[])

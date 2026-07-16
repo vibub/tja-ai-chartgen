@@ -1246,7 +1246,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
 | 13.1 structure 消费 salience | 已完成 | structure vector 改由统一 hit/accent salience 生成 onset 强度、密度、accent 与 rhythm profile；stem-role onset 经 salience 门控后参与趋势与边界，声部上下文只使用 vocals/drums/bass/other。 | `tests/test_structure.py` 覆盖 stem onset 消费、具体乐器 taxonomy 独立性及原有 structure 回归。 |
-| 13.2 fallback 消费 salience | 未开始 | 尚未实施统一消费。 | 尚未执行。 |
+| 13.2 fallback 消费 salience | 已完成 | fallback 每次生成只构建一次完整 salience：普通落点、performance 重音、咚咔配色和特殊音符共享同一批 hit/accent/don-ka/burst 结果，并按 ResolutionPlan 过滤可表达点。 | `tests/test_salience_candidates.py`、`tests/test_fallback_generator.py` 及完整规则生成约束/对齐回归。 |
 | 13.3 AI payload 移除具体乐器依赖 | 未开始 | 当前 compact payload 仍含 bar instruments。 | 尚未执行。 |
 | 13.4 QualityReport 收敛 | 未开始 | 尚未以 rhythm alignment 指标替代具体乐器主线指标。 | 尚未执行。 |
 | 13.5 旧 instrument-v1 兼容 | 已完成 | 固定旧 `instrument-v1 partial`、`analysis_schema_version=5`、无版本 GenerationConfig、compact-v4 AI input 与旧 AI output 快照；读取时保留历史字段和值，不静默迁移。 | `tests/test_legacy_compatibility.py`、`tests/fixtures/compatibility/`。 |
@@ -1280,6 +1280,12 @@ fallback 使用：
 - sustained activity 控制连接和留白；
 - burst salience 支持 fill；
 - course、level、style、density 继续决定最终负荷和可玩性。
+
+当前实现先按是否启用特殊音符构建一次 `build_don_ka_salience()` 或完整 `build_burst_salience()`，再把同一批 `BarRhythmicSalience` 传给候选层和特殊音符层，避免普通落点与 burst 重新分析后得到不同上下文。候选层支持接收预计算 salience，并严格验证 bar 数一致；所有候选继续按逐小节 `ResolutionPlan` 过滤不可精确表达的 canonical 点。
+
+普通 hit 优先消费 reliable strong transient、transient、rhythmic skeleton 和 structure highlight；候选不足时，sustained activity、beat/downbeat、spectral 与受限 stem evidence 只在 course 相关弱补点预算内连接可靠节奏，无证据 style 骨架使用更小预算，sparse/breakdown 不允许无证据补点。performance 大音符只来自统一 accent 排序并遵守 course 上限与跨小节相邻约束；最终咚咔以 style 为基础票，只有 don/ka preference 超过明确差距才覆盖，并继续限制跨小节最长单色串。
+
+特殊音符只消费同一完整 salience 上通过 score/confidence 门控且可投影的 burst span；结构 fill、phrase end 或高 energy 只能影响滚奏/气球类型选择，不能替代纯节奏 burst。这样 hit、accent、don/ka 与 burst 共享同一证据解释，而 course、level、style、density、NPS、occupancy 和特殊音符时长仍负责最终负荷与可玩性边界。
 
 ## 13.3 AI compact payload
 
@@ -1358,7 +1364,7 @@ fallback 使用：
 
 - [x] 13.5 先锁定旧 instrument-v1、analysis、config 和 sidecar 兼容行为
 - [x] 13.1 让 structure 消费统一 salience 与可选 stem-role
-- [ ] 13.2 让 fallback 使用 hit、accent、don/ka 和 burst salience
+- [x] 13.2 让 fallback 使用 hit、accent、don/ka 和 burst salience
 - [ ] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
 - [ ] 13.4 将 QualityReport 主线收敛到节奏对齐指标
 - [ ] 13.6 调整 CLI/Web 开关、进度、notice 和文档

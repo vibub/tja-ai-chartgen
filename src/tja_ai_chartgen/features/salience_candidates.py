@@ -52,9 +52,17 @@ def build_salience_candidate_bars(
     bars: list[BarFeature],
     *,
     resolution_plan: ResolutionPlan | None = None,
+    salience_bars: list[BarRhythmicSalience] | None = None,
 ) -> list[list[SalienceCandidate]]:
-    """构建全曲候选；每个小节只保留当前输出 resolution 可精确表达的点。"""
-    salience_bars = build_don_ka_salience(bars)
+    """构建全曲候选；可复用完整 salience，且只保留可精确表达的点。"""
+    resolved_salience = (
+        salience_bars if salience_bars is not None else build_don_ka_salience(bars)
+    )
+    if len(resolved_salience) != len(bars):
+        raise ValueError(
+            "Salience bar count must match analysis bar count: "
+            f"{len(resolved_salience)} != {len(bars)}"
+        )
     return [
         rank_bar_salience_candidates(
             bar,
@@ -66,7 +74,7 @@ def build_salience_candidate_bars(
             ),
         )
         for position, (bar, salience) in enumerate(
-            zip(bars, salience_bars, strict=True)
+            zip(bars, resolved_salience, strict=True)
         )
     ]
 
