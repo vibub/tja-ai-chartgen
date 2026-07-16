@@ -5,6 +5,7 @@ from typing import Any
 
 from tja_ai_chartgen.evaluation.audio_benchmark import match_events
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar
+from tja_ai_chartgen.tja.quality import QualityReport
 
 
 CHART_ALIGNMENT_SCHEMA_VERSION = 1
@@ -12,6 +13,15 @@ CHART_ALIGNMENT_BENCHMARK_VERSION = "chart-alignment-v1"
 DEFAULT_NOTE_ONSET_TOLERANCE_SECONDS = 0.05
 DEFAULT_BEAT_EVIDENCE_TOLERANCE_SECONDS = 0.07
 NOTE_START_CHARACTERS = "1234579"
+REPORT_ONLY_RATIO_FIELDS = {
+    "note_onset_alignment": ("aligned_count", "evaluated_count", 1.0),
+    "strong_onset_response": ("responded_count", "evaluated_count", 1.0),
+    "downbeat_response": ("responded_count", "evaluated_count", 1.0),
+    "unsupported_note_rate": ("unsupported_count", "evaluated_count", 0.0),
+    "silent_range_violation_rate": ("violation_count", "activity_count", 0.0),
+    "fill_burst_alignment": ("aligned_count", "evaluated_count", 1.0),
+}
+DENSITY_HINT_KINDS = ("silent", "rest", "sparse", "normal", "dense", "fill")
 
 
 def build_chart_alignment_metrics(
@@ -22,6 +32,7 @@ def build_chart_alignment_metrics(
     course: str,
     level: int,
     deterministic: bool,
+    quality_report: QualityReport | None = None,
     note_onset_tolerance_seconds: float = DEFAULT_NOTE_ONSET_TOLERANCE_SECONDS,
     beat_evidence_tolerance_seconds: float = DEFAULT_BEAT_EVIDENCE_TOLERANCE_SECONDS,
 ) -> dict[str, Any]:
@@ -49,7 +60,7 @@ def build_chart_alignment_metrics(
     silent_violation_count = sum(_in_any_range(time, silent_ranges) for time in note_times)
     note_count = len(note_times)
 
-    return {
+    result = {
         "audio": str(ground_truth["audio"]),
         "course": course,
         "level": level,
@@ -83,6 +94,9 @@ def build_chart_alignment_metrics(
         "silent_violation_count": silent_violation_count,
         "silent_violation_ratio": _ratio(silent_violation_count, note_count),
     }
+    if quality_report is not None:
+        result["report_only"] = _quality_report_payload(quality_report)
+    return result
 
 
 def build_chart_alignment_benchmark(
@@ -96,6 +110,17 @@ def build_chart_alignment_benchmark(
     note_onset_tolerance_seconds: float = DEFAULT_NOTE_ONSET_TOLERANCE_SECONDS,
     beat_evidence_tolerance_seconds: float = DEFAULT_BEAT_EVIDENCE_TOLERANCE_SECONDS,
 ) -> dict[str, Any]:
+    summary = _aggregate_chart_metrics(chart_metrics)
+    course_summaries = {
+        course: _aggregate_chart_metrics(
+            [item for item in chart_metrics if item["course"] == course]
+        )
+        for course in sorted({str(item["course"]) for item in chart_metrics})
+    }
+    report_only_calibration = _build_report_only_calibration(
+        chart_metrics,
+        ground_truth_summary=summary,
+    )
     return {
         "schema_version": CHART_ALIGNMENT_SCHEMA_VERSION,
         "benchmark_version": CHART_ALIGNMENT_BENCHMARK_VERSION,
@@ -110,15 +135,161 @@ def build_chart_alignment_benchmark(
             "note_onset_tolerance_seconds": note_onset_tolerance_seconds,
             "beat_evidence_tolerance_seconds": beat_evidence_tolerance_seconds,
         },
-        "summary": _aggregate_chart_metrics(chart_metrics),
-        "course_summaries": {
-            course: _aggregate_chart_metrics(
-                [item for item in chart_metrics if item["course"] == course]
-            )
-            for course in sorted({str(item["course"]) for item in chart_metrics})
-        },
+        "summary": summary,
+        "course_summaries": course_summaries,
+        "report_only_calibration": report_only_calibration,
         "charts": chart_metrics,
     }
+
+
+def _quality_report_payload(report: QualityReport) -> dict[str, Any]:
+    return {
+        "note_onset_alignment": {
+            "aligned_count": report.note_onset_aligned_count,
+            "evaluated_count": report.note_onset_evaluated_count,
+            "value": report.note_onset_alignment,
+        },
+        "strong_onset_response": {
+            "responded_count": report.strong_onset_responded_count,
+            "evaluated_count": report.strong_onset_evaluated_count,
+            "value": report.strong_onset_response,
+        },
+        "downbeat_response": {
+            "responded_count": report.downbeat_responded_count,
+            "evaluated_count": report.downbeat_evaluated_count,
+            "value": report.downbeat_response,
+        },
+        "unsupported_note_rate": {
+            "unsupported_count": report.unsupported_note_count,
+            "evaluated_count": report.unsupported_note_evaluated_count,
+            "value": report.unsupported_note_rate,
+        },
+        "silent_range_violation_rate": {
+            "violation_count": report.silent_range_violation_count,
+            "activity_count": report.silent_range_activity_count,
+            "evaluated_bar_count": report.silent_range_evaluated_bar_count,
+            "value": report.silent_range_violation_rate,
+        },
+        "fill_burst_alignment": {
+            "aligned_count": report.fill_burst_aligned_count,
+            "evaluated_count": report.fill_burst_evaluated_count,
+            "value": report.fill_burst_alignment,
+        },
+        "rhythmic_quantization_error": {
+            "evaluated_count": report.rhythmic_quantization_evaluated_count,
+            "value": report.rhythmic_quantization_error,
+        },
+        "salience_coverage_by_density": {
+            kind: coverage.model_dump(mode="json")
+            for kind, coverage in report.salience_coverage_by_density.items()
+        },
+    }
+
+
+def _build_report_only_calibration(
+    items: list[dict[str, Any]],
+    *,
+    ground_truth_summary: dict[str, Any],
+) -> dict[str, Any]:
+    report_items = [item for item in items if "report_only" in item]
+    summary = _aggregate_report_only_metrics(report_items)
+    course_summaries = {
+        course: _aggregate_report_only_metrics(
+            [item for item in report_items if item["course"] == course]
+        )
+        for course in sorted({str(item["course"]) for item in report_items})
+    }
+    comparison = {
+        "note_onset_alignment_delta": _metric_delta(
+            summary["note_onset_alignment"]["value"],
+            ground_truth_summary["note_onset"]["precision"],
+        ),
+        "strong_onset_response_delta": _metric_delta(
+            summary["strong_onset_response"]["value"],
+            ground_truth_summary["strong_onset_response"]["recall"],
+        ),
+        "downbeat_response_delta": _metric_delta(
+            summary["downbeat_response"]["value"],
+            ground_truth_summary["downbeat_response"]["recall"],
+        ),
+        "unsupported_note_rate_delta": _metric_delta(
+            summary["unsupported_note_rate"]["value"],
+            ground_truth_summary["unsupported_note_ratio"],
+        ),
+        "silent_violation_count_delta": (
+            summary["silent_range_violation_rate"]["violation_count"]
+            - ground_truth_summary["silent_violation_count"]
+        ),
+    }
+    return {
+        "chart_count": len(report_items),
+        "summary": summary,
+        "course_summaries": course_summaries,
+        "ground_truth_comparison": comparison,
+    }
+
+
+def _aggregate_report_only_metrics(items: list[dict[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, (numerator_key, denominator_key, empty_value) in REPORT_ONLY_RATIO_FIELDS.items():
+        numerator = sum(int(item["report_only"][key][numerator_key]) for item in items)
+        denominator = sum(int(item["report_only"][key][denominator_key]) for item in items)
+        metric = {
+            numerator_key: numerator,
+            denominator_key: denominator,
+            "value": _ratio(numerator, denominator) if denominator else empty_value,
+        }
+        if key == "silent_range_violation_rate":
+            metric["evaluated_bar_count"] = sum(
+                int(item["report_only"][key]["evaluated_bar_count"]) for item in items
+            )
+        result[key] = metric
+
+    quantization_count = sum(
+        int(item["report_only"]["rhythmic_quantization_error"]["evaluated_count"])
+        for item in items
+    )
+    quantization_total = sum(
+        float(item["report_only"]["rhythmic_quantization_error"]["value"]) * count
+        for item in items
+        if (
+            count := int(
+                item["report_only"]["rhythmic_quantization_error"]["evaluated_count"]
+            )
+        )
+        and item["report_only"]["rhythmic_quantization_error"]["value"] is not None
+    )
+    result["rhythmic_quantization_error"] = {
+        "evaluated_count": quantization_count,
+        "value": round(quantization_total / quantization_count, 6)
+        if quantization_count
+        else None,
+    }
+    result["salience_coverage_by_density"] = {
+        kind: _aggregate_density_coverage(items, kind) for kind in DENSITY_HINT_KINDS
+    }
+    return result
+
+
+def _aggregate_density_coverage(
+    items: list[dict[str, Any]],
+    kind: str,
+) -> dict[str, Any]:
+    entries = [
+        item["report_only"]["salience_coverage_by_density"].get(kind, {})
+        for item in items
+    ]
+    responded = sum(int(entry.get("responded_count", 0)) for entry in entries)
+    evaluated = sum(int(entry.get("evaluated_count", 0)) for entry in entries)
+    return {
+        "responded_count": responded,
+        "evaluated_count": evaluated,
+        "coverage": _ratio(responded, evaluated) if evaluated else 1.0,
+    }
+
+
+def _metric_delta(current: float, reference: float) -> float:
+    return round(float(current) - float(reference), 6)
 
 
 def render_chart_alignment_markdown(benchmark: dict[str, Any]) -> str:
@@ -162,6 +333,72 @@ def render_chart_alignment_markdown(benchmark: dict[str, Any]) -> str:
             f"| Silent-range violations | {summary['silent_violation_count']} |",
             f"| Deterministic charts | {summary['deterministic_chart_count']} / "
             f"{summary['chart_count']} |",
+        ]
+    )
+    calibration = benchmark["report_only_calibration"]
+    report_summary = calibration["summary"]
+    lines.extend(
+        [
+            "",
+            "## Report-only QualityReport calibration",
+            "",
+            "| Metric | Numerator | Denominator | Value |",
+            "| --- | ---: | ---: | ---: |",
+        ]
+    )
+    for label, key, numerator_key, denominator_key in (
+        ("Note/onset alignment", "note_onset_alignment", "aligned_count", "evaluated_count"),
+        ("Strong onset response", "strong_onset_response", "responded_count", "evaluated_count"),
+        ("Downbeat response", "downbeat_response", "responded_count", "evaluated_count"),
+        ("Unsupported note rate", "unsupported_note_rate", "unsupported_count", "evaluated_count"),
+        (
+            "Silent-range violation rate",
+            "silent_range_violation_rate",
+            "violation_count",
+            "activity_count",
+        ),
+        ("Fill burst alignment", "fill_burst_alignment", "aligned_count", "evaluated_count"),
+    ):
+        metric = report_summary[key]
+        lines.append(
+            f"| {label} | {metric[numerator_key]} | {metric[denominator_key]} | "
+            f"{metric['value']:.6f} |"
+        )
+    quantization = report_summary["rhythmic_quantization_error"]
+    quantization_value = (
+        f"{quantization['value']:.6f}" if quantization["value"] is not None else "—"
+    )
+    lines.extend(
+        [
+            f"| Rhythmic quantization error | — | {quantization['evaluated_count']} | "
+            f"{quantization_value} canonical ticks |",
+            "",
+            "### Salience coverage by density hint",
+            "",
+            "| Density | Responded | Evaluated | Coverage |",
+            "| --- | ---: | ---: | ---: |",
+        ]
+    )
+    for kind, metric in report_summary["salience_coverage_by_density"].items():
+        lines.append(
+            f"| {kind} | {metric['responded_count']} | {metric['evaluated_count']} | "
+            f"{metric['coverage']:.6f} |"
+        )
+    comparison = calibration["ground_truth_comparison"]
+    lines.extend(
+        [
+            "",
+            "### Ground-truth comparison",
+            "",
+            "| Paired diagnostic | QualityReport − fixture ground truth |",
+            "| --- | ---: |",
+            f"| Note/onset | {comparison['note_onset_alignment_delta']:+.6f} |",
+            f"| Strong onset response | {comparison['strong_onset_response_delta']:+.6f} |",
+            f"| Downbeat response | {comparison['downbeat_response_delta']:+.6f} |",
+            f"| Unsupported note rate | {comparison['unsupported_note_rate_delta']:+.6f} |",
+            f"| Silent violation count | {comparison['silent_violation_count_delta']:+d} |",
+            "",
+            "QualityReport 使用分析得到的 canonical salience，fixture 指标使用独立 ground truth；差值仅用于校准方向，不作为通过门槛。",
             "",
             "## Per-course metrics",
             "",
@@ -179,6 +416,31 @@ def render_chart_alignment_markdown(benchmark: dict[str, Any]) -> str:
             f"{metrics['unsupported_note_ratio']:.6f} | "
             f"{metrics['silent_violation_count']} | "
             f"{metrics['deterministic_rate']:.6f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "### Report-only metrics by course",
+            "",
+            "| Course | Note/onset | Strong | Downbeat | Unsupported | Fill | Quantization |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for course, metrics in calibration["course_summaries"].items():
+        quantization_value = metrics["rhythmic_quantization_error"]["value"]
+        lines.append(
+            f"| {course} | {metrics['note_onset_alignment']['value']:.6f} | "
+            f"{metrics['strong_onset_response']['value']:.6f} | "
+            f"{metrics['downbeat_response']['value']:.6f} | "
+            f"{metrics['unsupported_note_rate']['value']:.6f} | "
+            f"{metrics['fill_burst_alignment']['value']:.6f} | "
+            f"{quantization_value:.6f} |"
+            if quantization_value is not None
+            else f"| {course} | {metrics['note_onset_alignment']['value']:.6f} | "
+            f"{metrics['strong_onset_response']['value']:.6f} | "
+            f"{metrics['downbeat_response']['value']:.6f} | "
+            f"{metrics['unsupported_note_rate']['value']:.6f} | "
+            f"{metrics['fill_burst_alignment']['value']:.6f} | — |"
         )
     lines.extend(
         [

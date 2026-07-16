@@ -17,6 +17,7 @@ from tja_ai_chartgen.features.bars import build_bar_features
 from tja_ai_chartgen.features.resolution import build_resolution_plan
 from tja_ai_chartgen.features.structure import analyze_song_structure
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
+from tja_ai_chartgen.tja.quality import build_quality_report
 from tja_ai_chartgen.utils.paths import write_json
 
 
@@ -85,6 +86,11 @@ def benchmark_fixture_directory(
                 course=course,
                 level=level,
                 deterministic=first == second,
+                quality_report=build_quality_report(
+                    first,
+                    feature_bars,
+                    resolution_plan,
+                ),
                 note_onset_tolerance_seconds=note_onset_tolerance_seconds,
                 beat_evidence_tolerance_seconds=beat_evidence_tolerance_seconds,
             )

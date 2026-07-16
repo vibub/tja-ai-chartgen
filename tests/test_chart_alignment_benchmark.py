@@ -10,6 +10,7 @@ from tja_ai_chartgen.evaluation.chart_alignment import (
     render_chart_alignment_markdown,
 )
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ResolutionPlan
+from tja_ai_chartgen.tja.quality import build_quality_report
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "audio"
@@ -54,13 +55,16 @@ def _feature_bar() -> BarFeature:
 
 
 def _chart_metrics(*, course: str = "Oni", deterministic: bool = True):
+    feature_bars = [_feature_bar()]
+    chart_bars = [ChartBar(index=0, notes="1111")]
     return build_chart_alignment_metrics(
         _ground_truth(),
-        [_feature_bar()],
-        [ChartBar(index=0, notes="1111")],
+        feature_bars,
+        chart_bars,
         course=course,
         level=10,
         deterministic=deterministic,
+        quality_report=build_quality_report(chart_bars, feature_bars),
     )
 
 
@@ -119,6 +123,19 @@ def test_build_chart_alignment_benchmark_aggregates_courses_and_determinism():
     assert benchmark["summary"]["unsupported_note_ratio"] == 0.25
     assert benchmark["summary"]["deterministic_rate"] == 0.5
     assert set(benchmark["course_summaries"]) == {"Easy", "Oni"}
+    calibration = benchmark["report_only_calibration"]
+    assert calibration["chart_count"] == 2
+    assert set(calibration["course_summaries"]) == {"Easy", "Oni"}
+    assert calibration["summary"]["note_onset_alignment"]["evaluated_count"] == 8
+    assert 0.0 <= calibration["summary"]["note_onset_alignment"]["value"] <= 1.0
+    assert set(calibration["summary"]["salience_coverage_by_density"]) == {
+        "silent",
+        "rest",
+        "sparse",
+        "normal",
+        "dense",
+        "fill",
+    }
 
 
 def test_render_chart_alignment_markdown_includes_summary_and_chart_rows():
@@ -138,6 +155,10 @@ def test_render_chart_alignment_markdown_includes_summary_and_chart_rows():
     assert "## Per-course metrics" in report
     assert "`sample.wav`" in report
     assert "Unsupported-note ratio" in report
+    assert "## Report-only QualityReport calibration" in report
+    assert "### Salience coverage by density hint" in report
+    assert "### Ground-truth comparison" in report
+    assert "### Report-only metrics by course" in report
 
 
 def test_benchmark_fixture_directory_generates_all_course_profiles(tmp_path, monkeypatch):
@@ -206,6 +227,8 @@ def test_benchmark_fixture_directory_generates_all_course_profiles(tmp_path, mon
         ("Oni", 10),
     ]
     assert all(item["deterministic"] for item in benchmark["charts"])
+    assert benchmark["report_only_calibration"]["chart_count"] == 4
+    assert all("report_only" in item for item in benchmark["charts"])
 
 
 def test_benchmark_main_writes_json_and_markdown_reports(tmp_path, monkeypatch):
@@ -277,11 +300,36 @@ def test_committed_chart_alignment_baseline_covers_all_fixtures_and_courses():
         assert 0.0 <= metric["f1"] <= 1.0
     assert 0.0 <= baseline["summary"]["unsupported_note_ratio"] <= 1.0
     assert baseline["summary"]["deterministic_rate"] == 1.0
+    calibration = baseline["report_only_calibration"]
+    assert calibration["chart_count"] == 68
+    assert all("report_only" in item for item in baseline["charts"])
+    assert set(calibration["course_summaries"]) == {"Easy", "Normal", "Hard", "Oni"}
+    for key in (
+        "note_onset_alignment",
+        "strong_onset_response",
+        "downbeat_response",
+        "unsupported_note_rate",
+        "silent_range_violation_rate",
+        "fill_burst_alignment",
+    ):
+        assert 0.0 <= calibration["summary"][key]["value"] <= 1.0
+    assert calibration["summary"]["rhythmic_quantization_error"]["value"] is not None
+    assert set(calibration["summary"]["salience_coverage_by_density"]) == {
+        "silent",
+        "rest",
+        "sparse",
+        "normal",
+        "dense",
+        "fill",
+    }
 
     report = BASELINE_REPORT_PATH.read_text(encoding="utf-8")
     assert "# Synthetic chart alignment benchmark" in report
     assert "chart-alignment-v1" in report
     assert "Unsupported-note ratio" in report
+    assert "## Report-only QualityReport calibration" in report
+    assert "### Salience coverage by density hint" in report
+    assert "### Ground-truth comparison" in report
     assert all(
         f"`{path.name.removesuffix('.events.json')}.wav`" in report
         for path in event_files

@@ -35,6 +35,13 @@ NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS = 0.05
 DOWNBEAT_RESPONSE_TOLERANCE_SECONDS = 0.07
 RELIABLE_TRANSIENT_KINDS = {"strong-transient", "transient"}
 STRONG_TRANSIENT_KINDS = {"strong-transient"}
+DENSITY_HINT_KINDS = ("silent", "rest", "sparse", "normal", "dense", "fill")
+
+
+class SalienceDensityCoverage(BaseModel):
+    responded_count: int = Field(default=0, ge=0)
+    evaluated_count: int = Field(default=0, ge=0)
+    coverage: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class QualityReport(BaseModel):
@@ -74,6 +81,7 @@ class QualityReport(BaseModel):
     unsupported_note_evaluated_count: int = Field(default=0, ge=0)
     unsupported_note_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     silent_range_evaluated_bar_count: int = Field(default=0, ge=0)
+    silent_range_activity_count: int = Field(default=0, ge=0)
     silent_range_violation_count: int = Field(default=0, ge=0)
     silent_range_violation_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     fill_burst_aligned_count: int = Field(default=0, ge=0)
@@ -81,6 +89,9 @@ class QualityReport(BaseModel):
     fill_burst_alignment: float = Field(default=1.0, ge=0.0, le=1.0)
     rhythmic_quantization_evaluated_count: int = Field(default=0, ge=0)
     rhythmic_quantization_error: float | None = Field(default=None, ge=0.0)
+    salience_coverage_by_density: dict[str, SalienceDensityCoverage] = Field(
+        default_factory=dict
+    )
     drumroll_count: int = Field(ge=0)
     balloon_count: int = Field(ge=0)
     special_note_count: int = Field(ge=0)
@@ -282,6 +293,12 @@ def build_quality_report(
         paired_feature_bars,
         canonical_candidate_bars,
     )
+    salience_coverage_by_density = _salience_coverage_by_density(
+        paired_feature_bars,
+        canonical_candidate_bars,
+        density_hints,
+        note_times=note_times,
+    )
     bar_notes_per_second = [
         hit_count / duration
         for hit_count, duration in zip(timed_hit_counts, timed_durations, strict=True)
@@ -376,6 +393,7 @@ def build_quality_report(
             else 0.0
         ),
         silent_range_evaluated_bar_count=len(silent_range_indexes),
+        silent_range_activity_count=paired_activity_count,
         silent_range_violation_count=silent_range_violation_count,
         silent_range_violation_rate=_rounded_metric(
             silent_range_violation_count / paired_activity_count
@@ -391,6 +409,7 @@ def build_quality_report(
         ),
         rhythmic_quantization_evaluated_count=rhythmic_quantization_evaluated_count,
         rhythmic_quantization_error=rhythmic_quantization_error,
+        salience_coverage_by_density=salience_coverage_by_density,
         drumroll_count=drumroll_count,
         balloon_count=balloon_count,
         special_note_count=special_note_count,
@@ -828,6 +847,54 @@ def _candidate_times(
             and (not require_reliable or candidate.reliable)
         )
     return sorted(times)
+
+
+def _salience_coverage_by_density(
+    feature_bars: list[BarFeature],
+    candidate_bars: list[list[SalienceCandidate]],
+    density_hints: list[BarDensityHint],
+    *,
+    note_times: list[float],
+) -> dict[str, SalienceDensityCoverage]:
+    """按 density hint 汇总可靠 salience 被普通 note 响应的比例。"""
+    reference_times = {kind: [] for kind in DENSITY_HINT_KINDS}
+    for feature_bar, candidates, hint in zip(
+        feature_bars,
+        candidate_bars,
+        density_hints,
+        strict=True,
+    ):
+        duration = feature_bar.end_time - feature_bar.start_time
+        if (
+            hint.kind not in reference_times
+            or not isfinite(duration)
+            or duration <= 0
+            or feature_bar.grids_per_bar <= 0
+        ):
+            continue
+        reference_times[hint.kind].extend(
+            feature_bar.start_time
+            + duration * candidate.grid / feature_bar.grids_per_bar
+            for candidate in candidates
+            if candidate.reliable
+        )
+
+    result: dict[str, SalienceDensityCoverage] = {}
+    for kind in DENSITY_HINT_KINDS:
+        references = sorted(reference_times[kind])
+        responded = _matched_reference_count(
+            references,
+            note_times,
+            tolerance_seconds=NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS,
+        )
+        result[kind] = SalienceDensityCoverage(
+            responded_count=responded,
+            evaluated_count=len(references),
+            coverage=_rounded_metric(responded / len(references))
+            if references
+            else 1.0,
+        )
+    return result
 
 
 def _fill_burst_alignment_counts(

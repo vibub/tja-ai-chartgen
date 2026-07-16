@@ -110,6 +110,7 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.unsupported_note_evaluated_count == 0
     assert report.unsupported_note_rate == 0.0
     assert report.silent_range_evaluated_bar_count == 0
+    assert report.silent_range_activity_count == 0
     assert report.silent_range_violation_count == 0
     assert report.silent_range_violation_rate == 0.0
     assert report.fill_burst_aligned_count == 0
@@ -117,6 +118,39 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.fill_burst_alignment == 1.0
     assert report.rhythmic_quantization_evaluated_count == 0
     assert report.rhythmic_quantization_error is None
+    assert set(report.salience_coverage_by_density) == {
+        "silent",
+        "rest",
+        "sparse",
+        "normal",
+        "dense",
+        "fill",
+    }
+    assert all(
+        metric.responded_count == 0
+        and metric.evaluated_count == 0
+        and metric.coverage == 1.0
+        for metric in report.salience_coverage_by_density.values()
+    )
+
+
+def test_quality_report_groups_salience_coverage_by_density_hint():
+    feature = _reliable_onset_feature(0, start_time=0.0, end_time=2.0)
+    notes = ["0"] * 48
+    for grid in (0, 12, 24, 36):
+        notes[grid] = "1"
+
+    report = build_quality_report([_chart_bar(0, "".join(notes))], [feature])
+
+    dense = report.salience_coverage_by_density["dense"]
+    assert dense.evaluated_count >= 4
+    assert dense.responded_count == dense.evaluated_count
+    assert dense.coverage == 1.0
+    assert all(
+        metric.evaluated_count == 0
+        for kind, metric in report.salience_coverage_by_density.items()
+        if kind != "dense"
+    )
 
 
 def test_quality_report_is_independent_of_notes_resolution():
@@ -165,6 +199,7 @@ def test_quality_report_is_independent_of_notes_resolution():
             report.unsupported_note_evaluated_count,
             report.unsupported_note_rate,
             report.silent_range_evaluated_bar_count,
+            report.silent_range_activity_count,
             report.silent_range_violation_count,
             report.silent_range_violation_rate,
             report.fill_burst_aligned_count,
@@ -172,6 +207,7 @@ def test_quality_report_is_independent_of_notes_resolution():
             report.fill_burst_alignment,
             report.rhythmic_quantization_evaluated_count,
             report.rhythmic_quantization_error,
+            report.salience_coverage_by_density,
             report.don_count,
             report.ka_count,
         )

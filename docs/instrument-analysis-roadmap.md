@@ -1101,7 +1101,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 12.2 强 onset 与 downbeat 响应 | 已完成 | `QualityReport` 已从完整 canonical salience 统一统计 `strong-transient` 与可靠 downbeat 的响应数、评估数和比例；强瞬态允许普通 note 或有效持续音符区间响应，downbeat 只允许普通 note，并分别使用 50 ms / 70 ms 容差。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，29 passed。 |
 | 12.3 无证据 note 指标 | 已完成 | `QualityReport` 已统计普通 note 的直接节奏证据与受限连接支持，输出无支持数、评估数和比例；静音违规扩展到首尾静音及曲中确定静音小节，并输出评估小节数、违规数和比例。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，32 passed。 |
 | 12.4 fill burst 对齐 | 已完成 | `QualityReport` 已统一统计特殊音符区间与普通 fill 小节对可靠纯节奏 burst/结构 fill candidate 的对齐数、评估数和比例，并计算普通 note 对最近可靠 salience 的平均 canonical tick 量化误差。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，36 passed。 |
-| 12.5 report-only 校准 | 未开始 | 尚未实施新指标对比。 | 尚未执行。 |
+| 12.5 report-only 校准 | 已完成 | `chart-alignment-v1` 已在全部 17 个 fixture、68 张四难度规则谱面上同时汇总 QualityReport report-only 指标、按 course 与 density hint 分组的 salience coverage，并与独立 fixture ground truth 做方向性对比；结果确认指标存在显著 course/density 差异，暂不设置统一阻断阈值。 | 2026-07-16：`python tools/benchmark_chart_alignment.py`；`pytest tests/test_chart_quality.py tests/test_chart_alignment_benchmark.py -q`，44 passed。 |
 | 12.6 AI repair 门槛评审 | 未开始 | 尚未决定任何新阻断阈值。 | 尚未执行。 |
 | 12.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -1159,6 +1159,12 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 
 按 silent/rest/sparse/normal/dense/fill 分组统计谱面对可靠 salience 的响应，避免高难度与低难度使用同一目标。
 
+当前实现由 `QualityReport` 把每个可靠 canonical salience 按所在小节的 density hint 分组，再使用 50 ms 容差与全曲普通 note `1`–`4` 做确定性一对一响应匹配；每组输出 `responded_count`、`evaluated_count` 和 `coverage`，无可靠 salience 时 coverage 为 1.0。`chart-alignment-v1` 会跨全部 fixture 聚合这些计数，并分别输出全局与 Easy/Normal/Hard/Oni 汇总。
+
+首轮 17 fixture / 68 chart 校准结果为：整体 note/onset alignment 0.924734、strong onset response 0.828799、downbeat response 0.924242、unsupported note rate 0、silent-range violation rate 0、fill burst alignment 0.068966、平均 rhythmic quantization error 0.264687 canonical tick。按 density hint 的 salience coverage 为 sparse 1.0、normal 0.825323、dense 0.544286、fill 0.568182；silent/rest 没有可靠 salience 样本。按 course 观察到 Easy→Oni 的 strong/downbeat/dense/fill coverage 总体上升，而 note/onset alignment 下降、量化误差上升，说明指标必须按 course 与 density 解释，不能使用统一阈值。
+
+与独立 fixture ground truth 的配对差值只用于暴露分析 salience 与人工事件定义的系统差异，不作为通过条件。当前 unsupported note rate 为 0，表明其“beat/activity/短连接任一支持”的定义对规则谱面过宽；fill burst alignment 仅 0.068966，表明普通密度突增与可靠纯节奏 burst 的定义仍不等价。因此 12.5 不选择任何新指标进入 AI repair，留待 12.6 结合真实歌曲试听评审。
+
 ## 12.2 指标边界
 
 - 只统计普通 note 时明确排除 `5`、`7`、`8`；
@@ -1205,7 +1211,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - [x] 12.2 实现强 onset 与 downbeat 响应指标
 - [x] 12.3 实现 `unsupported_note_rate` 与静音违规指标
 - [x] 12.4 实现 fill burst 对齐和节奏量化误差指标
-- [ ] 12.5 使用全部 fixture 校准 report-only 指标
+- [x] 12.5 使用全部 fixture 校准 report-only 指标
 - [ ] 12.6 评审并选择少量指标进入 AI repair
 - [ ] 12.7 执行 Phase 6 阶段验收
 

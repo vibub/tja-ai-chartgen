@@ -263,8 +263,12 @@ level 在各 course 的范围内线性插值。最终 hit 数还会受到小节�
 - `instrument_transition_response`：高置信主导声部/乐器切换处谱面节奏 pattern 发生响应的比例。
 - `instrument_confident_bar_ratio`：存在阶段 C 活动证据的小节中，置信度不低于 0.4 的比例。
 - `instrument_fill_support`：有鼓组或伴奏爆发证据的 fill candidate 中，后半小节出现普通或特殊活动的比例。
+- `note_onset_alignment`、`strong_onset_response`、`downbeat_response`：普通 note 或合法持续区间对 canonical salience 瞬态与可靠 downbeat 的时间响应。
+- `unsupported_note_rate`、`silent_range_violation_rate`：普通 note 的节奏证据缺失比例，以及首尾/曲中确定静音范围内的活动起点比例。
+- `fill_burst_alignment`、`rhythmic_quantization_error`：实际 fill/特殊音符对可靠 burst 的响应，以及普通 note 到最近可靠 salience 的平均 canonical tick 误差。
+- `salience_coverage_by_density`：按 silent/rest/sparse/normal/dense/fill 汇总可靠 salience 的普通 note 响应数、评估数和 coverage。
 
-这些指标当前只写入报告，不参与 AI repair、CI 统一总分或阻断输出。阈值仍需结合更多真实歌曲和人工游玩校准。
+这些指标当前只写入报告，不参与 AI repair、CI 统一总分或阻断输出。`chart-alignment-v1` 会在全部 17 个 fixture、68 张四难度规则谱面上聚合 report-only 指标，按 course 与 density hint 分组，并与独立 fixture ground truth 做方向性对比；差值不作为通过门槛。首轮结果已确认 course/density 存在系统差异，阈值仍需结合更多真实歌曲和人工游玩校准。
 
 ## 可重复比较流程
 
