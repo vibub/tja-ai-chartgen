@@ -14,18 +14,20 @@ from litellm import (
 )
 
 from tja_ai_chartgen.ai.client import (
+    AiOutputRepairError,
+    _compact_repair_issues,
+    AiProviderError,
+    build_ai_salience_validation_report,
+    generate_chart_bars_with_ai,
+    sanitize_ai_bars,
+)
+from tja_ai_chartgen.ai.rhythm_repair import (
     AI_REPAIR_STRONG_ONSET_MIN_BARS,
     AI_REPAIR_STRONG_ONSET_MIN_EVALUATED,
     AI_REPAIR_UNSUPPORTED_NOTE_MIN_COUNT,
     AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED,
     AI_REPAIR_UNSUPPORTED_NOTE_RATE,
-    AiOutputRepairError,
-    _compact_repair_issues,
-    AiProviderError,
-    _selected_rhythm_quality_issues,
-    build_ai_salience_validation_report,
-    generate_chart_bars_with_ai,
-    sanitize_ai_bars,
+    selected_rhythm_quality_issues as _selected_rhythm_quality_issues,
 )
 from tja_ai_chartgen.ai.prompts import build_chart_generation_payload, build_chart_generation_prompt
 from tja_ai_chartgen.cancellation import GenerationCancelledError

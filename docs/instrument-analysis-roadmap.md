@@ -1103,7 +1103,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 12.4 fill burst 对齐 | 已完成 | `QualityReport` 已统一统计特殊音符区间与普通 fill 小节对可靠纯节奏 burst/结构 fill candidate 的对齐数、评估数和比例，并计算普通 note 对最近可靠 salience 的平均 canonical tick 量化误差。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，36 passed。 |
 | 12.5 report-only 校准 | 已完成 | `chart-alignment-v1` 已在全部 17 个 fixture、68 张四难度规则谱面上同时汇总 QualityReport report-only 指标、按 course 与 density hint 分组的 salience coverage，并与独立 fixture ground truth 做方向性对比；结果确认指标存在显著 course/density 差异，暂不设置统一阻断阈值。 | 2026-07-16：`python tools/benchmark_chart_alignment.py`；`pytest tests/test_chart_quality.py tests/test_chart_alignment_benchmark.py -q`，44 passed。 |
 | 12.6 AI repair 门槛评审 | 已完成 | 新增 `ai-rhythm-repair-gate-v1`，仅将可靠静音范围违规、极端无支持 note，以及多小节范围内强 onset 完全无响应接入 AI 内容 repair；门槛使用宽松样本下限并持久化版本/阈值，其他节奏指标继续 report-only。 | 2026-07-17：`pytest tests/test_ai_client.py -q`，56 passed；全部 17 fixture / 68 张规则谱面均不触发新门槛。 |
-| 12.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
+| 12.7 阶段退出条件 | 已完成 | 新增 `phase-six-acceptance-v1`，在禁网环境中双跑全部 17 个 fixture / 68 张规则谱面的 report-only benchmark 与 6 个确定性行为场景，验证共享 QualityReport、核心指标覆盖、三组 resolution 等价性、A/B 校准、AI repair 门槛范围和无统一总分。 | 2026-07-17：`python tools/verify_phase_six.py`，PASS；`pytest tests/test_phase_six_acceptance.py -q`，8 passed。 |
 
 ## 12.1 建议指标
 
@@ -1217,6 +1217,8 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - 只有经过校准的少量指标进入 AI repair；
 - QualityReport 不引入难以解释的统一总分。
 
+阶段验收入口为 `python tools/verify_phase_six.py`。`phase-six-acceptance-v1` 会在屏蔽 `socket.connect` / `connect_ex` 的环境中执行两轮完整 `chart-alignment-v1` 和 Phase 6 行为矩阵，确认 17 个 fixture、68 张四难度规则谱面全部持久化八类核心 report-only 指标；规则与经 AI sanitize 的等价结构化谱面得到完全相同的 `QualityReport`；4/4 的 16/24/48 与 3/4、6/8 的 12/18/36 等价编码指标一致；fixture ground truth A/B 差值完整且双跑稳定；`ai-rhythm-repair-gate-v1` 只包含三个已校准极端门槛，全部规则基线零触发且小样本继续 report-only；`QualityReport` 与 benchmark 均不存在统一 score 字段。验收结果写入 `phase_six_acceptance.json` 和 `.md`，当前全部退出条件通过。
+
 ## Phase 6 任务划分列表
 
 - [x] 12.1 实现 `note_onset_alignment`
@@ -1225,7 +1227,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - [x] 12.4 实现 fill burst 对齐和节奏量化误差指标
 - [x] 12.5 使用全部 fixture 校准 report-only 指标
 - [x] 12.6 评审并选择少量指标进入 AI repair
-- [ ] 12.7 执行 Phase 6 阶段验收
+- [x] 12.7 执行 Phase 6 阶段验收
 
 ---
 

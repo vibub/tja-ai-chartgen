@@ -284,14 +284,16 @@ level 在各 course 的范围内线性插值。最终 hit 数还会受到小节�
 8. 对 `structure_build_up_120.wav` 确认 build-up、peak、drop，并确认没有固定第 4/8 小节切分。
 9. 固定 course、level、style、density 和特殊音符开关；生成两次，确认 `ChartBar` 和 `QualityReport` 完全一致。
 10. 比较四难度普通音符总量、总体/活跃 NPS、峰值、连续流、重音覆盖、归一化重复、结构指标、resolution 指标、谱面对齐和静音违规。
-11. 需要重新评估外部参考时，运行匿名 benchmark；需要更新 AI 示例时，再离线重建 `reference_windows.json` 并检查其中无标题、WAVE、绝对路径或完整 notes。
-12. 使用版本控制中的历史版本运行同一流程，得到修改前后证据；不要把跨平台 baseline 数值差异直接视为回归。
-13. 完成自动检查后执行 Web 播放和人工试听清单，并确认 `GenerationNotice` 与实际降级一致。
+11. 运行 `python tools/verify_phase_six.py`，确认全部 17 个 fixture / 68 张谱面的核心指标覆盖、4/4、3/4、6/8 等价 resolution、A/B 校准、AI repair 门槛范围、禁网双跑和无统一总分验收通过。
+12. 需要重新评估外部参考时，运行匿名 benchmark；需要更新 AI 示例时，再离线重建 `reference_windows.json` 并检查其中无标题、WAVE、绝对路径或完整 notes。
+13. 使用版本控制中的历史版本运行同一流程，得到修改前后证据；不要把跨平台 baseline 数值差异直接视为回归。
+14. 完成自动检查后执行 Web 播放和人工试听清单，并确认 `GenerationNotice` 与实际降级一致。
 
 ## CI 硬门槛
 
 - 17 个 WAV、事件 JSON 和 ground truth schema 可以从同一组 `FixtureSpec` 确定性重建，文件集合与引用一一对应。
-- `audio-alignment-v2`、`chart-alignment-v1`、`phase-zero-acceptance-v1` 和 `phase-one-acceptance-v1` 的 schema、版本、fixture/chart 覆盖范围和指标边界合法；跨环境不要求 baseline 数值逐值相等。
+- `audio-alignment-v2`、`chart-alignment-v1`、`phase-zero-acceptance-v1`、`phase-one-acceptance-v1` 和 `phase-six-acceptance-v1` 的 schema、版本、fixture/chart 覆盖范围和指标边界合法；跨环境不要求 baseline 数值逐值相等。
+- Phase 6 验收要求规则/AI 共用同一 QualityReport，68 张 fixture 谱面覆盖全部核心指标，4/4、3/4、6/8 等价 resolution 稳定，A/B 校准完整，规则基线不触发所选 AI repair 门槛，且不存在统一质量总分。
 - Phase 1 验收中 salience 点全部位于 canonical grid，禁网双运行一致，首尾静音 0 违规，onset peak precision ≥ 0.98、recall ≥ 0.95，稀疏点比例 ≤ 0.50。
 - sparse/dense、straight/triplet/mixed 与 structure build-up 真实音频流水线可运行，常规 fixture 的 `spectral-v1` 状态为 `complete` 且能映射非空 spectral flux。
 - straight/triplet/mixed 稳定选择 16/24/48；乐句级混合节奏只在高置信边界切换，不逐小节抖动。

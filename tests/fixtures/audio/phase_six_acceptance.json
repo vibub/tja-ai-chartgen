@@ -1,0 +1,1345 @@
+{
+  "schema_version": 1,
+  "acceptance_version": "phase-six-acceptance-v1",
+  "phase": "Phase 6",
+  "passed": true,
+  "fixture_count": 17,
+  "chart_count": 68,
+  "scenario_count": 6,
+  "checks": {
+    "shared_rule_ai_quality_contract": {
+      "passed": true,
+      "quality_report_fields": [
+        "accent_candidate_count",
+        "accent_coverage_rate",
+        "accent_hit_count",
+        "active_average_notes_per_second",
+        "active_duration_seconds",
+        "average_notes_per_second",
+        "avoided_resolution_changes",
+        "balloon_count",
+        "balloon_duration_seconds",
+        "balloon_hits_per_second",
+        "balloon_required_hits",
+        "bar_count",
+        "base_resolution",
+        "bass_downbeat_alignment",
+        "build_up_slope_agreement",
+        "cadence_variation_rate",
+        "cross_course_resolution_consistency",
+        "density_compliance_rate",
+        "density_compliant_bars",
+        "density_evaluated_bars",
+        "don_count",
+        "downbeat_evaluated_count",
+        "downbeat_responded_count",
+        "downbeat_response",
+        "drum_onset_hit_coverage",
+        "drumroll_count",
+        "drumroll_duration_seconds",
+        "fill_burst_aligned_count",
+        "fill_burst_alignment",
+        "fill_burst_evaluated_count",
+        "fill_candidate_precision",
+        "high_resolution_bar_ratio",
+        "highlight_note_contrast",
+        "instrument_confident_bar_ratio",
+        "instrument_fill_support",
+        "instrument_transition_response",
+        "ka_count",
+        "ka_ratio",
+        "longest_empty_bar_run",
+        "longest_monochrome_run",
+        "longest_note_stream_count",
+        "longest_note_stream_seconds",
+        "note_onset_aligned_count",
+        "note_onset_alignment",
+        "note_onset_evaluated_count",
+        "peak_bar_notes_per_second",
+        "peak_contrast",
+        "playable_duration_seconds",
+        "playable_note_count",
+        "repeated_bar_count",
+        "repeated_bar_rate",
+        "resolution_change_count",
+        "resolution_changes_per_100_bars",
+        "resolution_quantization_error",
+        "rhythmic_quantization_error",
+        "rhythmic_quantization_evaluated_count",
+        "salience_coverage_by_density",
+        "section_motif_consistency",
+        "section_return_variation",
+        "silent_bar_note_count",
+        "silent_range_activity_count",
+        "silent_range_evaluated_bar_count",
+        "silent_range_violation_count",
+        "silent_range_violation_rate",
+        "special_note_count",
+        "special_note_duration_seconds",
+        "strong_onset_evaluated_count",
+        "strong_onset_responded_count",
+        "strong_onset_response",
+        "structure_density_correlation",
+        "unsupported_note_count",
+        "unsupported_note_evaluated_count",
+        "unsupported_note_rate",
+        "vocal_phrase_response"
+      ],
+      "rule_report": {
+        "note_onset_alignment": 1.0,
+        "strong_onset_response": 1.0,
+        "downbeat_response": 1.0,
+        "unsupported_note_rate": 0.0,
+        "silent_range_violation_rate": 0.0,
+        "fill_burst_alignment": 1.0,
+        "rhythmic_quantization_error": 0.0,
+        "salience_coverage_by_density": {
+          "silent": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          },
+          "rest": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          },
+          "sparse": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          },
+          "normal": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          },
+          "dense": {
+            "responded_count": 4,
+            "evaluated_count": 4,
+            "coverage": 1.0
+          },
+          "fill": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          }
+        }
+      },
+      "ai_report": {
+        "note_onset_alignment": 1.0,
+        "strong_onset_response": 1.0,
+        "downbeat_response": 1.0,
+        "unsupported_note_rate": 0.0,
+        "silent_range_violation_rate": 0.0,
+        "fill_burst_alignment": 1.0,
+        "rhythmic_quantization_error": 0.0,
+        "salience_coverage_by_density": {
+          "silent": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          },
+          "rest": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          },
+          "sparse": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          },
+          "normal": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          },
+          "dense": {
+            "responded_count": 4,
+            "evaluated_count": 4,
+            "coverage": 1.0
+          },
+          "fill": {
+            "responded_count": 0,
+            "evaluated_count": 0,
+            "coverage": 1.0
+          }
+        }
+      }
+    },
+    "fixture_ground_truth_metric_coverage": {
+      "passed": true,
+      "benchmark_version": "chart-alignment-v1",
+      "fixture_count": 17,
+      "chart_count": 68,
+      "report_only_chart_count": 68,
+      "missing_metric_count": 0,
+      "course_names": [
+        "Easy",
+        "Hard",
+        "Normal",
+        "Oni"
+      ],
+      "density_hint_names": [
+        "dense",
+        "fill",
+        "normal",
+        "rest",
+        "silent",
+        "sparse"
+      ]
+    },
+    "equivalent_resolution_stability": {
+      "passed": true,
+      "families": {
+        "resolution_equivalence_4_4": {
+          "passed": true,
+          "time_signature": "4/4",
+          "resolutions": [
+            16,
+            24,
+            48
+          ],
+          "reports": {
+            "16": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 4,
+                  "evaluated_count": 4,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            },
+            "24": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 4,
+                  "evaluated_count": 4,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            },
+            "48": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 4,
+                  "evaluated_count": 4,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            }
+          }
+        },
+        "resolution_equivalence_3_4": {
+          "passed": true,
+          "time_signature": "3/4",
+          "resolutions": [
+            12,
+            18,
+            36
+          ],
+          "reports": {
+            "12": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 3,
+                  "evaluated_count": 3,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            },
+            "18": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 3,
+                  "evaluated_count": 3,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            },
+            "36": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 3,
+                  "evaluated_count": 3,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            }
+          }
+        },
+        "resolution_equivalence_6_8": {
+          "passed": true,
+          "time_signature": "6/8",
+          "resolutions": [
+            12,
+            18,
+            36
+          ],
+          "reports": {
+            "12": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 6,
+                  "evaluated_count": 6,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            },
+            "18": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 6,
+                  "evaluated_count": 6,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            },
+            "36": {
+              "note_onset_alignment": 1.0,
+              "strong_onset_response": 1.0,
+              "downbeat_response": 1.0,
+              "unsupported_note_rate": 0.0,
+              "silent_range_violation_rate": 0.0,
+              "fill_burst_alignment": 1.0,
+              "rhythmic_quantization_error": 0.0,
+              "salience_coverage_by_density": {
+                "silent": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "rest": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "sparse": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "normal": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                },
+                "dense": {
+                  "responded_count": 6,
+                  "evaluated_count": 6,
+                  "coverage": 1.0
+                },
+                "fill": {
+                  "responded_count": 0,
+                  "evaluated_count": 0,
+                  "coverage": 1.0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "calibrated_ab_report": {
+      "passed": true,
+      "deterministic_rate": 1.0,
+      "ground_truth_comparison": {
+        "note_onset_alignment_delta": 0.286494,
+        "strong_onset_response_delta": -0.144278,
+        "downbeat_response_delta": -0.058214,
+        "unsupported_note_rate_delta": -0.045524,
+        "silent_violation_count_delta": -60
+      }
+    },
+    "selected_ai_repair_gate_scope": {
+      "passed": true,
+      "gate": {
+        "version": "ai-rhythm-repair-gate-v1",
+        "selected_metrics": {
+          "silent_range_violation": {
+            "maximum_violation_count": 0
+          },
+          "unsupported_note_rate": {
+            "minimum_evaluated_count": 8,
+            "minimum_unsupported_count": 4,
+            "repair_at_or_above_rate": 0.5
+          },
+          "strong_onset_response": {
+            "minimum_bar_count": 4,
+            "minimum_evaluated_count": 8,
+            "minimum_responded_count": 1
+          }
+        },
+        "report_only_metrics": [
+          "note_onset_alignment",
+          "downbeat_response",
+          "fill_burst_alignment",
+          "rhythmic_quantization_error",
+          "salience_coverage_by_density"
+        ]
+      },
+      "baseline_violation_count": 0,
+      "baseline_violation_examples": []
+    },
+    "no_unified_quality_score": {
+      "passed": true,
+      "benchmark_score_keys": [],
+      "quality_report_score_keys": []
+    },
+    "deterministic_offline_acceptance": {
+      "passed": true,
+      "network_blocked": true,
+      "behavior_runs_stable": true,
+      "benchmark_runs_stable": true,
+      "run_count": 2
+    }
+  },
+  "behavior_matrix": {
+    "schema_version": 1,
+    "matrix_version": "phase-six-quality-gate-matrix-v1",
+    "passed": true,
+    "scenario_count": 6,
+    "scenarios": {
+      "rule_and_ai_share_quality_report": {
+        "passed": true,
+        "quality_report_fields": [
+          "accent_candidate_count",
+          "accent_coverage_rate",
+          "accent_hit_count",
+          "active_average_notes_per_second",
+          "active_duration_seconds",
+          "average_notes_per_second",
+          "avoided_resolution_changes",
+          "balloon_count",
+          "balloon_duration_seconds",
+          "balloon_hits_per_second",
+          "balloon_required_hits",
+          "bar_count",
+          "base_resolution",
+          "bass_downbeat_alignment",
+          "build_up_slope_agreement",
+          "cadence_variation_rate",
+          "cross_course_resolution_consistency",
+          "density_compliance_rate",
+          "density_compliant_bars",
+          "density_evaluated_bars",
+          "don_count",
+          "downbeat_evaluated_count",
+          "downbeat_responded_count",
+          "downbeat_response",
+          "drum_onset_hit_coverage",
+          "drumroll_count",
+          "drumroll_duration_seconds",
+          "fill_burst_aligned_count",
+          "fill_burst_alignment",
+          "fill_burst_evaluated_count",
+          "fill_candidate_precision",
+          "high_resolution_bar_ratio",
+          "highlight_note_contrast",
+          "instrument_confident_bar_ratio",
+          "instrument_fill_support",
+          "instrument_transition_response",
+          "ka_count",
+          "ka_ratio",
+          "longest_empty_bar_run",
+          "longest_monochrome_run",
+          "longest_note_stream_count",
+          "longest_note_stream_seconds",
+          "note_onset_aligned_count",
+          "note_onset_alignment",
+          "note_onset_evaluated_count",
+          "peak_bar_notes_per_second",
+          "peak_contrast",
+          "playable_duration_seconds",
+          "playable_note_count",
+          "repeated_bar_count",
+          "repeated_bar_rate",
+          "resolution_change_count",
+          "resolution_changes_per_100_bars",
+          "resolution_quantization_error",
+          "rhythmic_quantization_error",
+          "rhythmic_quantization_evaluated_count",
+          "salience_coverage_by_density",
+          "section_motif_consistency",
+          "section_return_variation",
+          "silent_bar_note_count",
+          "silent_range_activity_count",
+          "silent_range_evaluated_bar_count",
+          "silent_range_violation_count",
+          "silent_range_violation_rate",
+          "special_note_count",
+          "special_note_duration_seconds",
+          "strong_onset_evaluated_count",
+          "strong_onset_responded_count",
+          "strong_onset_response",
+          "structure_density_correlation",
+          "unsupported_note_count",
+          "unsupported_note_evaluated_count",
+          "unsupported_note_rate",
+          "vocal_phrase_response"
+        ],
+        "rule_report": {
+          "note_onset_alignment": 1.0,
+          "strong_onset_response": 1.0,
+          "downbeat_response": 1.0,
+          "unsupported_note_rate": 0.0,
+          "silent_range_violation_rate": 0.0,
+          "fill_burst_alignment": 1.0,
+          "rhythmic_quantization_error": 0.0,
+          "salience_coverage_by_density": {
+            "silent": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            },
+            "rest": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            },
+            "sparse": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            },
+            "normal": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            },
+            "dense": {
+              "responded_count": 4,
+              "evaluated_count": 4,
+              "coverage": 1.0
+            },
+            "fill": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            }
+          }
+        },
+        "ai_report": {
+          "note_onset_alignment": 1.0,
+          "strong_onset_response": 1.0,
+          "downbeat_response": 1.0,
+          "unsupported_note_rate": 0.0,
+          "silent_range_violation_rate": 0.0,
+          "fill_burst_alignment": 1.0,
+          "rhythmic_quantization_error": 0.0,
+          "salience_coverage_by_density": {
+            "silent": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            },
+            "rest": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            },
+            "sparse": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            },
+            "normal": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            },
+            "dense": {
+              "responded_count": 4,
+              "evaluated_count": 4,
+              "coverage": 1.0
+            },
+            "fill": {
+              "responded_count": 0,
+              "evaluated_count": 0,
+              "coverage": 1.0
+            }
+          }
+        }
+      },
+      "resolution_equivalence_4_4": {
+        "passed": true,
+        "time_signature": "4/4",
+        "resolutions": [
+          16,
+          24,
+          48
+        ],
+        "reports": {
+          "16": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 4,
+                "evaluated_count": 4,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          },
+          "24": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 4,
+                "evaluated_count": 4,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          },
+          "48": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 4,
+                "evaluated_count": 4,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          }
+        }
+      },
+      "resolution_equivalence_3_4": {
+        "passed": true,
+        "time_signature": "3/4",
+        "resolutions": [
+          12,
+          18,
+          36
+        ],
+        "reports": {
+          "12": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 3,
+                "evaluated_count": 3,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          },
+          "18": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 3,
+                "evaluated_count": 3,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          },
+          "36": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 3,
+                "evaluated_count": 3,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          }
+        }
+      },
+      "resolution_equivalence_6_8": {
+        "passed": true,
+        "time_signature": "6/8",
+        "resolutions": [
+          12,
+          18,
+          36
+        ],
+        "reports": {
+          "12": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 6,
+                "evaluated_count": 6,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          },
+          "18": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 6,
+                "evaluated_count": 6,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          },
+          "36": {
+            "note_onset_alignment": 1.0,
+            "strong_onset_response": 1.0,
+            "downbeat_response": 1.0,
+            "unsupported_note_rate": 0.0,
+            "silent_range_violation_rate": 0.0,
+            "fill_burst_alignment": 1.0,
+            "rhythmic_quantization_error": 0.0,
+            "salience_coverage_by_density": {
+              "silent": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "rest": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "sparse": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "normal": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              },
+              "dense": {
+                "responded_count": 6,
+                "evaluated_count": 6,
+                "coverage": 1.0
+              },
+              "fill": {
+                "responded_count": 0,
+                "evaluated_count": 0,
+                "coverage": 1.0
+              }
+            }
+          }
+        }
+      },
+      "selected_repair_gates_trigger": {
+        "passed": true,
+        "silent_issues": [
+          "chart rhythm has notes inside reliable silent ranges: 1 activity start(s) across 1 silent bar(s); remove all hits and long-note starts from those bars"
+        ],
+        "unsupported_issues": [
+          "chart rhythm has an extreme unsupported-note rate: 8/8 (1.000); move most normal hits onto reliable salience, beat/downbeat, activity, or structure evidence and keep unsupported connectors within 0.3 seconds of a directly supported hit"
+        ],
+        "strong_onset_issues": [
+          "chart rhythm ignores every reliable strong onset across a multi-bar range: 0/16 responded; add a small number of nearby normal hits or valid burst-backed long notes without mapping every onset"
+        ]
+      },
+      "small_samples_remain_report_only": {
+        "passed": true,
+        "unsupported_issues": [],
+        "strong_onset_issues": []
+      }
+    }
+  },
+  "benchmark_evidence": {
+    "schema_version": 1,
+    "benchmark_version": "chart-alignment-v1",
+    "fixture_count": 17,
+    "chart_count": 68,
+    "deterministic_rate": 1.0,
+    "report_only_chart_count": 68,
+    "missing_metric_count": 0,
+    "missing_metric_examples": [],
+    "course_names": [
+      "Easy",
+      "Hard",
+      "Normal",
+      "Oni"
+    ],
+    "density_hint_names": [
+      "dense",
+      "fill",
+      "normal",
+      "rest",
+      "silent",
+      "sparse"
+    ],
+    "ground_truth_comparison": {
+      "note_onset_alignment_delta": 0.286494,
+      "strong_onset_response_delta": -0.144278,
+      "downbeat_response_delta": -0.058214,
+      "unsupported_note_rate_delta": -0.045524,
+      "silent_violation_count_delta": -60
+    },
+    "selected_gate_violation_count": 0,
+    "selected_gate_violation_examples": [],
+    "unified_score_keys": [],
+    "calibration_summary": {
+      "note_onset_alignment": {
+        "aligned_count": 3047,
+        "evaluated_count": 3295,
+        "value": 0.924734
+      },
+      "strong_onset_response": {
+        "responded_count": 1767,
+        "evaluated_count": 2132,
+        "value": 0.828799
+      },
+      "downbeat_response": {
+        "responded_count": 244,
+        "evaluated_count": 264,
+        "value": 0.924242
+      },
+      "unsupported_note_rate": {
+        "unsupported_count": 0,
+        "evaluated_count": 3295,
+        "value": 0.0
+      },
+      "silent_range_violation_rate": {
+        "violation_count": 0,
+        "activity_count": 3295,
+        "value": 0.0,
+        "evaluated_bar_count": 40
+      },
+      "fill_burst_alignment": {
+        "aligned_count": 4,
+        "evaluated_count": 58,
+        "value": 0.068966
+      },
+      "rhythmic_quantization_error": {
+        "evaluated_count": 3098,
+        "value": 0.264687
+      },
+      "salience_coverage_by_density": {
+        "silent": {
+          "responded_count": 0,
+          "evaluated_count": 0,
+          "coverage": 1.0
+        },
+        "rest": {
+          "responded_count": 0,
+          "evaluated_count": 0,
+          "coverage": 1.0
+        },
+        "sparse": {
+          "responded_count": 36,
+          "evaluated_count": 36,
+          "coverage": 1.0
+        },
+        "normal": {
+          "responded_count": 1786,
+          "evaluated_count": 2164,
+          "coverage": 0.825323
+        },
+        "dense": {
+          "responded_count": 381,
+          "evaluated_count": 700,
+          "coverage": 0.544286
+        },
+        "fill": {
+          "responded_count": 75,
+          "evaluated_count": 132,
+          "coverage": 0.568182
+        }
+      }
+    }
+  }
+}
