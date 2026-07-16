@@ -917,7 +917,7 @@ class TempoMeterCandidate(BaseModel):
 | 11.3 接入 RhythmicSalience | 已完成 | canonical rhythmic evidence 已对齐 vocal/drum/bass/accompaniment onset 与对应 bar activity；drum onset 经活动门控后进入 hit/accent/burst，bass 只增强 beat/downbeat 与 don preference，vocal 和 accompaniment 只修正已有 phrase/cadence/highlight 候选。stem 与 mix/spectral 一致时提高强度和置信度，冲突时限制 drum 上限，非 drum stem 不独立制造 hit。 | `tests/test_rhythmic_salience.py`、`tests/test_salience_candidates.py`、`tests/test_fallback_generator.py`。 |
 | 11.4 保持 partial/fallback | 已完成 | `complete` 统一表示当前 feature 的 stem 能力完整：stem-role 成功直接 complete；full profile 的 AST 文件缺失、依赖/加载或推理失败时降级为 `stem-role-v1 complete`，保留分类失败 reason 并发出独立 warning。只有没有 stem 证据时才 fallback；partial 保留给真实部分 stem/后处理失败及旧 `instrument-v1 partial` 兼容读取。旧 status、reason 和模型字段不被重写。 | `tests/test_instruments.py`、`tests/test_instrument_models.py`、`tests/test_generation.py`、`tests/test_web.py` 覆盖新状态、classifier 降级、旧 JSON 与通知持久化。 |
 | 11.5 控制模型与性能成本 | 已完成 | 新增 `instrument-model-benchmark-v1`：按 profile 校验全部模型 hash，在阻断网络和强制离线环境中运行真实分析，记录模型组件大小、请求/实际设备、耗时、real-time factor、进程峰值 RSS 与输出证据数量；性能数据保持 report-only。 | `tests/test_instrument_benchmark.py` 覆盖离线边界、成本报告和 full/stem-role 契约；`tests/test_instrument_model_integration.py` 增加真实 stem-role CPU 离线 smoke。 |
-| 11.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
+| 11.6 阶段退出条件 | 已完成 | 新增 `phase-five-acceptance-v1`，在禁用 socket 的环境中双跑模型 profile 准备/hash/离线成本契约、7 个 stem-role salience 场景、AI payload taxonomy 独立性和 Web 远程权限矩阵；同时将 AI payload 升级为 `compact-v7`，移除具体乐器 taxonomy 列。 | `python tools/verify_phase_five.py` 通过；验收产物为 `phase_five_acceptance.json` 和 `.md`，所有退出条件 PASS。 |
 
 ## 11.1 声部职责
 
@@ -1062,6 +1062,16 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - AI payload 不再依赖具体乐器 taxonomy；
 - 远程 Web 仍需管理员显式允许重型分析。
 
+`phase-five-acceptance-v1` 已满足上述退出条件。验收在禁用 socket 连接时独立运行两次，并要求模型准备、stem-role benchmark、salience 行为、AI payload 和 Web 权限结果逐项完全一致：
+
+- 模型矩阵通过真实 `prepare_instrument_models()` 编排配合确定性本地模型源，验证 full 与 stem-role 分离准备、统一 manifest 全文件 hash、stem-role AST 大小为 0、full AST 组件存在及 profile mismatch 拒绝；
+- 离线成本矩阵通过 `instrument-model-benchmark-v1` 验证 `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE`、socket 阻断、CPU 设备解析、stem frame 输出、无 classifier window，以及耗时、real-time factor 与 RSS report-only 字段；
+- 7 个 canonical 行为场景覆盖 fallback salience 完全不变、drum 与基础瞬态一致时增强 hit/confidence、bass 只增强 beat/don 且不制造反拍、vocal phrase context、accompaniment highlight、stem artifact 零 hit 和 late drum onset burst；
+- AI payload 升级为 `tja-ai-chartgen-compact-v7`，`bar_instruments` 只保留 vocal/drum/bass/other 粗粒度角色、dominant source 和 confidence，移除 `dominant_instrument` 与 `active_instruments`，相同 stem 角色在不同具体 taxonomy 下生成完全相同的行；
+- Web 权限矩阵验证本地允许、远程默认拒绝、远程显式 `--allow-instrument-analysis` 后允许。
+
+验收产物写入 `tests/fixtures/audio/phase_five_acceptance.json` 与 `.md`。真实 Demucs/AST 性能继续由 `instrument_model` marker 和 `tools/benchmark_instrument_models.py` 独立验证，不把环境相关耗时/RSS 设为阶段硬阈值。
+
 ## Phase 5 任务划分列表
 
 - [x] 11.1 复用现有 vocals、drums、bass、other activity/onset
@@ -1069,7 +1079,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - [x] 11.3 将 stem activity/onset 接入 `RhythmicSalience`
 - [x] 11.4 调整 complete、partial、fallback 与旧 instrument-v1 兼容语义
 - [x] 11.5 验证模型准备、离线加载、设备和性能成本
-- [ ] 11.6 执行 Phase 5 阶段验收
+- [x] 11.6 执行 Phase 5 阶段验收
 
 ---
 

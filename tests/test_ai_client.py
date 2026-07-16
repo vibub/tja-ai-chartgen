@@ -151,7 +151,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["density_policy"]["quality_average_min_per_16_grid_bar"] == 6.5
     assert "note_color_target" not in payload
     assert payload["style"] == "technical"
-    assert payload["schema"] == "tja-ai-chartgen-compact-v6"
+    assert payload["schema"] == "tja-ai-chartgen-compact-v7"
     assert payload["rhythmic_salience_feature_version"] == "rhythmic-salience-v1"
     salience_bar_columns = payload["legend"]["salience_bar_columns"]
     salience_point_columns = payload["legend"]["salience_point_columns"]
@@ -460,9 +460,9 @@ def test_build_chart_generation_payload_includes_compact_instrument_semantics():
     assert payload["instrument_analysis_status"] == "complete"
     assert payload["bar_instruments"][0][columns.index("vocal_activity")] == 0.7
     assert payload["bar_instruments"][0][columns.index("dominant_source")] == "drums"
-    assert payload["bar_instruments"][0][columns.index("active_instruments")] == [
-        ["guitar", 0.75]
-    ]
+    assert "dominant_instrument" not in columns
+    assert "active_instruments" not in columns
+    assert "guitar" not in str(payload["bar_instruments"])
     audio_columns = payload["legend"]["audio_channel_columns"]
     bar_columns = payload["legend"]["bar_columns"]
     audio_channels = payload["bars"][0][bar_columns.index("audio_channels")]

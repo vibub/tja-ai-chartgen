@@ -97,20 +97,8 @@ INSTRUMENT_BAR_COLUMNS = [
     "bass_activity",
     "other_activity",
     "dominant_source",
-    "dominant_instrument",
     "confidence",
-    "active_instruments",
 ]
-INSTRUMENT_LABELS = (
-    "guitar",
-    "piano_keyboard",
-    "strings",
-    "brass",
-    "woodwind",
-    "synth",
-    "organ",
-    "other_instrument",
-)
 BAR_DENSITY_HINT_COLUMNS = [
     "bar",
     "kind",
@@ -187,7 +175,7 @@ def build_chart_generation_payload(
     compact_salience = _compact_salience_bars(analysis)
 
     payload = {
-        "schema": "tja-ai-chartgen-compact-v6",
+        "schema": "tja-ai-chartgen-compact-v7",
         "legend": {
             "bool": "0=false, 1=true",
             "bar_columns": BAR_COLUMNS,
@@ -328,7 +316,7 @@ Rules:
 37. Repeated section_id values should retain a recognizable base motif, with controlled later-song variation rather than exact copying.
 38. Do not create a fill merely because a bar number is divisible by 4 or 8. Ordinary hits may follow fill_candidate_score and musical context, but long_notes additionally require the reliable rhythmic burst gate in bar_salience.
 39. Decode audio_channels with legend.audio_channel_columns, audio_channel_scale, and audio_channel_positions only as supporting context around bar_salience. Treat low-frequency attacks as soft don evidence, high-frequency attacks as soft ka evidence, and spectral_flux as extra placement evidence. Use brightness, harmonic_novelty, texture_novelty, and percussive_ratio in bar_structure to recognize section changes without forcing a note on every spectral change.
-40. Decode bar_instruments with legend.instrument_bar_columns for phrase, motif, and section context, not to choose exact note ticks. Do not map instrument names, stems, vocals, or syllables directly to hits. Ignore low-confidence labels, and never let instrument semantics override salience, silence, density, speed, occupancy, resolution, or playability constraints.
+40. Decode bar_instruments with legend.instrument_bar_columns for phrase, motif, and section context, not to choose exact note ticks. These fields contain only coarse vocal/drum/bass/accompaniment roles; do not infer concrete instrument taxonomy or map stems, vocals, or syllables directly to hits. Ignore low-confidence roles, and never let stem semantics override salience, silence, density, speed, occupancy, resolution, or playability constraints.
 
 Input:
 {json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}
@@ -436,11 +424,6 @@ def _compact_bar_structures(analysis: SongAnalysis) -> list[list[Any]]:
 
 def _compact_bar_instrument(bar: BarFeature) -> list[Any]:
     instrument = bar.instrument
-    active_instruments = [
-        [label, _compact_number(value)]
-        for label in INSTRUMENT_LABELS
-        if (value := float(getattr(instrument, label))) >= 0.05
-    ]
     return [
         _compact_number(instrument.vocal_activity),
         _compact_number(instrument.vocal_presence_ratio),
@@ -448,9 +431,7 @@ def _compact_bar_instrument(bar: BarFeature) -> list[Any]:
         _compact_number(instrument.bass_activity),
         _compact_number(instrument.other_activity),
         instrument.dominant_source,
-        instrument.dominant_instrument,
         _compact_number(instrument.confidence),
-        active_instruments,
     ]
 
 

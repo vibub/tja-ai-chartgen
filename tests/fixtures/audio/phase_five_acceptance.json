@@ -1,0 +1,400 @@
+{
+  "schema_version": 1,
+  "acceptance_version": "phase-five-acceptance-v1",
+  "phase": "Phase 5",
+  "passed": true,
+  "scenario_count": 7,
+  "checks": {
+    "stem_role_model_profile": {
+      "passed": true,
+      "schema_version": 1,
+      "benchmark_version": "instrument-model-benchmark-v1",
+      "network_attempt_blocked": true,
+      "offline_environment_applied": true,
+      "profile_mismatch_rejected": true,
+      "performance_threshold_enforced": false,
+      "full": {
+        "profile": "full",
+        "feature_version": "instrument-v1",
+        "hashes_verified": true,
+        "file_count": 5,
+        "ast_bytes": 7,
+        "classifier_model": "MIT/ast-finetuned-audioset-10-10-0.4593"
+      },
+      "stem_role": {
+        "profile": "stem-role",
+        "feature_version": "stem-role-v1",
+        "hashes_verified": true,
+        "file_count": 2,
+        "total_bytes": 22,
+        "demucs_bytes": 22,
+        "ast_bytes": 0,
+        "classifier_model": null,
+        "status": "complete",
+        "stem_frame_count": 1,
+        "classification_window_count": 0,
+        "requested_device": "auto",
+        "resolved_device": "cpu",
+        "elapsed_seconds": 1.5,
+        "realtime_factor": 0.75,
+        "peak_rss_bytes": 1000000,
+        "peak_rss_delta_bytes": 0
+      }
+    },
+    "offline_loading_and_cost_report": {
+      "passed": true,
+      "benchmark_version": "instrument-model-benchmark-v1",
+      "network_attempt_blocked": true,
+      "offline_environment_applied": true,
+      "performance_threshold_enforced": false,
+      "runtime": {
+        "profile": "stem-role",
+        "feature_version": "stem-role-v1",
+        "hashes_verified": true,
+        "file_count": 2,
+        "total_bytes": 22,
+        "demucs_bytes": 22,
+        "ast_bytes": 0,
+        "classifier_model": null,
+        "status": "complete",
+        "stem_frame_count": 1,
+        "classification_window_count": 0,
+        "requested_device": "auto",
+        "resolved_device": "cpu",
+        "elapsed_seconds": 1.5,
+        "realtime_factor": 0.75,
+        "peak_rss_bytes": 1000000,
+        "peak_rss_delta_bytes": 0
+      }
+    },
+    "fallback_preserves_default_salience": {
+      "passed": true,
+      "baseline": {
+        "points": [
+          {
+            "grid": 9,
+            "hit": 0.6,
+            "accent": 0.0,
+            "don_preference": 0.0,
+            "ka_preference": 0.0,
+            "sustained_activity": 0.0,
+            "confidence": 0.78,
+            "reasons": [
+              "onset"
+            ]
+          }
+        ],
+        "active_ratio": 0.0,
+        "onset_evidence_count": 1,
+        "confidence": 0.682,
+        "fallback_reason": null,
+        "burst_score": 0.0,
+        "burst_confidence": 0.0,
+        "burst_start_grid": null,
+        "burst_end_grid": null,
+        "burst_reasons": []
+      },
+      "fallback": {
+        "points": [
+          {
+            "grid": 9,
+            "hit": 0.6,
+            "accent": 0.0,
+            "don_preference": 0.0,
+            "ka_preference": 0.0,
+            "sustained_activity": 0.0,
+            "confidence": 0.78,
+            "reasons": [
+              "onset"
+            ]
+          }
+        ],
+        "active_ratio": 0.0,
+        "onset_evidence_count": 1,
+        "confidence": 0.682,
+        "fallback_reason": null,
+        "burst_score": 0.0,
+        "burst_confidence": 0.0,
+        "burst_start_grid": null,
+        "burst_end_grid": null,
+        "burst_reasons": []
+      }
+    },
+    "role_evidence_improves_salience": {
+      "passed": true,
+      "covered_roles": [
+        "drums",
+        "bass",
+        "vocals",
+        "accompaniment"
+      ],
+      "scenario_names": [
+        "accompaniment_supports_highlight",
+        "bass_reinforces_beat_and_don_only",
+        "drum_agreement_strengthens_transient",
+        "drum_onset_rise_supports_burst",
+        "fallback_preserves_default_salience",
+        "stem_artifacts_do_not_create_hits",
+        "vocal_supports_phrase_context"
+      ]
+    },
+    "stem_artifact_guard": {
+      "passed": true,
+      "point_count": 0,
+      "onset_evidence_count": 0
+    },
+    "ai_payload_taxonomy_independence": {
+      "passed": true,
+      "schema_version": 1,
+      "payload_schema": "tja-ai-chartgen-compact-v7",
+      "instrument_bar_columns": [
+        "vocal_activity",
+        "vocal_presence_ratio",
+        "drum_activity",
+        "bass_activity",
+        "other_activity",
+        "dominant_source",
+        "confidence"
+      ],
+      "taxonomy_row": [
+        0.7,
+        0.8,
+        0.9,
+        0.6,
+        0.5,
+        "drums",
+        0.85
+      ],
+      "role_only_row": [
+        0.7,
+        0.8,
+        0.9,
+        0.6,
+        0.5,
+        "drums",
+        0.85
+      ],
+      "removed_taxonomy_columns": [
+        "dominant_instrument",
+        "active_instruments"
+      ]
+    },
+    "remote_web_admin_gate": {
+      "passed": true,
+      "schema_version": 1,
+      "local_allowed": true,
+      "remote_default_allowed": false,
+      "remote_explicit_allowed": true
+    },
+    "deterministic_offline_acceptance": {
+      "passed": true,
+      "network_blocked": true,
+      "behavior_runs_stable": true,
+      "model_runs_stable": true,
+      "payload_runs_stable": true,
+      "web_runs_stable": true,
+      "run_count": 2
+    }
+  },
+  "behavior_matrix": {
+    "schema_version": 1,
+    "matrix_version": "phase-five-stem-role-matrix-v1",
+    "passed": true,
+    "scenario_count": 7,
+    "scenarios": {
+      "fallback_preserves_default_salience": {
+        "passed": true,
+        "baseline": {
+          "points": [
+            {
+              "grid": 9,
+              "hit": 0.6,
+              "accent": 0.0,
+              "don_preference": 0.0,
+              "ka_preference": 0.0,
+              "sustained_activity": 0.0,
+              "confidence": 0.78,
+              "reasons": [
+                "onset"
+              ]
+            }
+          ],
+          "active_ratio": 0.0,
+          "onset_evidence_count": 1,
+          "confidence": 0.682,
+          "fallback_reason": null,
+          "burst_score": 0.0,
+          "burst_confidence": 0.0,
+          "burst_start_grid": null,
+          "burst_end_grid": null,
+          "burst_reasons": []
+        },
+        "fallback": {
+          "points": [
+            {
+              "grid": 9,
+              "hit": 0.6,
+              "accent": 0.0,
+              "don_preference": 0.0,
+              "ka_preference": 0.0,
+              "sustained_activity": 0.0,
+              "confidence": 0.78,
+              "reasons": [
+                "onset"
+              ]
+            }
+          ],
+          "active_ratio": 0.0,
+          "onset_evidence_count": 1,
+          "confidence": 0.682,
+          "fallback_reason": null,
+          "burst_score": 0.0,
+          "burst_confidence": 0.0,
+          "burst_start_grid": null,
+          "burst_end_grid": null,
+          "burst_reasons": []
+        }
+      },
+      "drum_agreement_strengthens_transient": {
+        "passed": true,
+        "baseline_hit": 0.6,
+        "enhanced_hit": 0.939,
+        "baseline_confidence": 0.78,
+        "enhanced_confidence": 0.91645,
+        "reasons": [
+          "onset",
+          "stem:drum-onset",
+          "stem:drum-agreement"
+        ]
+      },
+      "bass_reinforces_beat_and_don_only": {
+        "passed": true,
+        "baseline_hit": 0.1,
+        "enhanced_hit": 0.14914,
+        "baseline_don": 0.0,
+        "enhanced_don": 0.36018,
+        "offbeat_created": false
+      },
+      "vocal_supports_phrase_context": {
+        "passed": true,
+        "baseline_accent": 0.54,
+        "enhanced_accent": 0.54,
+        "reasons": [
+          "onset",
+          "role:peak",
+          "accent:phrase-start",
+          "accent:vocal-context",
+          "accent:role:peak"
+        ]
+      },
+      "accompaniment_supports_highlight": {
+        "passed": true,
+        "baseline_accent": 0.54,
+        "enhanced_accent": 0.54,
+        "reasons": [
+          "onset",
+          "stem:accompaniment-support",
+          "role:peak",
+          "accent:phrase-start",
+          "accent:accompaniment-highlight",
+          "accent:role:peak"
+        ]
+      },
+      "stem_artifacts_do_not_create_hits": {
+        "passed": true,
+        "point_count": 0,
+        "onset_evidence_count": 0
+      },
+      "drum_onset_rise_supports_burst": {
+        "passed": true,
+        "burst_score": 0.75,
+        "burst_confidence": 1.0,
+        "burst_start_grid": 27,
+        "burst_end_grid": 45,
+        "reasons": [
+          "burst:onset-density",
+          "burst:drum-onset-rise",
+          "burst:stable-contrast"
+        ]
+      }
+    }
+  },
+  "model_profile_evidence": {
+    "schema_version": 1,
+    "passed": true,
+    "benchmark_version": "instrument-model-benchmark-v1",
+    "network_attempt_blocked": true,
+    "offline_environment_applied": true,
+    "profile_mismatch_rejected": true,
+    "performance_threshold_enforced": false,
+    "full": {
+      "profile": "full",
+      "feature_version": "instrument-v1",
+      "hashes_verified": true,
+      "file_count": 5,
+      "ast_bytes": 7,
+      "classifier_model": "MIT/ast-finetuned-audioset-10-10-0.4593"
+    },
+    "stem_role": {
+      "profile": "stem-role",
+      "feature_version": "stem-role-v1",
+      "hashes_verified": true,
+      "file_count": 2,
+      "total_bytes": 22,
+      "demucs_bytes": 22,
+      "ast_bytes": 0,
+      "classifier_model": null,
+      "status": "complete",
+      "stem_frame_count": 1,
+      "classification_window_count": 0,
+      "requested_device": "auto",
+      "resolved_device": "cpu",
+      "elapsed_seconds": 1.5,
+      "realtime_factor": 0.75,
+      "peak_rss_bytes": 1000000,
+      "peak_rss_delta_bytes": 0
+    }
+  },
+  "payload_evidence": {
+    "schema_version": 1,
+    "payload_schema": "tja-ai-chartgen-compact-v7",
+    "passed": true,
+    "instrument_bar_columns": [
+      "vocal_activity",
+      "vocal_presence_ratio",
+      "drum_activity",
+      "bass_activity",
+      "other_activity",
+      "dominant_source",
+      "confidence"
+    ],
+    "taxonomy_row": [
+      0.7,
+      0.8,
+      0.9,
+      0.6,
+      0.5,
+      "drums",
+      0.85
+    ],
+    "role_only_row": [
+      0.7,
+      0.8,
+      0.9,
+      0.6,
+      0.5,
+      "drums",
+      0.85
+    ],
+    "removed_taxonomy_columns": [
+      "dominant_instrument",
+      "active_instruments"
+    ]
+  },
+  "web_permission_evidence": {
+    "schema_version": 1,
+    "local_allowed": true,
+    "remote_default_allowed": false,
+    "remote_explicit_allowed": true
+  }
+}
