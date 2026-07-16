@@ -22,6 +22,7 @@ from tja_ai_chartgen.tja.model import (
     SongAnalysis,
     TempoAnalysisDecision,
     TempoMeterCandidate,
+    TempoVariationDiagnostic,
 )
 
 
@@ -146,7 +147,7 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.time_signature == "3/4"
     assert len(analysis.bars) == 2
     assert all(bar.time_signature == "3/4" for bar in analysis.bars)
-    assert analysis.analysis_schema_version == 10
+    assert analysis.analysis_schema_version == 11
     assert analysis.spectral_feature_version == "spectral-v1"
     assert analysis.spectral_analysis_status == "complete"
     assert analysis.instrument_feature_version is None
@@ -246,7 +247,7 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
             },
         )
     ]
-    assert analysis.analysis_schema_version == 10
+    assert analysis.analysis_schema_version == 11
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "complete"
     assert analysis.instrument_demucs_model == "htdemucs"
@@ -312,7 +313,7 @@ def test_build_analysis_notices_reports_rejected_beatnet_candidates():
             "analyzer": "librosa+onset-grid",
             "beatnet_analysis_status": "complete",
             "tempo_analysis": TempoAnalysisDecision(
-                decision_version="tempo-arbitration-v2",
+                decision_version="tempo-arbitration-v3",
                 fallback_source="librosa+onset-grid",
                 selected_source="librosa+onset-grid",
                 estimated_bpm=120,
@@ -349,7 +350,7 @@ def test_build_analysis_notices_reports_partial_beatnet_meter_adoption():
             "analyzer": "librosa+onset-grid+beatnet-meter",
             "beatnet_analysis_status": "complete",
             "tempo_analysis": TempoAnalysisDecision(
-                decision_version="tempo-arbitration-v2",
+                decision_version="tempo-arbitration-v3",
                 fallback_source="librosa+onset-grid",
                 selected_source="librosa+onset-grid",
                 tempo_source="librosa+onset-grid",
@@ -375,12 +376,60 @@ def test_build_analysis_notices_reports_partial_beatnet_meter_adoption():
     assert "meter_source=beatnet" in (notices[0].detail or "")
 
 
+def test_build_analysis_notices_reports_suspected_tempo_variation():
+    analysis = _analysis().model_copy(
+        update={
+            "tempo_analysis": TempoAnalysisDecision(
+                decision_version="tempo-arbitration-v3",
+                fallback_source="librosa+onset-grid",
+                selected_source="librosa+onset-grid",
+                tempo_source="librosa+onset-grid",
+                meter_source="librosa+onset-grid",
+                estimated_bpm=120,
+                estimated_offset=0.2,
+                normalized_support=0.9,
+                onset_count=16,
+                time_coverage=0.9,
+                selected_score=0.85,
+                tempo_variation=TempoVariationDiagnostic(
+                    source="beatnet",
+                    beat_count=32,
+                    time_coverage=0.95,
+                    fixed_bpm_mean_error_seconds=0.08,
+                    fixed_bpm_p95_error_seconds=0.16,
+                    fixed_bpm_max_error_seconds=0.2,
+                    fixed_bpm_error_ratio=0.16,
+                    interval_coefficient_of_variation=0.09,
+                    interval_outlier_ratio=0.35,
+                    interval_drift_ratio=0.02,
+                    max_adjacent_interval_change_ratio=0.22,
+                    suspected=True,
+                    classification="possible-tempo-change",
+                    confidence=0.9,
+                    fixed_bpm_constrained=True,
+                    reason="adjacent-interval-jump",
+                ),
+                accepted=True,
+                reason="selected-by-score",
+            ),
+        }
+    )
+
+    notices = build_analysis_notices(analysis)
+
+    assert [notice.code for notice in notices] == ["tempo-variation-suspected"]
+    assert notices[0].level == "warning"
+    assert "classification=possible-tempo-change" in (notices[0].detail or "")
+    assert "mean_error=0.0800s" in (notices[0].detail or "")
+    assert "reason=adjacent-interval-jump" in (notices[0].detail or "")
+
+
 def test_build_analysis_notices_reports_tempo_ambiguity():
     analysis = _analysis().model_copy(
         update={
             "analyzer": "librosa+onset-grid",
             "tempo_analysis": TempoAnalysisDecision(
-                decision_version="tempo-arbitration-v2",
+                decision_version="tempo-arbitration-v3",
                 fallback_source="librosa+onset-grid",
                 selected_source="librosa+onset-grid",
                 estimated_bpm=120,

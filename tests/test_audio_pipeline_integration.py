@@ -69,11 +69,16 @@ def test_real_audio_pipeline(
     assert raw.tempo_analysis.accepted is True
     assert raw.tempo_analysis.reason == "selected-by-score"
     assert raw.tempo_analysis.selected_source == "librosa+onset-grid"
-    assert raw.tempo_analysis.decision_version == "tempo-arbitration-v2"
+    assert raw.tempo_analysis.decision_version == "tempo-arbitration-v3"
     assert raw.tempo_analysis.selected_score > 0.0
     assert raw.tempo_analysis.normalized_support >= 0.85
     assert raw.tempo_analysis.onset_count >= 12
     assert raw.tempo_analysis.time_coverage >= 0.75
+    assert raw.tempo_analysis.tempo_variation is not None
+    assert raw.tempo_analysis.tempo_variation.source == "librosa"
+    assert raw.tempo_analysis.tempo_variation.suspected is False
+    assert raw.tempo_analysis.tempo_variation.classification == "stable"
+    assert raw.tempo_analysis.tempo_variation.fixed_bpm_constrained is False
     assert [candidate.source for candidate in raw.tempo_candidates] == [
         "librosa",
         "librosa+onset-grid",
@@ -121,10 +126,16 @@ def test_real_audio_pipeline(
     assert serialized_analysis["tempo_analysis"]["accepted"] is True
     assert serialized_analysis["tempo_analysis"]["fallback_source"] == "librosa"
     assert serialized_analysis["tempo_analysis"]["decision_version"] == (
-        "tempo-arbitration-v2"
+        "tempo-arbitration-v3"
     )
     assert serialized_analysis["tempo_analysis"]["selected_score"] > 0.0
     assert serialized_analysis["tempo_analysis"]["ambiguous"] is False
+    variation = serialized_analysis["tempo_analysis"]["tempo_variation"]
+    assert variation["diagnostic_version"] == "tempo-variation-v1"
+    assert variation["classification"] == "stable"
+    assert variation["suspected"] is False
+    assert variation["fixed_bpm_mean_error_seconds"] is not None
+    assert variation["fixed_bpm_error_ratio"] is not None
     assert sum(
         candidate["selected"] for candidate in serialized_analysis["tempo_candidates"]
     ) == 1
@@ -283,7 +294,7 @@ def test_missing_instrument_models_fall_back_without_blocking_real_audio_generat
         instrument_model_dir=tmp_path / "missing-models",
     )
 
-    assert analysis.analysis_schema_version == 10
+    assert analysis.analysis_schema_version == 11
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "fallback"
     assert analysis.instrument_analysis_reason == "missing-model:manifest"

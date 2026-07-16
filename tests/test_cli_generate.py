@@ -222,7 +222,7 @@ def test_generate_with_instrument_analysis_records_config_and_analysis(tmp_path,
     assert saved_config["use_instrument_analysis"] is True
     assert saved_config["instrument_device"] == "cpu"
     assert saved_config["instrument_model_dir"] == str(model_dir)
-    assert analysis["analysis_schema_version"] == 10
+    assert analysis["analysis_schema_version"] == 11
     assert analysis["instrument_analysis_status"] == "complete"
     assert calls and calls[0][1]["device"] == "cpu"
     assert calls[0][1]["model_dir"] == model_dir

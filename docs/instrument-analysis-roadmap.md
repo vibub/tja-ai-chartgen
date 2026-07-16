@@ -785,7 +785,7 @@ AI payload 建议发送：
 | 10.2 定义候选证据 | 已完成 | 新增 `TempoMeterEvidence`，统一记录有效 onset、次佳差距、interval 统计、BeatNet beat number 完整性、meter 稳定性、downbeat onset/低频/percussive 支持、小节长度合理性、半速/倍速解释力，以及可选 drum/bass 辅助支持；证据暂不改变最终仲裁。 | `pytest tests/test_audio_analyze.py tests/test_audio_pipeline_integration.py tests/test_generation.py tests/test_cli_generate.py -q`。 |
 | 10.3 实现候选仲裁 | 已完成 | 新增 `tempo-arbitration-v1`：按 onset、覆盖率、interval、候选差距及 BeatNet beat number/meter/downbeat 证据评分，执行本地门控、跨候选拒绝、确定性择优，并在结论冲突且分差不足或 onset-grid 自身歧义时保守回退。 | `pytest tests/test_audio_analyze.py tests/test_audio_pipeline_integration.py tests/test_generation.py`；完整测试与 audio benchmark 测试。 |
 | 10.4 支持部分采用 | 已完成 | 新增 `tempo-arbitration-v2` 部分采用模式：当基础 BPM 与 BeatNet 四分音符 BPM 一致、tracker/meter/downbeat 证据可靠且候选不处于 ambiguity 时，保留基础 BPM，仅采用 BeatNet 拍号、downbeat 和小节相位。 | `pytest tests/test_audio_analyze.py tests/test_generation.py -q`；完整测试与 audio benchmark 测试。 |
-| 10.5 变速诊断 | 未开始 | 尚未记录固定 BPM 拟合误差和疑似 rubato。 | 尚未执行。 |
+| 10.5 变速诊断 | 已完成 | 新增 `tempo-variation-v1`：对原始 tracker beat 序列计算固定 BPM 平均/P95/最大误差、归一化误差、interval CV、异常 interval 比例、前后段漂移和相邻 interval 跳变，并区分稳定、疑似 tempo change、rubato 与非严格定速演奏；当前仍保守输出固定 BPM。 | `pytest tests/test_audio_analyze.py tests/test_audio_pipeline_integration.py tests/test_generation.py tests/test_cli_generate.py -q`；完整测试。 |
 | 10.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
 ## 10.1 候选模型
@@ -815,7 +815,7 @@ class TempoMeterCandidate(BaseModel):
 - BeatNet；
 - BeatNet + onset-grid。
 
-当前实现将候选保存在 `AudioAnalysisRaw.tempo_candidates`，并通过 `SongAnalysis.tempo_candidates` 写入当前 `analysis_schema_version=10` 的 `analysis.json`。`accepted` 只表示候选通过自身现有合法性或 onset-grid 门控，不代表已经完成候选间仲裁；最终择优和部分采用仍由 10.3、10.4 完成。旧分析缺少该字段时按空列表兼容读取。
+当前实现将候选保存在 `AudioAnalysisRaw.tempo_candidates`，并通过 `SongAnalysis.tempo_candidates` 写入当前 `analysis_schema_version=11` 的 `analysis.json`。`accepted` 只表示候选通过自身现有合法性或 onset-grid 门控，不代表已经完成候选间仲裁；最终择优和部分采用仍由 10.3、10.4 完成。旧分析缺少该字段时按空列表兼容读取。
 
 ## 10.2 证据
 
@@ -831,7 +831,7 @@ class TempoMeterCandidate(BaseModel):
 - 半速/倍速候选的解释力；
 - 可选 drum/bass onset 只能作为附加证据。
 
-当前 `TempoMeterEvidence` 具体持久化有效 onset 数、次佳 BPM/支持率、支持率差距、interval 数量/均值/变异系数、BeatNet beat number 完整性、完整 meter cycle 比例、downbeat 附近 onset/低频/percussive 及其组合支持、按四分音符 BPM 计算的小节长度合理性、half/double tempo 支持与 `none|half|double|both` 速度别名标签。启用 `instrument-v1` 时额外记录 downbeat 附近 drum/bass onset 均值，但不修改候选 confidence、accepted 或最终选择。`analysis_schema_version=10` 持久化这组 report-only 证据；10.3 才定义统一评分与拒绝阈值。
+当前 `TempoMeterEvidence` 具体持久化有效 onset 数、次佳 BPM/支持率、支持率差距、interval 数量/均值/变异系数、BeatNet beat number 完整性、完整 meter cycle 比例、downbeat 附近 onset/低频/percussive 及其组合支持、按四分音符 BPM 计算的小节长度合理性、half/double tempo 支持与 `none|half|double|both` 速度别名标签。启用 `instrument-v1` 时额外记录 downbeat 附近 drum/bass onset 均值，但不修改候选 confidence、accepted 或最终选择。`analysis_schema_version=11` 持久化这组 report-only 证据；10.3 才定义统一评分与拒绝阈值。
 
 ## 10.3 决策规则
 
@@ -845,20 +845,27 @@ class TempoMeterCandidate(BaseModel):
 
 `tempo-arbitration-v1` 完成了候选评分、拒绝、完整择优和 ambiguity 回退。10.4 将决策升级为 `tempo-arbitration-v2`：当完整 BeatNet 候选未胜出，但原始 `beatnet` 候选与最终基础 BPM 的差异不超过 3%，且时间覆盖率、interval 数量/稳定性、beat number 完整性、meter cycle、小节长度和 downbeat 支持全部通过门控时，可以进入部分采用。该模式继续使用基础候选的四分音符 BPM，只用 BeatNet 的 `time_signature`、downbeat 参考和小节相位重建规则 beat grid；BPM 不一致、downbeat 支持不足、tracker/meter 不可靠或统一仲裁处于 ambiguity 时不会部分采用。
 
-`TempoAnalysisDecision` 新增 `tempo_source`、`meter_source` 和 `partial_adoption`，部分采用时保留完整候选的 `selected_source`，并记录 `accepted=true`、`reason=adopted-beatnet-meter-downbeat`；最终 analyzer 使用 `<tempo-source>+beatnet-meter`，CLI/Web notice 以 `beatnet-meter-adopted` 明确提示混合来源。`analysis_schema_version=10` 持久化完整诊断；旧分析缺少新字段时分别按 `None`、`None` 和 `False` 兼容读取。手动 BPM/OFFSET/拍号覆盖仍在自动仲裁之后执行，覆盖前的混合来源诊断继续保留。
+`TempoAnalysisDecision` 新增 `tempo_source`、`meter_source` 和 `partial_adoption`，部分采用时保留完整候选的 `selected_source`，并记录 `accepted=true`、`reason=adopted-beatnet-meter-downbeat`；最终 analyzer 使用 `<tempo-source>+beatnet-meter`，CLI/Web notice 以 `beatnet-meter-adopted` 明确提示混合来源。`analysis_schema_version=11` 持久化完整诊断；旧分析缺少新字段时分别按 `None`、`None` 和 `False` 兼容读取。手动 BPM/OFFSET/拍号覆盖仍在自动仲裁之后执行，覆盖前的混合来源诊断继续保留。
 
-## 10.4 部分采用与固定 BPM 限制
+## 10.4 部分采用
 
-当前项目最终重建规则 beat grid。部分采用同样不会引入 tempo map；10.5 仍应记录：
+部分采用仅混合基础 BPM 与可靠 BeatNet meter/downbeat，不引入 tempo map 或非均匀 beat grid；具体门控、来源字段与持久化语义见上文 `tempo-arbitration-v2` 说明。
 
-- BeatNet beat interval 变异；
-- 固定 BPM 拟合误差；
-- 是否疑似变速、rubato 或现场演奏；
-- 因项目限制采用的保守结果。
+## 10.5 固定 BPM 拟合与变速诊断
 
-只有真实需求明确后，才独立设计 `#BPMCHANGE` 和非均匀小节时间轴。
+`tempo-arbitration-v3` 新增 report-only `tempo-variation-v1`。每个候选的 `TempoMeterEvidence` 记录固定 BPM 理论 interval、逐 beat 累积拟合的平均/P95/最大绝对误差、平均误差相对理论 interval 的比例、偏离理论 interval 超过 8% 的比例、首尾三分之一 interval 中位数漂移，以及最大相邻 interval 跳变。6/8 原始 BeatNet 候选按八分音符 pulse interval 拟合，但最终 BPM 继续使用项目统一的四分音符语义。
 
-## 10.5 默认开关
+歌曲级诊断优先使用具备至少 8 个 interval、时间覆盖率不低于 50% 的原始 BeatNet tracker；否则使用 librosa 原始 tracker，避免用规则重建的 onset-grid 制造零误差。`TempoVariationDiagnostic` 持久化诊断来源、证据数量、全部拟合指标、分类、置信度和 `fixed_bpm_constrained`：
+
+- 固定 BPM 误差低且 interval 稳定时分类为 `stable`；
+- 存在显著相邻 interval 跳变时分类为 `possible-tempo-change`；
+- 首尾 interval 持续漂移且无突变时分类为 `possible-rubato`；
+- interval 高变异且异常比例较高时分类为 `possible-live-performance`；
+- tracker interval 少于 8 个或覆盖率不足时分类为 `insufficient-evidence`。
+
+检测到疑似变化时只记录 `fixed_bpm_constrained=true` 并产生 `tempo-variation-suspected` warning，当前仍采用仲裁选出的固定 BPM 和规则 beat grid，不自动生成 `#BPMCHANGE`。只有真实需求明确后，才独立设计 tempo map 与非均匀小节时间轴。`analysis_schema_version=11` 持久化候选指标和歌曲级诊断；旧分析缺少字段时按 `None` 兼容读取。
+
+## Phase 4 默认开关
 
 在自动 benchmark 证明以下条件前，`--use-beatnet` 继续默认关闭：
 
@@ -882,7 +889,7 @@ class TempoMeterCandidate(BaseModel):
 - [x] 10.2 定义 onset、downbeat、meter、稳定性和速度别名证据
 - [x] 10.3 实现候选评分、拒绝、择优和 ambiguity 决策
 - [x] 10.4 支持保留原 BPM、仅采用 BeatNet meter/downbeat
-- [ ] 10.5 增加固定 BPM 拟合误差与疑似变速诊断
+- [x] 10.5 增加固定 BPM 拟合误差与疑似变速诊断
 - [ ] 10.6 执行 Phase 4 阶段验收
 
 ---

@@ -83,6 +83,114 @@ def _arbitration_candidate(
     )
 
 
+def _variation_candidate(intervals: list[float]) -> TempoMeterCandidate:
+    beat_times = [0.2]
+    for interval in intervals:
+        beat_times.append(beat_times[-1] + interval)
+    interval_count, mean_interval, interval_cv = (
+        audio_analyze._candidate_interval_statistics(beat_times)
+    )
+    fit_metrics = audio_analyze._fixed_bpm_fit_metrics(
+        beat_times,
+        fixed_interval_seconds=0.5,
+    )
+    return TempoMeterCandidate(
+        source="beatnet",
+        bpm=120,
+        offset=0.2,
+        time_signature="4/4",
+        beat_times=beat_times,
+        time_coverage=1.0,
+        interval_stability=max(0.0, 1.0 - (interval_cv or 0.0)),
+        evidence=TempoMeterEvidence(
+            interval_count=interval_count,
+            mean_interval_seconds=mean_interval,
+            interval_coefficient_of_variation=interval_cv,
+            **fit_metrics,
+        ),
+        accepted=True,
+    )
+
+
+def test_fixed_bpm_fit_metrics_are_zero_for_regular_grid():
+    candidate = _variation_candidate([0.5] * 16)
+
+    diagnostic = audio_analyze._tempo_variation_diagnostic(
+        [candidate],
+        selected_source="beatnet",
+    )
+
+    assert candidate.evidence.fixed_bpm_mean_error_seconds == 0.0
+    assert candidate.evidence.fixed_bpm_p95_error_seconds == 0.0
+    assert candidate.evidence.fixed_bpm_error_ratio == 0.0
+    assert candidate.evidence.interval_outlier_ratio == 0.0
+    assert candidate.evidence.interval_drift_ratio == 0.0
+    assert diagnostic.suspected is False
+    assert diagnostic.classification == "stable"
+    assert diagnostic.fixed_bpm_constrained is False
+    assert diagnostic.reason == "fixed-bpm-fit-stable"
+
+
+def test_tempo_variation_diagnostic_detects_abrupt_tempo_change():
+    candidate = _variation_candidate(([0.5] * 8) + ([0.65] * 8))
+
+    diagnostic = audio_analyze._tempo_variation_diagnostic(
+        [candidate],
+        selected_source="beatnet",
+    )
+
+    assert diagnostic.suspected is True
+    assert diagnostic.classification == "possible-tempo-change"
+    assert diagnostic.fixed_bpm_constrained is True
+    assert diagnostic.reason == "adjacent-interval-jump"
+    assert diagnostic.fixed_bpm_mean_error_seconds is not None
+    assert diagnostic.fixed_bpm_mean_error_seconds > 0.1
+
+
+def test_tempo_variation_diagnostic_detects_gradual_rubato():
+    candidate = _variation_candidate(np.linspace(0.46, 0.54, 18).tolist())
+
+    diagnostic = audio_analyze._tempo_variation_diagnostic(
+        [candidate],
+        selected_source="beatnet",
+    )
+
+    assert diagnostic.suspected is True
+    assert diagnostic.classification == "possible-rubato"
+    assert diagnostic.reason == "sustained-interval-drift"
+    assert diagnostic.interval_drift_ratio is not None
+    assert diagnostic.interval_drift_ratio > 0.1
+
+
+def test_tempo_variation_diagnostic_detects_irregular_live_performance():
+    candidate = _variation_candidate(
+        [0.45, 0.47, 0.5, 0.53, 0.55, 0.53, 0.5, 0.47, 0.45] * 2
+    )
+
+    diagnostic = audio_analyze._tempo_variation_diagnostic(
+        [candidate],
+        selected_source="beatnet",
+    )
+
+    assert diagnostic.suspected is True
+    assert diagnostic.classification == "possible-live-performance"
+    assert diagnostic.reason == "irregular-intervals"
+
+
+def test_tempo_variation_diagnostic_requires_enough_tracker_evidence():
+    candidate = _variation_candidate([0.65] * 4)
+
+    diagnostic = audio_analyze._tempo_variation_diagnostic(
+        [candidate],
+        selected_source="beatnet",
+    )
+
+    assert diagnostic.suspected is False
+    assert diagnostic.classification == "insufficient-evidence"
+    assert diagnostic.confidence == 0.0
+    assert diagnostic.reason == "insufficient-tracker-evidence"
+
+
 def test_arbitration_rejects_beatnet_when_onset_support_is_below_baseline():
     baseline = _arbitration_candidate("librosa+onset-grid", onset_support=0.92)
     beatnet = _arbitration_candidate("beatnet", onset_support=0.7)
@@ -198,7 +306,7 @@ def test_apply_arbitration_preserves_bpm_and_adopts_reliable_beatnet_meter():
     assert updated.downbeat_times[:2] == [0.2, 1.7]
     assert updated.analyzer == "librosa+onset-grid+beatnet-meter"
     assert updated.tempo_analysis is not None
-    assert updated.tempo_analysis.decision_version == "tempo-arbitration-v2"
+    assert updated.tempo_analysis.decision_version == "tempo-arbitration-v3"
     assert updated.tempo_analysis.selected_source == "librosa+onset-grid"
     assert updated.tempo_analysis.tempo_source == "librosa+onset-grid"
     assert updated.tempo_analysis.meter_source == "beatnet"
@@ -857,6 +965,14 @@ def test_merge_beatnet_output_records_meter_downbeat_and_alias_evidence():
     assert evidence.interval_count == 6
     assert evidence.mean_interval_seconds == 0.5
     assert evidence.interval_coefficient_of_variation == 0.0
+    assert evidence.fixed_bpm_interval_seconds == 0.5
+    assert evidence.fixed_bpm_mean_error_seconds == 0.0
+    assert evidence.fixed_bpm_p95_error_seconds == 0.0
+    assert evidence.fixed_bpm_max_error_seconds == 0.0
+    assert evidence.fixed_bpm_error_ratio == 0.0
+    assert evidence.interval_outlier_ratio == 0.0
+    assert evidence.interval_drift_ratio == 0.0
+    assert evidence.max_adjacent_interval_change_ratio == 0.0
     assert evidence.beat_number_completeness == 1.0
     assert evidence.meter_stability == 1.0
     assert evidence.meter_length_score == 1.0
@@ -951,6 +1067,12 @@ def test_merge_beatnet_output_converts_six_eight_pulses_to_quarter_note_bpm():
     assert updated.beat_times[:4] == [0.25, 0.75, 1.25, 1.75]
     assert updated.beat_numbers[:4] == [1, 2, 3, 1]
     assert updated.downbeat_times[:2] == [0.25, 1.75]
+    beatnet = next(
+        candidate for candidate in updated.tempo_candidates if candidate.source == "beatnet"
+    )
+    assert beatnet.evidence.fixed_bpm_interval_seconds == 0.25
+    assert beatnet.evidence.fixed_bpm_mean_error_seconds == 0.0
+    assert beatnet.evidence.fixed_bpm_error_ratio == 0.0
 
 
 def test_six_eight_beatnet_analysis_builds_one_full_length_tja_bar():
@@ -1099,7 +1221,7 @@ def test_merge_beatnet_output_refines_timing_with_onset_grid():
     assert updated.tempo_analysis is not None
     assert updated.tempo_analysis.accepted is True
     assert updated.tempo_analysis.selected_source == "beatnet+onset-grid"
-    assert updated.tempo_analysis.decision_version == "tempo-arbitration-v2"
+    assert updated.tempo_analysis.decision_version == "tempo-arbitration-v3"
     assert [candidate.source for candidate in updated.tempo_candidates] == [
         "librosa",
         "librosa+onset-grid",

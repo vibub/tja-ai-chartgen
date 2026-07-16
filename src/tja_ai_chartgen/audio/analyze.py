@@ -17,6 +17,7 @@ from tja_ai_chartgen.tja.model import (
     TempoAnalysisDecision,
     TempoMeterCandidate,
     TempoMeterEvidence,
+    TempoVariationDiagnostic,
 )
 
 
@@ -37,7 +38,15 @@ FULL_ONSET_GRID_EVIDENCE_COVERAGE = 0.9
 MAX_ONSET_GRID_RUNNER_UP_RATIO = 0.9
 MIN_DISTINCT_BPM_DISTANCE = 3.0
 MIN_DISTINCT_BPM_RATIO = 0.03
-TEMPO_ARBITRATION_VERSION = "tempo-arbitration-v2"
+TEMPO_ARBITRATION_VERSION = "tempo-arbitration-v3"
+TEMPO_VARIATION_MIN_INTERVALS = 8
+TEMPO_VARIATION_MIN_COVERAGE = 0.5
+TEMPO_VARIATION_FIT_ERROR_RATIO = 0.04
+TEMPO_VARIATION_INTERVAL_OUTLIER_DEVIATION = 0.08
+TEMPO_VARIATION_OUTLIER_RATIO = 0.2
+TEMPO_VARIATION_DRIFT_RATIO = 0.06
+TEMPO_VARIATION_ADJACENT_CHANGE_RATIO = 0.12
+TEMPO_VARIATION_INTERVAL_CV = 0.06
 MIN_TEMPO_CANDIDATE_SCORE = 0.45
 MIN_BEATNET_INTERVAL_STABILITY = 0.8
 MIN_BEATNET_NUMBER_COMPLETENESS = 0.7
@@ -625,6 +634,69 @@ def _candidate_interval_statistics(
     return int(intervals.size), round(mean_interval, 6), round(coefficient, 6)
 
 
+def _fixed_bpm_fit_metrics(
+    beat_times: list[float],
+    *,
+    fixed_interval_seconds: float,
+) -> dict[str, float | None]:
+    empty = {
+        "fixed_bpm_interval_seconds": None,
+        "fixed_bpm_mean_error_seconds": None,
+        "fixed_bpm_p95_error_seconds": None,
+        "fixed_bpm_max_error_seconds": None,
+        "fixed_bpm_error_ratio": None,
+        "interval_outlier_ratio": None,
+        "interval_drift_ratio": None,
+        "max_adjacent_interval_change_ratio": None,
+    }
+    if fixed_interval_seconds <= 0:
+        return empty
+    times = np.asarray(
+        [value for value in beat_times if np.isfinite(value)],
+        dtype=float,
+    )
+    if times.size < 2 or np.any(np.diff(times) <= 0):
+        return empty
+
+    expected = times[0] + np.arange(times.size, dtype=float) * fixed_interval_seconds
+    errors = np.abs(times - expected)[1:]
+    intervals = np.diff(times)
+    relative_interval_errors = np.abs(intervals - fixed_interval_seconds) / fixed_interval_seconds
+    segment_size = max(1, intervals.size // 3)
+    early_interval = float(np.median(intervals[:segment_size]))
+    late_interval = float(np.median(intervals[-segment_size:]))
+    adjacent_changes = (
+        np.abs(np.diff(intervals)) / fixed_interval_seconds
+        if intervals.size >= 2
+        else np.asarray([], dtype=float)
+    )
+    mean_error = float(np.mean(errors))
+    return {
+        "fixed_bpm_interval_seconds": round(fixed_interval_seconds, 6),
+        "fixed_bpm_mean_error_seconds": round(mean_error, 6),
+        "fixed_bpm_p95_error_seconds": round(float(np.percentile(errors, 95)), 6),
+        "fixed_bpm_max_error_seconds": round(float(np.max(errors)), 6),
+        "fixed_bpm_error_ratio": round(mean_error / fixed_interval_seconds, 6),
+        "interval_outlier_ratio": round(
+            float(
+                np.mean(
+                    relative_interval_errors
+                    >= TEMPO_VARIATION_INTERVAL_OUTLIER_DEVIATION
+                )
+            ),
+            6,
+        ),
+        "interval_drift_ratio": round(
+            (late_interval - early_interval) / fixed_interval_seconds,
+            6,
+        ),
+        "max_adjacent_interval_change_ratio": round(
+            float(np.max(adjacent_changes, initial=0.0)),
+            6,
+        ),
+    }
+
+
 def _beat_number_completeness(beat_numbers: list[int], time_signature: str) -> float:
     expected_size = {"3/4": 3, "4/4": 4, "6/8": 6}[time_signature]
     if len(beat_numbers) < 2:
@@ -740,6 +812,7 @@ def _tempo_meter_evidence(
     sample_rate: int | None,
     hop_length: int,
     beat_numbers: list[int] | None = None,
+    fixed_interval_seconds: float | None = None,
     onset_support: float | None = None,
     runner_up_bpm: float | None = None,
     runner_up_support: float | None = None,
@@ -794,6 +867,12 @@ def _tempo_meter_evidence(
         if runner_up_support is not None
         else max(half_tempo_support, double_tempo_support)
     )
+    fit_metrics = _fixed_bpm_fit_metrics(
+        beat_times,
+        fixed_interval_seconds=(
+            fixed_interval_seconds if fixed_interval_seconds is not None else 60.0 / bpm
+        ),
+    )
     evidence = TempoMeterEvidence(
         onset_count=sum(
             np.isfinite(time) and np.isfinite(weight) and time >= 0 and weight > 0
@@ -805,6 +884,7 @@ def _tempo_meter_evidence(
         interval_count=interval_count,
         mean_interval_seconds=mean_interval,
         interval_coefficient_of_variation=interval_coefficient,
+        **fit_metrics,
         beat_number_completeness=_beat_number_completeness(
             beat_numbers or [],
             time_signature,
@@ -1003,6 +1083,124 @@ def _tempo_source_priority(source: str, fallback_source: str) -> int:
     return 0
 
 
+def _tempo_variation_diagnostic(
+    candidates: list[TempoMeterCandidate],
+    *,
+    selected_source: str,
+) -> TempoVariationDiagnostic:
+    observed = [
+        candidate
+        for candidate in candidates
+        if candidate.source in {"librosa", "beatnet"}
+    ]
+    if not observed:
+        observed = [
+            next(
+                candidate
+                for candidate in candidates
+                if candidate.source == selected_source
+            )
+        ]
+    candidate = max(
+        observed,
+        key=lambda item: (
+            item.evidence.interval_count >= TEMPO_VARIATION_MIN_INTERVALS
+            and item.time_coverage >= TEMPO_VARIATION_MIN_COVERAGE,
+            item.source == "beatnet",
+            item.evidence.interval_count,
+            item.time_coverage,
+        ),
+    )
+    evidence = candidate.evidence
+    common = {
+        "source": candidate.source,
+        "beat_count": evidence.interval_count + 1 if evidence.interval_count else 0,
+        "time_coverage": candidate.time_coverage,
+        "fixed_bpm_mean_error_seconds": evidence.fixed_bpm_mean_error_seconds,
+        "fixed_bpm_p95_error_seconds": evidence.fixed_bpm_p95_error_seconds,
+        "fixed_bpm_max_error_seconds": evidence.fixed_bpm_max_error_seconds,
+        "fixed_bpm_error_ratio": evidence.fixed_bpm_error_ratio,
+        "interval_coefficient_of_variation": evidence.interval_coefficient_of_variation,
+        "interval_outlier_ratio": evidence.interval_outlier_ratio,
+        "interval_drift_ratio": evidence.interval_drift_ratio,
+        "max_adjacent_interval_change_ratio": (
+            evidence.max_adjacent_interval_change_ratio
+        ),
+    }
+    if (
+        evidence.interval_count < TEMPO_VARIATION_MIN_INTERVALS
+        or candidate.time_coverage < TEMPO_VARIATION_MIN_COVERAGE
+        or evidence.fixed_bpm_error_ratio is None
+    ):
+        return TempoVariationDiagnostic(**common)
+
+    fit_error = evidence.fixed_bpm_error_ratio
+    interval_cv = evidence.interval_coefficient_of_variation or 0.0
+    outlier_ratio = evidence.interval_outlier_ratio or 0.0
+    drift_ratio = evidence.interval_drift_ratio or 0.0
+    adjacent_change = evidence.max_adjacent_interval_change_ratio or 0.0
+    evidence_confidence = min(1.0, evidence.interval_count / 32.0) * min(
+        1.0,
+        candidate.time_coverage / 0.8,
+    )
+    suspected = False
+    classification = "stable"
+    reason = "fixed-bpm-fit-stable"
+    severity = max(
+        fit_error / TEMPO_VARIATION_FIT_ERROR_RATIO,
+        interval_cv / TEMPO_VARIATION_INTERVAL_CV,
+        outlier_ratio / TEMPO_VARIATION_OUTLIER_RATIO,
+    )
+    if (
+        fit_error >= TEMPO_VARIATION_FIT_ERROR_RATIO
+        and adjacent_change >= TEMPO_VARIATION_ADJACENT_CHANGE_RATIO
+    ):
+        suspected = True
+        classification = "possible-tempo-change"
+        reason = "adjacent-interval-jump"
+        severity = max(
+            fit_error / TEMPO_VARIATION_FIT_ERROR_RATIO,
+            adjacent_change / TEMPO_VARIATION_ADJACENT_CHANGE_RATIO,
+        )
+    elif (
+        fit_error >= TEMPO_VARIATION_FIT_ERROR_RATIO
+        and abs(drift_ratio) >= TEMPO_VARIATION_DRIFT_RATIO
+    ):
+        suspected = True
+        classification = "possible-rubato"
+        reason = "sustained-interval-drift"
+        severity = max(
+            fit_error / TEMPO_VARIATION_FIT_ERROR_RATIO,
+            abs(drift_ratio) / TEMPO_VARIATION_DRIFT_RATIO,
+        )
+    elif (
+        fit_error >= TEMPO_VARIATION_FIT_ERROR_RATIO * 0.75
+        and interval_cv >= TEMPO_VARIATION_INTERVAL_CV
+        and outlier_ratio >= TEMPO_VARIATION_OUTLIER_RATIO
+    ):
+        suspected = True
+        classification = "possible-live-performance"
+        reason = "irregular-intervals"
+        severity = max(
+            fit_error / (TEMPO_VARIATION_FIT_ERROR_RATIO * 0.75),
+            interval_cv / TEMPO_VARIATION_INTERVAL_CV,
+            outlier_ratio / TEMPO_VARIATION_OUTLIER_RATIO,
+        )
+    confidence = (
+        evidence_confidence * min(1.0, severity)
+        if suspected
+        else evidence_confidence * max(0.0, 1.0 - min(1.0, severity) * 0.5)
+    )
+    return TempoVariationDiagnostic(
+        **common,
+        suspected=suspected,
+        classification=classification,
+        confidence=round(confidence, 6),
+        fixed_bpm_constrained=suspected,
+        reason=reason,
+    )
+
+
 def arbitrate_tempo_candidates(
     candidates: list[TempoMeterCandidate],
     *,
@@ -1150,6 +1348,10 @@ def arbitrate_tempo_candidates(
         score_margin=score_margin,
         ambiguous=ambiguous,
         candidate_rejections=rejections,
+        tempo_variation=_tempo_variation_diagnostic(
+            updated,
+            selected_source=selected.source,
+        ),
         accepted=selected.source != fallback_source and not ambiguous,
         reason=decision_reason,
     )
@@ -1795,6 +1997,7 @@ def merge_beatnet_output(raw: AudioAnalysisRaw, output: Any) -> AudioAnalysisRaw
         sample_rate=raw.sample_rate,
         hop_length=raw.hop_length,
         beat_numbers=beatnet_beat_numbers,
+        fixed_interval_seconds=(30.0 / bpm if time_signature == "6/8" else 60.0 / bpm),
     )
     beatnet_candidate = _tempo_candidate(
         source="beatnet",

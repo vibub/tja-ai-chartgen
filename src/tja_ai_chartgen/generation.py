@@ -175,7 +175,7 @@ def build_song_analysis(
         for phrase in structure.phrases
     ]
     return SongAnalysis(
-        analysis_schema_version=10,
+        analysis_schema_version=11,
         beatnet_analysis_status=raw.beatnet_analysis_status,
         beatnet_analysis_reason=raw.beatnet_analysis_reason,
         spectral_feature_version=raw.spectral.feature_version,
@@ -271,6 +271,28 @@ def build_analysis_notices(
                     detail=f"reason={analysis.beatnet_analysis_reason or 'unknown'}",
                 )
             )
+
+    variation = tempo.tempo_variation if tempo is not None else None
+    if variation is not None and variation.suspected:
+        notices.append(
+            GenerationNotice(
+                code="tempo-variation-suspected",
+                level="warning",
+                stage="analysis",
+                message=(
+                    "检测到疑似变速、rubato 或非严格定速演奏；"
+                    "当前版本仍使用固定 BPM。"
+                ),
+                detail=(
+                    f"source={variation.source}; "
+                    f"classification={variation.classification}; "
+                    f"mean_error={variation.fixed_bpm_mean_error_seconds or 0.0:.4f}s; "
+                    f"p95_error={variation.fixed_bpm_p95_error_seconds or 0.0:.4f}s; "
+                    f"interval_cv={variation.interval_coefficient_of_variation or 0.0:.4f}; "
+                    f"reason={variation.reason}"
+                ),
+            )
+        )
 
     if analysis.spectral_analysis_status == "fallback":
         notices.append(

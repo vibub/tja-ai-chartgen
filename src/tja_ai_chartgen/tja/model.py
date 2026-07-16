@@ -146,6 +146,14 @@ class TempoMeterEvidence(BaseModel):
     interval_count: int = Field(default=0, ge=0)
     mean_interval_seconds: float | None = Field(default=None, gt=0.0)
     interval_coefficient_of_variation: float | None = Field(default=None, ge=0.0)
+    fixed_bpm_interval_seconds: float | None = Field(default=None, gt=0.0)
+    fixed_bpm_mean_error_seconds: float | None = Field(default=None, ge=0.0)
+    fixed_bpm_p95_error_seconds: float | None = Field(default=None, ge=0.0)
+    fixed_bpm_max_error_seconds: float | None = Field(default=None, ge=0.0)
+    fixed_bpm_error_ratio: float | None = Field(default=None, ge=0.0)
+    interval_outlier_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    interval_drift_ratio: float | None = None
+    max_adjacent_interval_change_ratio: float | None = Field(default=None, ge=0.0)
     beat_number_completeness: float = Field(default=0.0, ge=0.0, le=1.0)
     meter_stability: float = Field(default=0.0, ge=0.0, le=1.0)
     downbeat_onset_support: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -178,6 +186,26 @@ class TempoMeterCandidate(BaseModel):
     reason: str | None = None
 
 
+class TempoVariationDiagnostic(BaseModel):
+    diagnostic_version: str = "tempo-variation-v1"
+    source: str
+    beat_count: int = Field(default=0, ge=0)
+    time_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    fixed_bpm_mean_error_seconds: float | None = Field(default=None, ge=0.0)
+    fixed_bpm_p95_error_seconds: float | None = Field(default=None, ge=0.0)
+    fixed_bpm_max_error_seconds: float | None = Field(default=None, ge=0.0)
+    fixed_bpm_error_ratio: float | None = Field(default=None, ge=0.0)
+    interval_coefficient_of_variation: float | None = Field(default=None, ge=0.0)
+    interval_outlier_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    interval_drift_ratio: float | None = None
+    max_adjacent_interval_change_ratio: float | None = Field(default=None, ge=0.0)
+    suspected: bool = False
+    classification: str = "insufficient-evidence"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    fixed_bpm_constrained: bool = False
+    reason: str = "insufficient-tracker-evidence"
+
+
 class TempoAnalysisDecision(BaseModel):
     decision_version: str = "legacy"
     fallback_source: str
@@ -198,6 +226,7 @@ class TempoAnalysisDecision(BaseModel):
     score_margin: float | None = Field(default=None, ge=0.0, le=1.0)
     ambiguous: bool = False
     candidate_rejections: dict[str, str] = Field(default_factory=dict)
+    tempo_variation: TempoVariationDiagnostic | None = None
     accepted: bool
     reason: str
 
