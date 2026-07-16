@@ -493,8 +493,52 @@ def test_build_analysis_notices_reports_instrument_analysis_status(
     instrument_notice = next(notice for notice in notices if notice.code == expected_code)
     assert instrument_notice.level == expected_level
     assert instrument_notice.stage == "analysis"
-    if reason is not None:
+    if status == "complete":
+        assert instrument_notice.detail == "feature_version=instrument-v1"
+    elif status == "partial":
+        assert instrument_notice.detail == (
+            f"feature_version=instrument-v1; legacy=true; reason={reason}"
+        )
+    elif reason is not None:
         assert instrument_notice.detail == f"reason={reason}"
+
+
+def test_build_analysis_notices_distinguishes_stem_role_success_and_classifier_fallback():
+    stem_success = _analysis().model_copy(
+        update={
+            "instrument_feature_version": "stem-role-v1",
+            "instrument_analysis_status": "complete",
+            "instrument_analysis_reason": None,
+            "instrument_classifier_model": None,
+        }
+    )
+    classifier_fallback = stem_success.model_copy(
+        update={"instrument_analysis_reason": "classifier-load-error:OSError"}
+    )
+
+    success_notices = build_analysis_notices(
+        stem_success,
+        requested_instrument_analysis=True,
+    )
+    fallback_notices = build_analysis_notices(
+        classifier_fallback,
+        requested_instrument_analysis=True,
+    )
+
+    assert [notice.code for notice in success_notices] == [
+        "instrument-analysis-succeeded"
+    ]
+    assert success_notices[0].level == "info"
+    assert success_notices[0].message == "声部角色分析已完成。"
+    assert success_notices[0].detail == "feature_version=stem-role-v1"
+    assert [notice.code for notice in fallback_notices] == [
+        "instrument-classifier-fallback"
+    ]
+    assert fallback_notices[0].level == "warning"
+    assert "声部角色分析已完整生效" in fallback_notices[0].message
+    assert fallback_notices[0].detail == (
+        "feature_version=stem-role-v1; reason=classifier-load-error:OSError"
+    )
 
 
 def test_generate_chart_bars_falls_back_and_builds_quality_report(monkeypatch):

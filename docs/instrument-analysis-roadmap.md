@@ -915,7 +915,7 @@ class TempoMeterCandidate(BaseModel):
 | 11.1 复用 stem activity/onset | 已完成 | instrument-v1 已提供 vocals/drums/bass/other activity 与 onset。 | 现有 instrument 测试和真实模型 smoke 已覆盖。 |
 | 11.2 定义 stem-role 轻量模式 | 已完成 | 新增 `stem-role` profile：独立默认目录 `models/stem-role-v1/`、统一兼容 manifest、仅准备/校验/离线加载 htdemucs，并由 CLI、GenerationConfig 与 Web 显式选择；旧 `instrument-v1` full profile 继续兼容。 | `tests/test_instrument_models.py`、`tests/test_instruments.py`、`tests/test_cli_instruments.py`、`tests/test_cli_generate.py`、`tests/test_web.py`。 |
 | 11.3 接入 RhythmicSalience | 已完成 | canonical rhythmic evidence 已对齐 vocal/drum/bass/accompaniment onset 与对应 bar activity；drum onset 经活动门控后进入 hit/accent/burst，bass 只增强 beat/downbeat 与 don preference，vocal 和 accompaniment 只修正已有 phrase/cadence/highlight 候选。stem 与 mix/spectral 一致时提高强度和置信度，冲突时限制 drum 上限，非 drum stem 不独立制造 hit。 | `tests/test_rhythmic_salience.py`、`tests/test_salience_candidates.py`、`tests/test_fallback_generator.py`。 |
-| 11.4 保持 partial/fallback | 部分完成 | `stem-role-v1` 在 Demucs 与 stem frame 成功后已正式返回 complete 且 classifier 为 `null`；旧 full profile 的 AST 失败仍保留 Demucs 证据并返回 partial，模型或分离失败继续 fallback。salience 在没有 stem grid 时保持原结果，尚待独立复核全部持久化与通知语义。 | 新增 stem-role complete 与无 stem salience 回归测试，现有 full partial/fallback 测试继续通过。 |
+| 11.4 保持 partial/fallback | 已完成 | `complete` 统一表示当前 feature 的 stem 能力完整：stem-role 成功直接 complete；full profile 的 AST 文件缺失、依赖/加载或推理失败时降级为 `stem-role-v1 complete`，保留分类失败 reason 并发出独立 warning。只有没有 stem 证据时才 fallback；partial 保留给真实部分 stem/后处理失败及旧 `instrument-v1 partial` 兼容读取。旧 status、reason 和模型字段不被重写。 | `tests/test_instruments.py`、`tests/test_instrument_models.py`、`tests/test_generation.py`、`tests/test_web.py` 覆盖新状态、classifier 降级、旧 JSON 与通知持久化。 |
 | 11.5 控制模型与性能成本 | 部分完成 | 已有设备选择、segment、overlap 和 CUDA OOM 重试。 | 尚未测量 stem-role 轻量 profile。 |
 | 11.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
@@ -1003,6 +1003,17 @@ stem-role-v1
 
 旧 `instrument-v1` JSON 继续兼容读取。
 
+当前状态契约已经落实为：
+
+- `stem-role` profile 的 Demucs 与 stem frame 成功后写入 `stem-role-v1 complete`，classifier 为 `null`；
+- `full` profile 的 Demucs 与 AST 均成功时继续写入旧兼容的 `instrument-v1 complete`；
+- `full` profile 的 AST 文件缺失、Transformers 依赖缺失、模型加载或推理失败时，不再把完整 stem 结果标成 partial，而是写入 `stem-role-v1 complete`，将分类失败保留在 reason，并产生 `instrument-classifier-fallback` warning；
+- 旧 full manifest 即使 AST 组件缺失，只要 Demucs 组件仍可验证，也允许离线运行 separator 并降级到上述 stem-role 结果；
+- Demucs、stem frame 或设备不可用且没有 stem 证据时才写入 fallback；
+- partial 仅保留给未来真实部分 stem/后处理失败，以及兼容读取历史 `instrument-v1 partial` JSON；旧 JSON 的 feature version、status、reason 和模型字段按原值保留，不在读取时静默改写。
+
+上述调整不新增 `analysis.json` 字段，因此当前不提高 `analysis_schema_version`。
+
 ## 11.4 融合原则
 
 - drum onset 权重高于通用 mix onset，但仍需活动门控；
@@ -1036,7 +1047,7 @@ stem-role-v1
 - [x] 11.1 复用现有 vocals、drums、bass、other activity/onset
 - [x] 11.2 定义只需要 `htdemucs` 的 stem-role 轻量模式
 - [x] 11.3 将 stem activity/onset 接入 `RhythmicSalience`
-- [ ] 11.4 调整 complete、partial、fallback 与旧 instrument-v1 兼容语义
+- [x] 11.4 调整 complete、partial、fallback 与旧 instrument-v1 兼容语义
 - [ ] 11.5 验证模型准备、离线加载、设备和性能成本
 - [ ] 11.6 执行 Phase 5 阶段验收
 

@@ -13,7 +13,11 @@ from tja_ai_chartgen.audio.analyze import (
     enrich_tempo_candidates_with_instruments,
 )
 from tja_ai_chartgen.audio.convert import convert_to_ogg
-from tja_ai_chartgen.audio.instrument_models import resolve_instrument_model_dir
+from tja_ai_chartgen.audio.instrument_models import (
+    INSTRUMENT_FEATURE_VERSION,
+    STEM_ROLE_FEATURE_VERSION,
+    resolve_instrument_model_dir,
+)
 from tja_ai_chartgen.audio.instruments import AST_WINDOW_SECONDS, analyze_instruments
 from tja_ai_chartgen.cancellation import GenerationCancelledError, raise_if_cancelled
 from tja_ai_chartgen.features.bars import build_bar_features
@@ -319,23 +323,58 @@ def build_analysis_notices(
     if requested_instrument_analysis:
         status = analysis.instrument_analysis_status
         reason = analysis.instrument_analysis_reason or "unknown"
-        if status == "complete":
+        feature_version = analysis.instrument_feature_version
+        if (
+            status == "complete"
+            and feature_version == STEM_ROLE_FEATURE_VERSION
+            and analysis.instrument_analysis_reason is not None
+        ):
+            notices.append(
+                GenerationNotice(
+                    code="instrument-classifier-fallback",
+                    level="warning",
+                    stage="analysis",
+                    message=(
+                        "声部角色分析已完整生效；具体乐器分类未生效，"
+                        "生成将继续使用 stem activity/onset。"
+                    ),
+                    detail=(
+                        f"feature_version={STEM_ROLE_FEATURE_VERSION}; "
+                        f"reason={reason}"
+                    ),
+                )
+            )
+        elif status == "complete":
+            message = (
+                "声部角色分析已完成。"
+                if feature_version == STEM_ROLE_FEATURE_VERSION
+                else "人声与乐器语义分析已完成。"
+            )
             notices.append(
                 GenerationNotice(
                     code="instrument-analysis-succeeded",
                     level="info",
                     stage="analysis",
-                    message="人声与乐器语义分析已完成。",
+                    message=message,
+                    detail=f"feature_version={feature_version or 'unknown'}",
                 )
             )
         elif status == "partial":
+            legacy = feature_version == INSTRUMENT_FEATURE_VERSION
             notices.append(
                 GenerationNotice(
                     code="instrument-analysis-partial",
                     level="warning",
                     stage="analysis",
-                    message="人声与乐器分析仅部分生效，已使用可用证据继续生成。",
-                    detail=f"reason={reason}",
+                    message=(
+                        "旧 instrument-v1 分析仅部分生效，已兼容使用其中的 stem 证据。"
+                        if legacy
+                        else "声部分析仅部分生效，已使用可用证据继续生成。"
+                    ),
+                    detail=(
+                        f"feature_version={feature_version or 'unknown'}; "
+                        f"legacy={str(legacy).lower()}; reason={reason}"
+                    ),
                 )
             )
         else:

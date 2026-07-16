@@ -101,6 +101,30 @@ def test_validate_instrument_model_dir_accepts_complete_local_tree(tmp_path):
     assert result.classifier_revision == AST_MODEL_REVISION
 
 
+def test_validate_full_manifest_can_check_stem_component_without_ast(tmp_path):
+    demucs_dir = tmp_path / "demucs"
+    demucs_dir.mkdir()
+    (demucs_dir / "htdemucs.yaml").write_text("models: [test]\n", encoding="utf-8")
+    (demucs_dir / "test-deadbeef.th").write_bytes(b"demucs")
+    manifest = InstrumentModelManifest(
+        demucs_revision="test-deadbeef.th",
+        files={"demucs/test-deadbeef.th": "unused-without-hash-verification"},
+    )
+    write_json(tmp_path / "instrument_models.json", manifest)
+
+    with pytest.raises(InstrumentModelError) as captured:
+        validate_instrument_model_dir(tmp_path, profile="full")
+    assert captured.value.reason == "missing-model:ast"
+
+    result = validate_instrument_model_dir(
+        tmp_path,
+        profile="full",
+        require_classifier=False,
+    )
+
+    assert result == manifest
+
+
 def test_validate_instrument_model_dir_accepts_stem_role_tree_without_ast(tmp_path):
     demucs_dir = tmp_path / "demucs"
     demucs_dir.mkdir()

@@ -111,6 +111,18 @@ class InstrumentAnalysisRaw(BaseModel):
     stem_frames: list[StemActivityFrame] = Field(default_factory=list)
     classification_windows: list[InstrumentClassificationWindow] = Field(default_factory=list)
 
+    @property
+    def has_stem_evidence(self) -> bool:
+        return bool(self.stem_frames) and self.status in {"complete", "partial"}
+
+    @property
+    def has_classifier_evidence(self) -> bool:
+        return bool(self.classification_windows)
+
+    @property
+    def uses_legacy_instrument_semantics(self) -> bool:
+        return self.feature_version == INSTRUMENT_FEATURE_VERSION
+
 
 class InstrumentAnalysisError(RuntimeError):
     def __init__(self, reason: str):
@@ -134,10 +146,21 @@ def analyze_instruments(
         return instrument_fallback("invalid-sample-rate", profile=profile)
     if analysis_hop_length <= 0:
         return instrument_fallback("invalid-hop-length", profile=profile)
+    classifier_preflight_reason: str | None = None
     try:
         validate_instrument_model_dir(model_dir, profile=profile)
     except InstrumentModelError as error:
-        return instrument_fallback(error.reason, profile=profile)
+        if profile != "full":
+            return instrument_fallback(error.reason, profile=profile)
+        try:
+            validate_instrument_model_dir(
+                model_dir,
+                profile=profile,
+                require_classifier=False,
+            )
+        except InstrumentModelError as stem_error:
+            return instrument_fallback(stem_error.reason, profile=profile)
+        classifier_preflight_reason = error.reason
 
     try:
         torch = _import_torch()
@@ -181,6 +204,13 @@ def analyze_instruments(
             analyzed_duration=round(float(analyzed_duration), 6),
             stem_frames=frames,
         )
+    if classifier_preflight_reason is not None:
+        return _classifier_fallback_result(
+            reason=classifier_preflight_reason,
+            device=selected_device,
+            analyzed_duration=analyzed_duration,
+            frames=frames,
+        )
 
     try:
         windows = _classify_stems(
@@ -192,26 +222,18 @@ def analyze_instruments(
             torch=torch,
         )
     except InstrumentAnalysisError as error:
-        return InstrumentAnalysisRaw(
-            feature_version=INSTRUMENT_FEATURE_VERSION,
-            status="partial",
+        return _classifier_fallback_result(
             reason=error.reason,
-            demucs_model=DEMUCS_MODEL_NAME,
-            classifier_model=AST_MODEL_ID,
             device=selected_device,
-            analyzed_duration=round(float(analyzed_duration), 6),
-            stem_frames=frames,
+            analyzed_duration=analyzed_duration,
+            frames=frames,
         )
     except Exception as error:  # noqa: BLE001 - Demucs evidence remains usable.
-        return InstrumentAnalysisRaw(
-            feature_version=INSTRUMENT_FEATURE_VERSION,
-            status="partial",
+        return _classifier_fallback_result(
             reason=f"classifier-error:{type(error).__name__}",
-            demucs_model=DEMUCS_MODEL_NAME,
-            classifier_model=AST_MODEL_ID,
             device=selected_device,
-            analyzed_duration=round(float(analyzed_duration), 6),
-            stem_frames=frames,
+            analyzed_duration=analyzed_duration,
+            frames=frames,
         )
 
     return InstrumentAnalysisRaw(
@@ -223,6 +245,26 @@ def analyze_instruments(
         analyzed_duration=round(float(analyzed_duration), 6),
         stem_frames=frames,
         classification_windows=windows,
+    )
+
+
+def _classifier_fallback_result(
+    *,
+    reason: str,
+    device: str,
+    analyzed_duration: float,
+    frames: list[StemActivityFrame],
+) -> InstrumentAnalysisRaw:
+    """AST 不可用时降级为完整 stem-role 能力，而不是部分 stem 结果。"""
+    return InstrumentAnalysisRaw(
+        feature_version=STEM_ROLE_FEATURE_VERSION,
+        status="complete",
+        reason=reason,
+        demucs_model=DEMUCS_MODEL_NAME,
+        classifier_model=None,
+        device=device,
+        analyzed_duration=round(float(analyzed_duration), 6),
+        stem_frames=frames,
     )
 
 

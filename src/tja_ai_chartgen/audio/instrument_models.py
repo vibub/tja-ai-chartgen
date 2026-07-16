@@ -114,6 +114,7 @@ def validate_instrument_model_dir(
     model_dir: Path,
     *,
     profile: InstrumentModelProfile | None = None,
+    require_classifier: bool = True,
     verify_hashes: bool = False,
 ) -> InstrumentModelManifest:
     manifest = load_instrument_model_manifest(model_dir)
@@ -124,7 +125,7 @@ def validate_instrument_model_dir(
         raise InstrumentModelError("missing-model:htdemucs")
     if not any(demucs_dir.glob("*.th")):
         raise InstrumentModelError("missing-model:htdemucs")
-    if manifest.profile == "full":
+    if manifest.profile == "full" and require_classifier:
         ast_dir = model_dir / "ast"
         if not ast_dir.is_dir() or not (ast_dir / "config.json").is_file():
             raise InstrumentModelError("missing-model:ast")
@@ -136,6 +137,8 @@ def validate_instrument_model_dir(
             raise InstrumentModelError("missing-model:ast")
 
     for relative, expected_hash in manifest.files.items():
+        if not require_classifier and relative.startswith("ast/"):
+            continue
         candidate = _manifest_file(model_dir, relative)
         if not candidate.is_file():
             raise InstrumentModelError("missing-model:file")

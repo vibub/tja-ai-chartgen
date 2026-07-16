@@ -220,6 +220,46 @@ def test_web_instrument_analysis_success_is_persisted_and_rendered(tmp_path, mon
     assert options["instrument_device"] == "cpu"
 
 
+def test_web_classifier_failure_keeps_complete_stem_role_result(tmp_path, monkeypatch):
+    _patch_web_audio_pipeline(
+        monkeypatch,
+        instrument_status="complete",
+        instrument_reason="classifier-load-error:OSError",
+    )
+    client = TestClient(create_app(output_dir=tmp_path))
+
+    response = client.post(
+        "/analyze",
+        data={
+            "title": "Song Title",
+            "max_bars": "1",
+            "bpm": "120",
+            "use_instrument_analysis": "true",
+            "instrument_profile": "full",
+        },
+        files={"audio": ("song.mp3", b"fake audio", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job_dir = next(tmp_path.iterdir())
+    status = _wait_for_job_done(client, job_dir.name)
+    assert any(
+        notice["code"] == "instrument-classifier-fallback"
+        for notice in status["notices"]
+    )
+    analysis = json.loads((job_dir / "analysis.json").read_text(encoding="utf-8"))
+    notices = json.loads((job_dir / "generation_notices.json").read_text(encoding="utf-8"))
+    assert analysis["instrument_feature_version"] == "stem-role-v1"
+    assert analysis["instrument_analysis_status"] == "complete"
+    assert analysis["instrument_analysis_reason"] == "classifier-load-error:OSError"
+    assert analysis["instrument_classifier_model"] is None
+    classifier_notice = next(
+        item for item in notices if item["code"] == "instrument-classifier-fallback"
+    )
+    assert classifier_notice["level"] == "warning"
+    assert "声部角色分析已完整生效" in classifier_notice["message"]
+
+
 def test_web_instrument_model_fallback_notice_is_persisted_and_rendered(
     tmp_path,
     monkeypatch,
@@ -1643,7 +1683,12 @@ def _patch_web_audio_pipeline(
         )
 
     def fake_analyze_instruments(*_args, **kwargs):
-        stem_role = kwargs.get("profile") == "stem-role"
+        classifier_fallback = bool(
+            instrument_reason
+            and instrument_reason.startswith(("classifier-", "missing-dependency:transformers"))
+            and (instrument_status or "complete") == "complete"
+        )
+        stem_role = kwargs.get("profile") == "stem-role" or classifier_fallback
         return InstrumentAnalysisRaw(
             feature_version="stem-role-v1" if stem_role else "instrument-v1",
             status=instrument_status or "complete",
