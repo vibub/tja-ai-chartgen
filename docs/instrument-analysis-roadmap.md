@@ -916,7 +916,7 @@ class TempoMeterCandidate(BaseModel):
 | 11.2 定义 stem-role 轻量模式 | 已完成 | 新增 `stem-role` profile：独立默认目录 `models/stem-role-v1/`、统一兼容 manifest、仅准备/校验/离线加载 htdemucs，并由 CLI、GenerationConfig 与 Web 显式选择；旧 `instrument-v1` full profile 继续兼容。 | `tests/test_instrument_models.py`、`tests/test_instruments.py`、`tests/test_cli_instruments.py`、`tests/test_cli_generate.py`、`tests/test_web.py`。 |
 | 11.3 接入 RhythmicSalience | 已完成 | canonical rhythmic evidence 已对齐 vocal/drum/bass/accompaniment onset 与对应 bar activity；drum onset 经活动门控后进入 hit/accent/burst，bass 只增强 beat/downbeat 与 don preference，vocal 和 accompaniment 只修正已有 phrase/cadence/highlight 候选。stem 与 mix/spectral 一致时提高强度和置信度，冲突时限制 drum 上限，非 drum stem 不独立制造 hit。 | `tests/test_rhythmic_salience.py`、`tests/test_salience_candidates.py`、`tests/test_fallback_generator.py`。 |
 | 11.4 保持 partial/fallback | 已完成 | `complete` 统一表示当前 feature 的 stem 能力完整：stem-role 成功直接 complete；full profile 的 AST 文件缺失、依赖/加载或推理失败时降级为 `stem-role-v1 complete`，保留分类失败 reason 并发出独立 warning。只有没有 stem 证据时才 fallback；partial 保留给真实部分 stem/后处理失败及旧 `instrument-v1 partial` 兼容读取。旧 status、reason 和模型字段不被重写。 | `tests/test_instruments.py`、`tests/test_instrument_models.py`、`tests/test_generation.py`、`tests/test_web.py` 覆盖新状态、classifier 降级、旧 JSON 与通知持久化。 |
-| 11.5 控制模型与性能成本 | 部分完成 | 已有设备选择、segment、overlap 和 CUDA OOM 重试。 | 尚未测量 stem-role 轻量 profile。 |
+| 11.5 控制模型与性能成本 | 已完成 | 新增 `instrument-model-benchmark-v1`：按 profile 校验全部模型 hash，在阻断网络和强制离线环境中运行真实分析，记录模型组件大小、请求/实际设备、耗时、real-time factor、进程峰值 RSS 与输出证据数量；性能数据保持 report-only。 | `tests/test_instrument_benchmark.py` 覆盖离线边界、成本报告和 full/stem-role 契约；`tests/test_instrument_model_integration.py` 增加真实 stem-role CPU 离线 smoke。 |
 | 11.6 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
 ## 11.1 声部职责
@@ -1033,7 +1033,27 @@ stem-role-v1
 - accompaniment onset 只在 build-up、peak、fill、cadence 等 highlight 上修正已有候选；
 - fallback generator 不再把非 drum stem onset 直接视为独立格点证据，避免绕过统一 salience 门控。
 
-## 11.5 退出条件
+## 11.5 模型、离线加载、设备与性能验证
+
+新增 `tools/benchmark_instrument_models.py` 作为真实模型 report-only benchmark。命令按单个 profile 独立运行，避免把 full 与 stem-role 的模型驻留和内存成本混在同一进程中：
+
+```bash
+python tools/benchmark_instrument_models.py --profile stem-role --device auto
+python tools/benchmark_instrument_models.py --profile full --device auto
+```
+
+每次运行会：
+
+- 对统一 manifest 中的全部文件执行 SHA-256 校验，确认准备产物完整；
+- 在设置 `HF_HUB_OFFLINE=1`、`TRANSFORMERS_OFFLINE=1` 并阻断 socket 连接后调用真实分析，证明生成阶段不依赖网络；
+- 记录请求设备与 `_select_device()` 解析后的实际设备，支持 `auto`、`cpu`、`cuda`、`mps`；显式不可用设备仍按稳定 fallback 契约处理；
+- 记录总模型大小以及 Demucs、AST 组件大小，stem-role 报告中的 AST 大小必须为 0；
+- 记录分析音频时长、墙钟耗时、real-time factor、进程峰值 RSS 和相对启动前的峰值 RSS 增量；
+- 记录 stem frame 与 classifier window 数量，确保 stem-role 不加载 AST，full 则要求两类证据均存在。
+
+JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md`。耗时和 RSS 受 CPU/GPU、驱动、PyTorch 与操作系统影响，本阶段只提供同环境比较依据，不设置跨机器阻断阈值。真实模型测试继续使用 `instrument_model` marker，默认 `pytest` 不要求下载模型；显式执行 `pytest -m instrument_model -v` 时，新增 stem-role CPU smoke 会同时验证 hash、离线加载和性能字段。
+
+## 11.6 退出条件
 
 - 用户可以只准备 `htdemucs` 声部模型，不下载 AST；
 - stem-role 模式完全离线；
@@ -1048,7 +1068,7 @@ stem-role-v1
 - [x] 11.2 定义只需要 `htdemucs` 的 stem-role 轻量模式
 - [x] 11.3 将 stem activity/onset 接入 `RhythmicSalience`
 - [x] 11.4 调整 complete、partial、fallback 与旧 instrument-v1 兼容语义
-- [ ] 11.5 验证模型准备、离线加载、设备和性能成本
+- [x] 11.5 验证模型准备、离线加载、设备和性能成本
 - [ ] 11.6 执行 Phase 5 阶段验收
 
 ---
