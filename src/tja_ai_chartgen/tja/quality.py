@@ -1,3 +1,4 @@
+from bisect import bisect_left
 from collections import Counter
 from fractions import Fraction
 from math import isfinite
@@ -8,7 +9,7 @@ from pydantic import BaseModel, Field
 from tja_ai_chartgen.features.density import BarDensityHint, build_density_hints
 from tja_ai_chartgen.features.meter import get_meter_spec
 from tja_ai_chartgen.features.resolution import output_resolution_for_bar
-from tja_ai_chartgen.features.salience import build_don_ka_salience
+from tja_ai_chartgen.features.salience import ACTIVE_GRID_THRESHOLD, build_don_ka_salience
 from tja_ai_chartgen.features.salience_candidates import (
     SalienceCandidate,
     build_salience_candidate_bars,
@@ -16,7 +17,7 @@ from tja_ai_chartgen.features.salience_candidates import (
     rank_accent_candidates,
     rank_bar_salience_candidates,
 )
-from tja_ai_chartgen.features.silence import edge_silence_indexes
+from tja_ai_chartgen.features.silence import edge_silence_indexes, is_silent_bar
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ResolutionPlan
 
 
@@ -60,6 +61,12 @@ class QualityReport(BaseModel):
     downbeat_responded_count: int = Field(default=0, ge=0)
     downbeat_evaluated_count: int = Field(default=0, ge=0)
     downbeat_response: float = Field(default=1.0, ge=0.0, le=1.0)
+    unsupported_note_count: int = Field(default=0, ge=0)
+    unsupported_note_evaluated_count: int = Field(default=0, ge=0)
+    unsupported_note_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    silent_range_evaluated_bar_count: int = Field(default=0, ge=0)
+    silent_range_violation_count: int = Field(default=0, ge=0)
+    silent_range_violation_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     drumroll_count: int = Field(ge=0)
     balloon_count: int = Field(ge=0)
     special_note_count: int = Field(ge=0)
@@ -117,6 +124,19 @@ def build_quality_report(
         chart_activity_count(paired_chart_bars[index].notes)
         for index in silent_indexes
         if index < len(paired_chart_bars)
+    )
+    silent_range_indexes = silent_indexes | {
+        position
+        for position, feature_bar in enumerate(paired_feature_bars)
+        if is_silent_bar(feature_bar)
+    }
+    silent_range_violation_count = sum(
+        chart_activity_count(paired_chart_bars[index].notes)
+        for index in silent_range_indexes
+        if index < len(paired_chart_bars)
+    )
+    paired_activity_count = sum(
+        chart_activity_count(chart_bar.notes) for chart_bar in paired_chart_bars
     )
 
     nonempty_pattern_counts = pattern_counts(chart_bars)
@@ -224,6 +244,14 @@ def build_quality_report(
         note_times,
         tolerance_seconds=DOWNBEAT_RESPONSE_TOLERANCE_SECONDS,
     )
+    unsupported_note_count, unsupported_note_evaluated_count = (
+        _unsupported_note_counts(
+            paired_chart_bars,
+            paired_feature_bars,
+            canonical_candidate_bars,
+            reliable_onset_times=reliable_onset_times,
+        )
+    )
     bar_notes_per_second = [
         hit_count / duration
         for hit_count, duration in zip(timed_hit_counts, timed_durations, strict=True)
@@ -309,6 +337,20 @@ def build_quality_report(
         downbeat_evaluated_count=len(downbeat_times),
         downbeat_response=_rounded_metric(
             downbeat_responded_count / len(downbeat_times) if downbeat_times else 1.0
+        ),
+        unsupported_note_count=unsupported_note_count,
+        unsupported_note_evaluated_count=unsupported_note_evaluated_count,
+        unsupported_note_rate=_rounded_metric(
+            unsupported_note_count / unsupported_note_evaluated_count
+            if unsupported_note_evaluated_count
+            else 0.0
+        ),
+        silent_range_evaluated_bar_count=len(silent_range_indexes),
+        silent_range_violation_count=silent_range_violation_count,
+        silent_range_violation_rate=_rounded_metric(
+            silent_range_violation_count / paired_activity_count
+            if paired_activity_count
+            else 0.0
         ),
         drumroll_count=drumroll_count,
         balloon_count=balloon_count,
@@ -747,6 +789,149 @@ def _candidate_times(
             and (not require_reliable or candidate.reliable)
         )
     return sorted(times)
+
+
+def _unsupported_note_counts(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+    candidate_bars: list[list[SalienceCandidate]],
+    *,
+    reliable_onset_times: list[float],
+) -> tuple[int, int]:
+    """统计缺少直接节奏证据且不能作为短连接点的普通 note。"""
+    note_events: list[tuple[float, int, int]] = []
+    for position, (chart_bar, feature_bar) in enumerate(
+        zip(chart_bars, feature_bars, strict=True)
+    ):
+        duration = feature_bar.end_time - feature_bar.start_time
+        if not isfinite(duration) or duration <= 0 or not chart_bar.notes:
+            continue
+        note_events.extend(
+            (
+                feature_bar.start_time + duration * grid / len(chart_bar.notes),
+                position,
+                grid,
+            )
+            for grid, note in enumerate(chart_bar.notes)
+            if note in "1234"
+        )
+    if not note_events:
+        return 0, 0
+
+    beat_times = _beat_times(feature_bars)
+    structure_times = _candidate_times(
+        feature_bars,
+        candidate_bars,
+        kinds={"structure-highlight"},
+    )
+    direct_support: list[bool] = []
+    for time, position, grid in note_events:
+        direct_support.append(
+            _has_nearby_time(
+                time,
+                reliable_onset_times,
+                NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS,
+            )
+            or _has_nearby_time(
+                time,
+                beat_times,
+                DOWNBEAT_RESPONSE_TOLERANCE_SECONDS,
+            )
+            or _has_nearby_time(
+                time,
+                structure_times,
+                DOWNBEAT_RESPONSE_TOLERANCE_SECONDS,
+            )
+            or _note_has_sustained_activity(
+                chart_bars[position],
+                feature_bars[position],
+                candidate_bars[position],
+                grid,
+            )
+        )
+
+    directly_supported_times = sorted(
+        time
+        for (time, _position, _grid), supported in zip(
+            note_events,
+            direct_support,
+            strict=True,
+        )
+        if supported
+    )
+    supported_count = sum(direct_support)
+    supported_count += sum(
+        _has_nearby_time(time, directly_supported_times, NOTE_STREAM_MAX_GAP_SECONDS)
+        for (time, _position, _grid), supported in zip(
+            note_events,
+            direct_support,
+            strict=True,
+        )
+        if not supported
+    )
+    return len(note_events) - supported_count, len(note_events)
+
+
+def _beat_times(feature_bars: list[BarFeature]) -> list[float]:
+    times: list[float] = []
+    for feature_bar in feature_bars:
+        duration = feature_bar.end_time - feature_bar.start_time
+        if (
+            not isfinite(duration)
+            or duration <= 0
+            or feature_bar.grids_per_bar <= 0
+        ):
+            continue
+        grids = set(feature_bar.beat_grids)
+        if feature_bar.downbeat_grid is not None:
+            grids.add(feature_bar.downbeat_grid)
+        times.extend(
+            feature_bar.start_time + duration * grid / feature_bar.grids_per_bar
+            for grid in grids
+            if 0 <= grid < feature_bar.grids_per_bar
+        )
+    return sorted(times)
+
+
+def _note_has_sustained_activity(
+    chart_bar: ChartBar,
+    feature_bar: BarFeature,
+    candidates: list[SalienceCandidate],
+    note_grid: int,
+) -> bool:
+    if not chart_bar.notes:
+        return False
+    position = note_grid / len(chart_bar.notes)
+    if feature_bar.activity_grids:
+        activity_grid = min(
+            len(feature_bar.activity_grids) - 1,
+            round(position * len(feature_bar.activity_grids)),
+        )
+        if feature_bar.activity_grids[activity_grid] >= ACTIVE_GRID_THRESHOLD:
+            return True
+
+    canonical_grid = min(
+        feature_bar.grids_per_bar - 1,
+        round(position * feature_bar.grids_per_bar),
+    )
+    return any(
+        candidate.grid == canonical_grid
+        and candidate.point.sustained_activity >= ACTIVE_GRID_THRESHOLD
+        for candidate in candidates
+    )
+
+
+def _has_nearby_time(time: float, candidates: list[float], tolerance_seconds: float) -> bool:
+    if not candidates or tolerance_seconds < 0:
+        return False
+    position = bisect_left(candidates, time)
+    return (
+        position < len(candidates)
+        and abs(candidates[position] - time) <= tolerance_seconds
+    ) or (
+        position > 0
+        and abs(candidates[position - 1] - time) <= tolerance_seconds
+    )
 
 
 def _special_note_time_ranges(

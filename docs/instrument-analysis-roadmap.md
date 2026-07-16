@@ -1099,7 +1099,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | --- | --- | --- | --- |
 | 12.1 note/onset 对齐指标 | 已完成 | `QualityReport` 已基于完整 canonical salience 统计普通 note 附近可靠瞬态的命中数、评估数和 `note_onset_alignment`；固定使用 50 ms 时间容差，排除特殊音符并支持跨小节匹配。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，25 passed。 |
 | 12.2 强 onset 与 downbeat 响应 | 已完成 | `QualityReport` 已从完整 canonical salience 统一统计 `strong-transient` 与可靠 downbeat 的响应数、评估数和比例；强瞬态允许普通 note 或有效持续音符区间响应，downbeat 只允许普通 note，并分别使用 50 ms / 70 ms 容差。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，29 passed。 |
-| 12.3 无证据 note 指标 | 未开始 | 尚未实施。 | 尚未执行。 |
+| 12.3 无证据 note 指标 | 已完成 | `QualityReport` 已统计普通 note 的直接节奏证据与受限连接支持，输出无支持数、评估数和比例；静音违规扩展到首尾静音及曲中确定静音小节，并输出评估小节数、违规数和比例。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，32 passed。 |
 | 12.4 fill burst 对齐 | 部分完成 | 已有 fill candidate precision 和 instrument fill support；尚未加入纯节奏 burst。 | 现有 fill 测试可复用。 |
 | 12.5 report-only 校准 | 未开始 | 尚未实施新指标对比。 | 尚未执行。 |
 | 12.6 AI repair 门槛评审 | 未开始 | 尚未决定任何新阻断阈值。 | 尚未执行。 |
@@ -1135,6 +1135,8 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - structure highlight；
 - 合理的节奏连接。
 
+当前实现只评估普通 note `1`–`4`。直接支持包括：50 ms 内的可靠 transient、70 ms 内的理论 beat/downbeat、70 ms 内的可靠 structure highlight，以及 note 所在格达到统一 activity 门槛。没有直接证据的 note 仅当其与某个直接支持 note 的时间距离不超过 0.3 秒时视为合理连接；连接点不能继续链式支持更远 note。结果写入 `unsupported_note_count`、`unsupported_note_evaluated_count` 和 `unsupported_note_rate`，无普通 note 时比例为 0.0。该指标保持 report-only。
+
 ### `fill_burst_alignment`
 
 实际 fill 或特殊音符与可靠 burst/fill candidate 重叠的比例。
@@ -1142,6 +1144,8 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 ### `silent_range_violation`
 
 已知静音范围和首尾静音小节中的违规 note 数。
+
+当前实现将 `edge_silence_indexes()` 识别的首尾连续静音与 `is_silent_bar()` 识别的曲中确定静音合并为评估范围，统计其中 `1`–`5`、`7` 的 note/持续音符起点数量；`8` 仅为闭合标记，不单独计为违规。结果写入 `silent_range_evaluated_bar_count`、`silent_range_violation_count` 和相对全部谱面活动起点的 `silent_range_violation_rate`。旧 `silent_bar_note_count` 继续保留首尾静音兼容语义，新指标保持 report-only。
 
 ### `rhythmic_quantization_error`
 
@@ -1195,7 +1199,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 
 - [x] 12.1 实现 `note_onset_alignment`
 - [x] 12.2 实现强 onset 与 downbeat 响应指标
-- [ ] 12.3 实现 `unsupported_note_rate` 与静音违规指标
+- [x] 12.3 实现 `unsupported_note_rate` 与静音违规指标
 - [ ] 12.4 实现 fill burst 对齐和节奏量化误差指标
 - [ ] 12.5 使用全部 fixture 校准 report-only 指标
 - [ ] 12.6 评审并选择少量指标进入 AI repair

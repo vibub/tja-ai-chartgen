@@ -106,6 +106,12 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.downbeat_responded_count == 0
     assert report.downbeat_evaluated_count == 0
     assert report.downbeat_response == 1.0
+    assert report.unsupported_note_count == 0
+    assert report.unsupported_note_evaluated_count == 0
+    assert report.unsupported_note_rate == 0.0
+    assert report.silent_range_evaluated_bar_count == 0
+    assert report.silent_range_violation_count == 0
+    assert report.silent_range_violation_rate == 0.0
 
 
 def test_quality_report_is_independent_of_notes_resolution():
@@ -150,6 +156,12 @@ def test_quality_report_is_independent_of_notes_resolution():
             report.downbeat_responded_count,
             report.downbeat_evaluated_count,
             report.downbeat_response,
+            report.unsupported_note_count,
+            report.unsupported_note_evaluated_count,
+            report.unsupported_note_rate,
+            report.silent_range_evaluated_bar_count,
+            report.silent_range_violation_count,
+            report.silent_range_violation_rate,
             report.don_count,
             report.ka_count,
         )
@@ -223,6 +235,8 @@ def test_quality_report_records_strong_onset_response_from_notes_and_roll_ranges
     assert report.downbeat_evaluated_count == 1
     assert report.downbeat_responded_count == 1
     assert report.downbeat_response == 1.0
+    assert report.unsupported_note_evaluated_count == 1
+    assert report.unsupported_note_count == 0
 
 
 def test_quality_report_matches_clustered_strong_onsets_one_to_one():
@@ -287,6 +301,56 @@ def test_quality_report_downbeat_response_is_cross_bar_and_normal_note_only():
     assert report.downbeat_evaluated_count == 2
     assert report.downbeat_responded_count == 1
     assert report.downbeat_response == 0.5
+
+
+def test_quality_report_records_supported_and_unsupported_normal_notes():
+    feature = _unsupported_evidence_feature()
+    notes = ["0"] * 48
+    for grid in (0, 24, 30, 31, 40):
+        notes[grid] = "1"
+
+    report = build_quality_report([_chart_bar(0, "".join(notes))], [feature])
+
+    assert report.unsupported_note_evaluated_count == 5
+    assert report.unsupported_note_count == 1
+    assert report.unsupported_note_rate == 0.2
+
+
+def test_quality_report_rhythm_connection_does_not_chain_indefinitely():
+    feature = _unsupported_evidence_feature()
+    notes = ["0"] * 48
+    for grid in (30, 36, 42):
+        notes[grid] = "1"
+
+    report = build_quality_report([_chart_bar(0, "".join(notes))], [feature])
+
+    assert report.unsupported_note_evaluated_count == 3
+    assert report.unsupported_note_count == 1
+    assert report.unsupported_note_rate == pytest.approx(1 / 3, abs=1e-6)
+
+
+def test_quality_report_records_internal_and_edge_silence_violations():
+    features = [
+        _feature(0, energy=0.0),
+        _feature(1, energy=0.8),
+        _feature(2, energy=0.0),
+        _feature(3, energy=0.8),
+        _feature(4, energy=0.0).model_copy(update={"phrase_position": "song_end"}),
+    ]
+    bars = [
+        _chart_bar(0, "1000000000000000"),
+        _chart_bar(1, "1000000000000000"),
+        _chart_bar(2, "5000000080000000"),
+        _chart_bar(3, "0000000000000000"),
+        _chart_bar(4, "2000000000000000"),
+    ]
+
+    report = build_quality_report(bars, features)
+
+    assert report.silent_bar_note_count == 2
+    assert report.silent_range_evaluated_bar_count == 3
+    assert report.silent_range_violation_count == 3
+    assert report.silent_range_violation_rate == 0.75
 
 
 def test_pattern_counts_normalizes_equivalent_resolutions():
@@ -684,6 +748,35 @@ def _feature(
         transition_role=transition_role,
         section_id=section_id,
         fill_candidate=fill_candidate,
+    )
+
+
+def _unsupported_evidence_feature() -> BarFeature:
+    onset_grids = [0, 4, 8, 16]
+    activity_grids = [0.0] * 48
+    activity_grids[30] = 0.9
+    return BarFeature(
+        index=0,
+        start_time=0.0,
+        end_time=2.0,
+        energy=0.9,
+        time_signature="4/4",
+        grids_per_bar=48,
+        onset_grids=onset_grids,
+        activity_grids=activity_grids,
+        grid_features=[
+            GridFeature(
+                grid=grid,
+                onset=True,
+                strength=1.0,
+                activity=0.9 if grid == 0 else 0.0,
+                downbeat=grid == 0,
+            )
+            for grid in onset_grids
+        ],
+        beat_grids=[0, 24],
+        downbeat_grid=0,
+        onset_count=len(onset_grids),
     )
 
 
