@@ -100,6 +100,12 @@ def test_quality_report_handles_empty_chart_without_division_by_zero():
     assert report.note_onset_aligned_count == 0
     assert report.note_onset_evaluated_count == 0
     assert report.note_onset_alignment == 1.0
+    assert report.strong_onset_responded_count == 0
+    assert report.strong_onset_evaluated_count == 0
+    assert report.strong_onset_response == 1.0
+    assert report.downbeat_responded_count == 0
+    assert report.downbeat_evaluated_count == 0
+    assert report.downbeat_response == 1.0
 
 
 def test_quality_report_is_independent_of_notes_resolution():
@@ -138,6 +144,12 @@ def test_quality_report_is_independent_of_notes_resolution():
             report.note_onset_aligned_count,
             report.note_onset_evaluated_count,
             report.note_onset_alignment,
+            report.strong_onset_responded_count,
+            report.strong_onset_evaluated_count,
+            report.strong_onset_response,
+            report.downbeat_responded_count,
+            report.downbeat_evaluated_count,
+            report.downbeat_response,
             report.don_count,
             report.ka_count,
         )
@@ -194,6 +206,87 @@ def test_quality_report_note_onset_alignment_requires_reliable_transient():
     assert report.note_onset_aligned_count == 0
     assert report.note_onset_evaluated_count == 1
     assert report.note_onset_alignment == 0.0
+
+
+def test_quality_report_records_strong_onset_response_from_notes_and_roll_ranges():
+    feature = _reliable_onset_feature(0, start_time=0.0, end_time=2.0)
+    notes = ["0"] * 48
+    notes[0] = "1"
+    notes[10] = "5"
+    notes[26] = "8"
+
+    report = build_quality_report([_chart_bar(0, "".join(notes))], [feature])
+
+    assert report.strong_onset_evaluated_count == 4
+    assert report.strong_onset_responded_count == 3
+    assert report.strong_onset_response == 0.75
+    assert report.downbeat_evaluated_count == 1
+    assert report.downbeat_responded_count == 1
+    assert report.downbeat_response == 1.0
+
+
+def test_quality_report_matches_clustered_strong_onsets_one_to_one():
+    feature = _reliable_onset_feature(
+        0,
+        start_time=0.0,
+        end_time=1.0,
+        onset_grids=[0, 12, 13, 24, 36],
+    )
+    notes = ["0"] * 48
+    notes[12] = "1"
+
+    report = build_quality_report([_chart_bar(0, "".join(notes))], [feature])
+
+    assert report.strong_onset_evaluated_count == 5
+    assert report.strong_onset_responded_count == 1
+    assert report.strong_onset_response == 0.2
+
+
+def test_quality_report_strong_onset_response_accepts_cross_bar_roll_range():
+    features = [
+        _reliable_onset_feature(0, start_time=0.0, end_time=1.0),
+        _reliable_onset_feature(1, start_time=1.0, end_time=2.0),
+    ]
+    first_notes = ["0"] * 48
+    second_notes = ["0"] * 48
+    first_notes[40] = "5"
+    second_notes[8] = "8"
+
+    report = build_quality_report(
+        [
+            _chart_bar(0, "".join(first_notes)),
+            _chart_bar(1, "".join(second_notes)),
+        ],
+        features,
+    )
+
+    assert report.strong_onset_evaluated_count == 8
+    assert report.strong_onset_responded_count == 1
+    assert report.strong_onset_response == 0.125
+    assert report.downbeat_responded_count == 0
+
+
+def test_quality_report_downbeat_response_is_cross_bar_and_normal_note_only():
+    features = [
+        _reliable_onset_feature(0, start_time=0.0, end_time=1.0),
+        _reliable_onset_feature(1, start_time=1.0, end_time=2.0),
+    ]
+    first_notes = ["0"] * 48
+    first_notes[0] = "5"
+    first_notes[4] = "8"
+    first_notes[47] = "1"
+
+    report = build_quality_report(
+        [_chart_bar(0, "".join(first_notes)), _chart_bar(1, "0" * 48)],
+        features,
+    )
+
+    assert report.strong_onset_evaluated_count == 8
+    assert report.strong_onset_responded_count == 2
+    assert report.strong_onset_response == 0.25
+    assert report.downbeat_evaluated_count == 2
+    assert report.downbeat_responded_count == 1
+    assert report.downbeat_response == 0.5
 
 
 def test_pattern_counts_normalizes_equivalent_resolutions():
@@ -599,8 +692,9 @@ def _reliable_onset_feature(
     *,
     start_time: float,
     end_time: float,
+    onset_grids: list[int] | None = None,
 ) -> BarFeature:
-    onset_grids = [0, 12, 24, 36]
+    resolved_onset_grids = onset_grids or [0, 12, 24, 36]
     return BarFeature(
         index=index,
         start_time=start_time,
@@ -608,23 +702,23 @@ def _reliable_onset_feature(
         energy=0.9,
         time_signature="4/4",
         grids_per_bar=48,
-        onset_grids=onset_grids,
+        onset_grids=resolved_onset_grids,
         activity_grids=list(range(48)),
         grid_features=[
             GridFeature(
                 grid=grid,
                 onset=True,
                 accent=grid in {0, 24},
-                beat=grid // 12,
+                beat=grid // 12 if grid % 12 == 0 else None,
                 downbeat=grid == 0,
                 strength=1.0,
                 activity=0.9,
             )
-            for grid in onset_grids
+            for grid in resolved_onset_grids
         ],
-        beat_grids=onset_grids,
+        beat_grids=[0, 12, 24, 36],
         downbeat_grid=0,
-        onset_count=len(onset_grids),
+        onset_count=len(resolved_onset_grids),
     )
 
 

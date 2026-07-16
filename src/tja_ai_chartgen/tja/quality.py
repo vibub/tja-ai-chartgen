@@ -22,7 +22,9 @@ from tja_ai_chartgen.tja.model import BarFeature, ChartBar, ResolutionPlan
 
 NOTE_STREAM_MAX_GAP_SECONDS = 0.3
 NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS = 0.05
+DOWNBEAT_RESPONSE_TOLERANCE_SECONDS = 0.07
 RELIABLE_TRANSIENT_KINDS = {"strong-transient", "transient"}
+STRONG_TRANSIENT_KINDS = {"strong-transient"}
 
 
 class QualityReport(BaseModel):
@@ -52,6 +54,12 @@ class QualityReport(BaseModel):
     note_onset_aligned_count: int = Field(default=0, ge=0)
     note_onset_evaluated_count: int = Field(default=0, ge=0)
     note_onset_alignment: float = Field(default=1.0, ge=0.0, le=1.0)
+    strong_onset_responded_count: int = Field(default=0, ge=0)
+    strong_onset_evaluated_count: int = Field(default=0, ge=0)
+    strong_onset_response: float = Field(default=1.0, ge=0.0, le=1.0)
+    downbeat_responded_count: int = Field(default=0, ge=0)
+    downbeat_evaluated_count: int = Field(default=0, ge=0)
+    downbeat_response: float = Field(default=1.0, ge=0.0, le=1.0)
     drumroll_count: int = Field(ge=0)
     balloon_count: int = Field(ge=0)
     special_note_count: int = Field(ge=0)
@@ -177,14 +185,44 @@ def build_quality_report(
     playable_note_count = sum(timed_hit_counts)
     playable_duration_seconds = sum(timed_durations)
     active_duration_seconds = sum(active_durations)
-    reliable_onset_times = _reliable_transient_times(
+    reliable_onset_times = _candidate_times(
         paired_feature_bars,
         canonical_candidate_bars,
+        kinds=RELIABLE_TRANSIENT_KINDS,
     )
     note_onset_aligned_count = _nearby_time_count(
         note_times,
         reliable_onset_times,
         tolerance_seconds=NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS,
+    )
+    strong_onset_times = _candidate_times(
+        paired_feature_bars,
+        canonical_candidate_bars,
+        kinds=STRONG_TRANSIENT_KINDS,
+    )
+    special_note_ranges = _special_note_time_ranges(
+        paired_chart_bars,
+        paired_feature_bars,
+    )
+    special_supported_strong_onsets, remaining_strong_onsets = (
+        _partition_times_by_ranges(strong_onset_times, special_note_ranges)
+    )
+    strong_onset_responded_count = len(special_supported_strong_onsets)
+    strong_onset_responded_count += _matched_reference_count(
+        remaining_strong_onsets,
+        note_times,
+        tolerance_seconds=NOTE_ONSET_ALIGNMENT_TOLERANCE_SECONDS,
+    )
+    downbeat_times = _candidate_times(
+        paired_feature_bars,
+        canonical_candidate_bars,
+        required_reason="downbeat",
+        require_reliable=True,
+    )
+    downbeat_responded_count = _matched_reference_count(
+        downbeat_times,
+        note_times,
+        tolerance_seconds=DOWNBEAT_RESPONSE_TOLERANCE_SECONDS,
     )
     bar_notes_per_second = [
         hit_count / duration
@@ -259,6 +297,18 @@ def build_quality_report(
         note_onset_evaluated_count=len(note_times),
         note_onset_alignment=_rounded_metric(
             note_onset_aligned_count / len(note_times) if note_times else 1.0
+        ),
+        strong_onset_responded_count=strong_onset_responded_count,
+        strong_onset_evaluated_count=len(strong_onset_times),
+        strong_onset_response=_rounded_metric(
+            strong_onset_responded_count / len(strong_onset_times)
+            if strong_onset_times
+            else 1.0
+        ),
+        downbeat_responded_count=downbeat_responded_count,
+        downbeat_evaluated_count=len(downbeat_times),
+        downbeat_response=_rounded_metric(
+            downbeat_responded_count / len(downbeat_times) if downbeat_times else 1.0
         ),
         drumroll_count=drumroll_count,
         balloon_count=balloon_count,
@@ -670,11 +720,15 @@ def _rounded_metric(value: float) -> float:
     return round(float(value), 6)
 
 
-def _reliable_transient_times(
+def _candidate_times(
     feature_bars: list[BarFeature],
     candidate_bars: list[list[SalienceCandidate]],
+    *,
+    kinds: set[str] | None = None,
+    required_reason: str | None = None,
+    require_reliable: bool = False,
 ) -> list[float]:
-    """将完整 canonical salience 中的可靠瞬态转换为全曲时间。"""
+    """按 salience 语义筛选 canonical 候选并转换为全曲时间。"""
     times: list[float] = []
     for feature_bar, candidates in zip(feature_bars, candidate_bars, strict=True):
         duration = feature_bar.end_time - feature_bar.start_time
@@ -688,9 +742,86 @@ def _reliable_transient_times(
             feature_bar.start_time
             + duration * candidate.grid / feature_bar.grids_per_bar
             for candidate in candidates
-            if candidate.kind in RELIABLE_TRANSIENT_KINDS
+            if (kinds is None or candidate.kind in kinds)
+            and (required_reason is None or required_reason in candidate.point.reasons)
+            and (not require_reliable or candidate.reliable)
         )
     return sorted(times)
+
+
+def _special_note_time_ranges(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+) -> list[tuple[float, float]]:
+    """提取由 `5`/`7` 开始并由后续 `8` 闭合的有效持续区间。"""
+    ranges: list[tuple[float, float]] = []
+    active_start: float | None = None
+    for chart_bar, feature_bar in zip(chart_bars, feature_bars, strict=True):
+        duration = feature_bar.end_time - feature_bar.start_time
+        if not isfinite(duration) or duration <= 0 or not chart_bar.notes:
+            active_start = None
+            continue
+        for grid, note in enumerate(chart_bar.notes):
+            time = feature_bar.start_time + duration * grid / len(chart_bar.notes)
+            if note in {"5", "7"}:
+                active_start = time if active_start is None else None
+            elif note == "8" and active_start is not None:
+                if time > active_start:
+                    ranges.append((active_start, time))
+                active_start = None
+    return ranges
+
+
+def _partition_times_by_ranges(
+    times: list[float],
+    ranges: list[tuple[float, float]],
+) -> tuple[list[float], list[float]]:
+    """线性划分持续区间内外的有序事件时间。"""
+    inside: list[float] = []
+    outside: list[float] = []
+    range_index = 0
+    for time in sorted(times):
+        while range_index < len(ranges) and ranges[range_index][1] < time:
+            range_index += 1
+        if (
+            range_index < len(ranges)
+            and ranges[range_index][0] <= time <= ranges[range_index][1]
+        ):
+            inside.append(time)
+        else:
+            outside.append(time)
+    return inside, outside
+
+
+def _matched_reference_count(
+    references: list[float],
+    estimates: list[float],
+    *,
+    tolerance_seconds: float,
+) -> int:
+    """在时间容差内进行确定性一对一匹配，返回被响应的参考事件数。"""
+    if not references or not estimates or tolerance_seconds < 0:
+        return 0
+    ordered_references = sorted(references)
+    ordered_estimates = sorted(estimates)
+    reference_index = 0
+    estimate_index = 0
+    matched = 0
+    while (
+        reference_index < len(ordered_references)
+        and estimate_index < len(ordered_estimates)
+    ):
+        reference = ordered_references[reference_index]
+        estimate = ordered_estimates[estimate_index]
+        if estimate < reference - tolerance_seconds:
+            estimate_index += 1
+        elif estimate > reference + tolerance_seconds:
+            reference_index += 1
+        else:
+            matched += 1
+            reference_index += 1
+            estimate_index += 1
+    return matched
 
 
 def _nearby_time_count(

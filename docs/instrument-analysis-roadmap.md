@@ -1098,7 +1098,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
 | 12.1 note/onset 对齐指标 | 已完成 | `QualityReport` 已基于完整 canonical salience 统计普通 note 附近可靠瞬态的命中数、评估数和 `note_onset_alignment`；固定使用 50 ms 时间容差，排除特殊音符并支持跨小节匹配。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，25 passed。 |
-| 12.2 强 onset 与 downbeat 响应 | 部分完成 | 已有 accent、drum 和 bass 对齐指标；尚未统一到 salience。 | 现有 QualityReport 测试可复用。 |
+| 12.2 强 onset 与 downbeat 响应 | 已完成 | `QualityReport` 已从完整 canonical salience 统一统计 `strong-transient` 与可靠 downbeat 的响应数、评估数和比例；强瞬态允许普通 note 或有效持续音符区间响应，downbeat 只允许普通 note，并分别使用 50 ms / 70 ms 容差。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，29 passed。 |
 | 12.3 无证据 note 指标 | 未开始 | 尚未实施。 | 尚未执行。 |
 | 12.4 fill burst 对齐 | 部分完成 | 已有 fill candidate precision 和 instrument fill support；尚未加入纯节奏 burst。 | 现有 fill 测试可复用。 |
 | 12.5 report-only 校准 | 未开始 | 尚未实施新指标对比。 | 尚未执行。 |
@@ -1117,9 +1117,13 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 
 强 onset 中被附近普通 note 或合理特殊音符响应的比例。
 
+当前实现把 canonical salience 中的 `strong-transient` 作为参考事件：普通 note `1`–`4` 以 50 ms 容差执行确定性一对一匹配；由 `5` / `7` 开始且被后续 `8` 正确闭合的持续区间可响应范围内多个强瞬态，并支持跨小节持续。结果写入 `strong_onset_responded_count`、`strong_onset_evaluated_count` 和 `strong_onset_response`。无可靠强瞬态时比例为 1.0；该指标仍为 report-only。
+
 ### `downbeat_response`
 
 可靠 downbeat 中被普通 note 响应的比例。该指标不要求所有 downbeat 都命中，阈值应按 course 和 density 校准。
+
+当前实现只统计完整 canonical salience 中带 `downbeat` reason 且不是 `weak-evidence` 的候选，使用 70 ms 容差与普通 note `1`–`4` 做确定性一对一匹配；特殊音符及其持续范围不响应 downbeat。结果写入 `downbeat_responded_count`、`downbeat_evaluated_count` 和 `downbeat_response`，匹配可跨小节边界且不依赖输出 resolution。无可靠 downbeat 时比例为 1.0；该指标仍为 report-only。
 
 ### `unsupported_note_rate`
 
@@ -1190,7 +1194,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 ## Phase 6 任务划分列表
 
 - [x] 12.1 实现 `note_onset_alignment`
-- [ ] 12.2 实现强 onset 与 downbeat 响应指标
+- [x] 12.2 实现强 onset 与 downbeat 响应指标
 - [ ] 12.3 实现 `unsupported_note_rate` 与静音违规指标
 - [ ] 12.4 实现 fill burst 对齐和节奏量化误差指标
 - [ ] 12.5 使用全部 fixture 校准 report-only 指标
