@@ -268,7 +268,9 @@ level 在各 course 的范围内线性插值。最终 hit 数还会受到小节�
 - `fill_burst_alignment`、`rhythmic_quantization_error`：实际 fill/特殊音符对可靠 burst 的响应，以及普通 note 到最近可靠 salience 的平均 canonical tick 误差。
 - `salience_coverage_by_density`：按 silent/rest/sparse/normal/dense/fill 汇总可靠 salience 的普通 note 响应数、评估数和 coverage。
 
-这些指标当前只写入报告，不参与 AI repair、CI 统一总分或阻断输出。`chart-alignment-v1` 会在全部 17 个 fixture、68 张四难度规则谱面上聚合 report-only 指标，按 course 与 density hint 分组，并与独立 fixture ground truth 做方向性对比；差值不作为通过门槛。首轮结果已确认 course/density 存在系统差异，阈值仍需结合更多真实歌曲和人工游玩校准。
+`chart-alignment-v1` 会在全部 17 个 fixture、68 张四难度规则谱面上聚合上述指标，按 course 与 density hint 分组，并与独立 fixture ground truth 做方向性对比；差值不作为通过门槛。首轮校准后的 `ai-rhythm-repair-gate-v1` 只阻断三类极端 AI 内容错误：可靠静音范围存在任意活动起点；至少 8 个普通 note 中有至少 4 个无支持且比例不低于 0.5；至少 4 小节、8 个可靠 strong onset 的范围内响应数为 0。门槛版本和阈值会写入 AI sidecar，全部 68 张规则基线均不触发。
+
+`note_onset_alignment`、`downbeat_response`、`fill_burst_alignment`、`rhythmic_quantization_error`、`salience_coverage_by_density` 及其他结构、instrument、resolution 指标继续只写入报告，不参与 AI repair、CI 统一总分或阻断输出。所选三项也只用于 AI 内容 repair，不改变规则生成、不进入统一总分；阈值仍需结合更多真实歌曲和人工游玩继续校准。
 
 ## 可重复比较流程
 

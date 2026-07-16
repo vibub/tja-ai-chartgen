@@ -1102,7 +1102,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 12.3 无证据 note 指标 | 已完成 | `QualityReport` 已统计普通 note 的直接节奏证据与受限连接支持，输出无支持数、评估数和比例；静音违规扩展到首尾静音及曲中确定静音小节，并输出评估小节数、违规数和比例。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，32 passed。 |
 | 12.4 fill burst 对齐 | 已完成 | `QualityReport` 已统一统计特殊音符区间与普通 fill 小节对可靠纯节奏 burst/结构 fill candidate 的对齐数、评估数和比例，并计算普通 note 对最近可靠 salience 的平均 canonical tick 量化误差。 | 2026-07-16：`pytest tests/test_chart_quality.py -q`，36 passed。 |
 | 12.5 report-only 校准 | 已完成 | `chart-alignment-v1` 已在全部 17 个 fixture、68 张四难度规则谱面上同时汇总 QualityReport report-only 指标、按 course 与 density hint 分组的 salience coverage，并与独立 fixture ground truth 做方向性对比；结果确认指标存在显著 course/density 差异，暂不设置统一阻断阈值。 | 2026-07-16：`python tools/benchmark_chart_alignment.py`；`pytest tests/test_chart_quality.py tests/test_chart_alignment_benchmark.py -q`，44 passed。 |
-| 12.6 AI repair 门槛评审 | 未开始 | 尚未决定任何新阻断阈值。 | 尚未执行。 |
+| 12.6 AI repair 门槛评审 | 已完成 | 新增 `ai-rhythm-repair-gate-v1`，仅将可靠静音范围违规、极端无支持 note，以及多小节范围内强 onset 完全无响应接入 AI 内容 repair；门槛使用宽松样本下限并持久化版本/阈值，其他节奏指标继续 report-only。 | 2026-07-17：`pytest tests/test_ai_client.py -q`，56 passed；全部 17 fixture / 68 张规则谱面均不触发新门槛。 |
 | 12.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
 
 ## 12.1 建议指标
@@ -1196,6 +1196,18 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 
 其他指标继续 report-only。
 
+### 12.6 首轮 AI repair 评审结果
+
+首轮门槛契约固定为 `ai-rhythm-repair-gate-v1`，只选择以下三类极端错误：
+
+1. `silent_range_violation`：可靠首尾或曲中静音范围内只要出现普通/特殊活动起点即进入 repair；要求删除对应小节的 hits 和 long-note starts。该门槛与 silent/rest 优先原则一致，不要求增加任何 note。
+2. `unsupported_note_rate`：仅当普通 note 评估数不少于 8、无支持 note 不少于 4，且无支持比例不低于 0.5 时进入 repair。修复要求把大部分落点移动到可靠 salience、beat/downbeat、activity 或 structure 证据附近，并只保留距直接支持点 0.3 秒内的少量连接点。
+3. `strong_onset_response`：仅当范围至少包含 4 小节、可靠 strong onset 不少于 8，且响应数为 0 时进入 repair。只要求回应少量强瞬态，明确禁止为了指标逐 onset 铺点或填满合理留白。
+
+这三项门槛在 `ai_output*.json` / attempt sidecar 中持久化版本、样本下限与阈值；失败尝试继续通过既有内容 repair 次数预算修复，耗尽后统一回退规则生成，不消耗 transport retry。全部 17 个 fixture 的 68 张四难度规则谱面均不触发新门槛，小样本 unsupported/strong-onset 场景也继续保持 report-only，避免短片段和低难度被系统性误罚。
+
+`note_onset_alignment`、`downbeat_response`、`fill_burst_alignment`、`rhythmic_quantization_error` 和 `salience_coverage_by_density` 继续 report-only。原因分别包括 course/density 系统差异、合理 downbeat 留白、普通 fill 与纯节奏 burst 定义尚未收敛，以及高难度/高 resolution 的量化误差分布差异；当前不建立统一总分。
+
 ## 12.4 退出条件
 
 - 规则与 AI 成品使用相同指标；
@@ -1212,7 +1224,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 - [x] 12.3 实现 `unsupported_note_rate` 与静音违规指标
 - [x] 12.4 实现 fill burst 对齐和节奏量化误差指标
 - [x] 12.5 使用全部 fixture 校准 report-only 指标
-- [ ] 12.6 评审并选择少量指标进入 AI repair
+- [x] 12.6 评审并选择少量指标进入 AI repair
 - [ ] 12.7 执行 Phase 6 阶段验收
 
 ---

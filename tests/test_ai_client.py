@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 from threading import Event, Thread
 
 import pytest
@@ -13,9 +14,15 @@ from litellm import (
 )
 
 from tja_ai_chartgen.ai.client import (
+    AI_REPAIR_STRONG_ONSET_MIN_BARS,
+    AI_REPAIR_STRONG_ONSET_MIN_EVALUATED,
+    AI_REPAIR_UNSUPPORTED_NOTE_MIN_COUNT,
+    AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED,
+    AI_REPAIR_UNSUPPORTED_NOTE_RATE,
     AiOutputRepairError,
     _compact_repair_issues,
     AiProviderError,
+    _selected_rhythm_quality_issues,
     build_ai_salience_validation_report,
     generate_chart_bars_with_ai,
     sanitize_ai_bars,
@@ -33,6 +40,11 @@ from tja_ai_chartgen.tja.model import (
     ResolutionPlan,
     SongAnalysis,
     SpectralGridFeature,
+)
+
+
+CHART_ALIGNMENT_BASELINE_PATH = (
+    Path(__file__).parent / "fixtures" / "audio" / "chart_alignment_baseline.json"
 )
 
 
@@ -1194,6 +1206,150 @@ def test_generate_chart_bars_with_ai_repairs_special_note_without_reliable_burst
     )
 
 
+def test_generate_chart_bars_with_ai_repairs_internal_silent_range_violation(monkeypatch):
+    fixed_notes = [
+        "1022101210201220",
+        "1212102210121020",
+        "0000000000000000",
+        "1022121010221010",
+        "1210201210221020",
+        "1022101212101022",
+        "1212102010221012",
+        "1022121010201220",
+    ]
+    noisy_notes = fixed_notes.copy()
+    noisy_notes[2] = "1000000000000000"
+    responses = [_event_payload(noisy_notes), _event_payload(fixed_notes)]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis_with_middle_rest(),
+        "Normal",
+        5,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert bars[2].notes == "0000000000000000"
+    assert "notes inside reliable silent ranges" in captured_messages[1][-1]["content"]
+    assert raw["rhythm_repair_gate"]["version"] == "ai-rhythm-repair-gate-v1"
+    assert set(raw["rhythm_repair_gate"]["selected_metrics"]) == {
+        "silent_range_violation",
+        "unsupported_note_rate",
+        "strong_onset_response",
+    }
+
+
+def test_generate_chart_bars_with_ai_repairs_extreme_unsupported_note_rate(monkeypatch):
+    unsupported_notes = ["0001000000010000"] * 4
+    supported_notes = ["1000100010001000"] * 4
+    responses = [_event_payload(unsupported_notes), _event_payload(supported_notes)]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis_without_transients(bar_count=4),
+        "Normal",
+        5,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert [bar.notes for bar in bars] == supported_notes
+    assert "extreme unsupported-note rate" in captured_messages[1][-1]["content"]
+    assert "within 0.3 seconds" in captured_messages[1][-1]["content"]
+
+
+def test_generate_chart_bars_with_ai_repairs_complete_strong_onset_miss(monkeypatch):
+    ignored_notes = ["1000100010001000"] * 4
+    responsive_notes = ["0010001000100010"] * 4
+    responses = [_event_payload(ignored_notes), _event_payload(responsive_notes)]
+    captured_messages = []
+
+    def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"].copy())
+        return {"choices": [{"message": {"content": json.dumps(responses.pop(0))}}]}
+
+    monkeypatch.setattr("tja_ai_chartgen.ai.client.completion", fake_completion)
+
+    bars, raw = generate_chart_bars_with_ai(
+        _analysis_with_offbeat_strong_onsets(bar_count=4),
+        "Easy",
+        3,
+        "technical",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert [attempt["status"] for attempt in raw["attempts"]] == ["invalid", "ok"]
+    assert [bar.notes for bar in bars] == responsive_notes
+    assert "ignores every reliable strong onset" in captured_messages[1][-1]["content"]
+    assert "without mapping every onset" in captured_messages[1][-1]["content"]
+
+
+def test_selected_rhythm_gate_keeps_small_samples_report_only():
+    unsupported_analysis = _analysis_without_transients(bar_count=3)
+    unsupported_bars = [ChartBar(index=index, notes="0001000000010000") for index in range(3)]
+    strong_analysis = _analysis_with_offbeat_strong_onsets(bar_count=3)
+    strong_bars = [ChartBar(index=index, notes="1000100010001000") for index in range(3)]
+
+    assert not any(
+        "unsupported-note" in issue
+        for issue in _selected_rhythm_quality_issues(
+            unsupported_bars,
+            analysis=unsupported_analysis,
+        )
+    )
+    assert not any(
+        "strong onset" in issue
+        for issue in _selected_rhythm_quality_issues(
+            strong_bars,
+            analysis=strong_analysis,
+        )
+    )
+
+
+def test_selected_rhythm_gate_accepts_all_calibrated_fixture_charts():
+    baseline = json.loads(CHART_ALIGNMENT_BASELINE_PATH.read_text(encoding="utf-8"))
+    violations = []
+    for item in baseline["charts"]:
+        report = item["report_only"]
+        silent = report["silent_range_violation_rate"]
+        unsupported = report["unsupported_note_rate"]
+        strong = report["strong_onset_response"]
+        if silent["violation_count"]:
+            violations.append((item["audio"], item["course"], "silent"))
+        if (
+            unsupported["evaluated_count"] >= AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED
+            and unsupported["unsupported_count"] >= AI_REPAIR_UNSUPPORTED_NOTE_MIN_COUNT
+            and unsupported["value"] >= AI_REPAIR_UNSUPPORTED_NOTE_RATE
+        ):
+            violations.append((item["audio"], item["course"], "unsupported"))
+        if (
+            item["bar_count"] >= AI_REPAIR_STRONG_ONSET_MIN_BARS
+            and strong["evaluated_count"] >= AI_REPAIR_STRONG_ONSET_MIN_EVALUATED
+            and strong["responded_count"] == 0
+        ):
+            violations.append((item["audio"], item["course"], "strong"))
+
+    assert violations == []
+
+
 def test_generate_chart_bars_with_ai_repairs_sparse_high_density_output(monkeypatch):
     sparse_payload = _event_payload(["1000000000000000"] * 8)
     dense_notes = [
@@ -1607,6 +1763,43 @@ def _analysis_with_reliable_burst() -> SongAnalysis:
         }
     )
     return analysis.model_copy(update={"bars": [bar]})
+
+
+def _analysis_without_transients(*, bar_count: int) -> SongAnalysis:
+    analysis = _analysis(bar_count=bar_count)
+    bars = [
+        bar.model_copy(
+            update={
+                "onset_grids": [],
+                "grid_features": [],
+            }
+        )
+        for bar in analysis.bars
+    ]
+    return analysis.model_copy(update={"bars": bars})
+
+
+def _analysis_with_offbeat_strong_onsets(*, bar_count: int) -> SongAnalysis:
+    analysis = _analysis(bar_count=bar_count)
+    onset_grids = [6, 18, 30, 42]
+    bars = [
+        bar.model_copy(
+            update={
+                "onset_grids": onset_grids,
+                "grid_features": [
+                    GridFeature(
+                        grid=grid,
+                        onset=True,
+                        strength=1.0,
+                        activity=0.8,
+                    )
+                    for grid in onset_grids
+                ],
+            }
+        )
+        for bar in analysis.bars
+    ]
+    return analysis.model_copy(update={"bars": bars})
 
 
 def _analysis(bar_count: int = 1, energy: float = 0.2) -> SongAnalysis:

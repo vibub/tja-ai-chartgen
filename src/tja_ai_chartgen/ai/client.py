@@ -34,6 +34,7 @@ from tja_ai_chartgen.tja.model import (
     SongAnalysis,
 )
 from tja_ai_chartgen.tja.quality import (
+    build_quality_report,
     chart_activity_count,
     density_hit_count,
     empty_runs,
@@ -50,8 +51,14 @@ MAX_AI_TRANSPORT_RETRIES = 5
 MIN_AI_REQUEST_TIMEOUT = 1.0
 MAX_AI_REQUEST_TIMEOUT = 600.0
 AI_SALIENCE_VALIDATION_VERSION = "ai-salience-validation-v1"
+AI_RHYTHM_REPAIR_GATE_VERSION = "ai-rhythm-repair-gate-v1"
 SALIENCE_VALIDATION_EXAMPLE_LIMIT = 16
 MIN_AI_SPECIAL_NOTE_DURATION_SECONDS = 0.25
+AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED = 8
+AI_REPAIR_UNSUPPORTED_NOTE_MIN_COUNT = 4
+AI_REPAIR_UNSUPPORTED_NOTE_RATE = 0.5
+AI_REPAIR_STRONG_ONSET_MIN_BARS = 4
+AI_REPAIR_STRONG_ONSET_MIN_EVALUATED = 8
 
 
 class AiOutputRepairError(RuntimeError):
@@ -830,6 +837,12 @@ def _validate_chart_quality(
     density_hints = build_density_hints(expected_bars)
     hit_counts = [density_hit_count(bar.notes) for bar in bars]
     issues.extend(_density_hint_issues(hit_counts, density_hints))
+    issues.extend(
+        _selected_rhythm_quality_issues(
+            bars,
+            analysis=analysis,
+        )
+    )
 
     if len(bars) < 8:
         return issues
@@ -888,6 +901,53 @@ def _validate_chart_quality(
         examples = ", ".join(f"{pattern} x{count}" for pattern, count in repeated[:4])
         issues.append(f"chart quality repeats exact note strings too often: {examples}")
 
+    return issues
+
+
+def _selected_rhythm_quality_issues(
+    bars: list[ChartBar],
+    *,
+    analysis: SongAnalysis,
+) -> list[str]:
+    """只把经 fixture 校准的极端节奏错误接入 AI repair。"""
+    feature_bars = analysis.bars[: len(bars)]
+    report = build_quality_report(
+        bars,
+        feature_bars,
+        analysis.resolution_plan,
+    )
+    issues: list[str] = []
+    if report.silent_range_violation_count:
+        issues.append(
+            "chart rhythm has notes inside reliable silent ranges: "
+            f"{report.silent_range_violation_count} activity start(s) across "
+            f"{report.silent_range_evaluated_bar_count} silent bar(s); remove all hits "
+            "and long-note starts from those bars"
+        )
+
+    if (
+        report.unsupported_note_evaluated_count >= AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED
+        and report.unsupported_note_count >= AI_REPAIR_UNSUPPORTED_NOTE_MIN_COUNT
+        and report.unsupported_note_rate >= AI_REPAIR_UNSUPPORTED_NOTE_RATE
+    ):
+        issues.append(
+            "chart rhythm has an extreme unsupported-note rate: "
+            f"{report.unsupported_note_count}/{report.unsupported_note_evaluated_count} "
+            f"({report.unsupported_note_rate:.3f}); move most normal hits onto reliable "
+            "salience, beat/downbeat, activity, or structure evidence and keep unsupported "
+            "connectors within 0.3 seconds of a directly supported hit"
+        )
+
+    if (
+        len(feature_bars) >= AI_REPAIR_STRONG_ONSET_MIN_BARS
+        and report.strong_onset_evaluated_count >= AI_REPAIR_STRONG_ONSET_MIN_EVALUATED
+        and report.strong_onset_responded_count == 0
+    ):
+        issues.append(
+            "chart rhythm ignores every reliable strong onset across a multi-bar range: "
+            f"0/{report.strong_onset_evaluated_count} responded; add a small number of "
+            "nearby normal hits or valid burst-backed long notes without mapping every onset"
+        )
     return issues
 
 
@@ -1032,8 +1092,35 @@ Rules:
 - If a bar has high activity/strength but sparse onset markers, treat it as sustained music rather than silence; add a simple beat/downbeat skeleton instead of leaving it empty.
 - Preserve the original phrase_id, transition_role, section_id, fill score, and resolution. Build-ups should rise across phrase_progress; breakdowns keep a light skeleton; low fill scores must not create mechanical 4/8-bar fills.
 - If validation errors mention low chart quality, increase 1/2 note density on normal/dense/fill bars toward target_hits, keep real rest bars empty or sparse, add more 2/4 ka notes for offbeat/answer/fill hits, and vary repeated or all-don patterns without changing bar count or analyzed timing/structure.
+- If validation errors mention chart rhythm, remove every note from reliable silent ranges, move extreme unsupported hits onto nearby salience/beat/activity evidence, and respond to a few reliable strong onsets. Do not map every onset or fill intentional rest space just to improve a metric.
 - Do not include markdown, comments, explanations, or extra text.
 """.strip()
+
+
+def _rhythm_repair_gate_metadata() -> dict[str, Any]:
+    return {
+        "version": AI_RHYTHM_REPAIR_GATE_VERSION,
+        "selected_metrics": {
+            "silent_range_violation": {"maximum_violation_count": 0},
+            "unsupported_note_rate": {
+                "minimum_evaluated_count": AI_REPAIR_UNSUPPORTED_NOTE_MIN_EVALUATED,
+                "minimum_unsupported_count": AI_REPAIR_UNSUPPORTED_NOTE_MIN_COUNT,
+                "repair_at_or_above_rate": AI_REPAIR_UNSUPPORTED_NOTE_RATE,
+            },
+            "strong_onset_response": {
+                "minimum_bar_count": AI_REPAIR_STRONG_ONSET_MIN_BARS,
+                "minimum_evaluated_count": AI_REPAIR_STRONG_ONSET_MIN_EVALUATED,
+                "minimum_responded_count": 1,
+            },
+        },
+        "report_only_metrics": [
+            "note_onset_alignment",
+            "downbeat_response",
+            "fill_burst_alignment",
+            "rhythmic_quantization_error",
+            "salience_coverage_by_density",
+        ],
+    }
 
 
 def _build_ai_output(
@@ -1058,6 +1145,7 @@ def _build_ai_output(
         "max_repair_attempts": max_repair_attempts,
         "request_timeout": request_timeout,
         "max_transport_retries": max_transport_retries,
+        "rhythm_repair_gate": _rhythm_repair_gate_metadata(),
         "attempts": attempts,
         "transport_attempts": transport_attempts,
         "fallback_reason": fallback_reason,
