@@ -175,7 +175,7 @@ def build_song_analysis(
         for phrase in structure.phrases
     ]
     return SongAnalysis(
-        analysis_schema_version=9,
+        analysis_schema_version=10,
         beatnet_analysis_status=raw.beatnet_analysis_status,
         beatnet_analysis_reason=raw.beatnet_analysis_reason,
         spectral_feature_version=raw.spectral.feature_version,
@@ -225,7 +225,20 @@ def build_analysis_notices(
     notices: list[GenerationNotice] = []
     analyzer = analysis.analyzer.lower()
     tempo = analysis.tempo_analysis
-    if requested_beatnet and "beatnet" not in analyzer:
+    if requested_beatnet and tempo is not None and tempo.partial_adoption:
+        notices.append(
+            GenerationNotice(
+                code="beatnet-meter-adopted",
+                level="info",
+                stage="analysis",
+                message="已保留基础 BPM，并采用 BeatNet 的拍号与 downbeat。",
+                detail=(
+                    f"tempo_source={tempo.tempo_source or tempo.selected_source}; "
+                    f"meter_source={tempo.meter_source or 'beatnet'}"
+                ),
+            )
+        )
+    elif requested_beatnet and "beatnet" not in analyzer:
         beatnet_rejections = (
             {
                 source: reason

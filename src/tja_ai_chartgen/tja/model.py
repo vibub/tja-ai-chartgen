@@ -182,6 +182,9 @@ class TempoAnalysisDecision(BaseModel):
     decision_version: str = "legacy"
     fallback_source: str
     selected_source: str
+    tempo_source: str | None = None
+    meter_source: str | None = None
+    partial_adoption: bool = False
     estimated_bpm: float
     estimated_offset: float
     normalized_support: float = Field(ge=0.0, le=1.0)

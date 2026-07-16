@@ -146,7 +146,7 @@ def test_build_song_analysis_applies_overrides_and_max_bars(tmp_path, monkeypatc
     assert analysis.time_signature == "3/4"
     assert len(analysis.bars) == 2
     assert all(bar.time_signature == "3/4" for bar in analysis.bars)
-    assert analysis.analysis_schema_version == 9
+    assert analysis.analysis_schema_version == 10
     assert analysis.spectral_feature_version == "spectral-v1"
     assert analysis.spectral_analysis_status == "complete"
     assert analysis.instrument_feature_version is None
@@ -246,7 +246,7 @@ def test_build_song_analysis_runs_optional_instrument_analysis_after_overrides(
             },
         )
     ]
-    assert analysis.analysis_schema_version == 9
+    assert analysis.analysis_schema_version == 10
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "complete"
     assert analysis.instrument_demucs_model == "htdemucs"
@@ -312,7 +312,7 @@ def test_build_analysis_notices_reports_rejected_beatnet_candidates():
             "analyzer": "librosa+onset-grid",
             "beatnet_analysis_status": "complete",
             "tempo_analysis": TempoAnalysisDecision(
-                decision_version="tempo-arbitration-v1",
+                decision_version="tempo-arbitration-v2",
                 fallback_source="librosa+onset-grid",
                 selected_source="librosa+onset-grid",
                 estimated_bpm=120,
@@ -343,12 +343,44 @@ def test_build_analysis_notices_reports_rejected_beatnet_candidates():
     assert "beatnet=onset-support-below-baseline" in (rejected.detail or "")
 
 
+def test_build_analysis_notices_reports_partial_beatnet_meter_adoption():
+    analysis = _analysis().model_copy(
+        update={
+            "analyzer": "librosa+onset-grid+beatnet-meter",
+            "beatnet_analysis_status": "complete",
+            "tempo_analysis": TempoAnalysisDecision(
+                decision_version="tempo-arbitration-v2",
+                fallback_source="librosa+onset-grid",
+                selected_source="librosa+onset-grid",
+                tempo_source="librosa+onset-grid",
+                meter_source="beatnet",
+                partial_adoption=True,
+                estimated_bpm=120,
+                estimated_offset=0.25,
+                normalized_support=0.9,
+                onset_count=16,
+                time_coverage=0.9,
+                selected_score=0.85,
+                accepted=True,
+                reason="adopted-beatnet-meter-downbeat",
+            ),
+        }
+    )
+
+    notices = build_analysis_notices(analysis, requested_beatnet=True)
+
+    assert [notice.code for notice in notices] == ["beatnet-meter-adopted"]
+    assert notices[0].level == "info"
+    assert "tempo_source=librosa+onset-grid" in (notices[0].detail or "")
+    assert "meter_source=beatnet" in (notices[0].detail or "")
+
+
 def test_build_analysis_notices_reports_tempo_ambiguity():
     analysis = _analysis().model_copy(
         update={
             "analyzer": "librosa+onset-grid",
             "tempo_analysis": TempoAnalysisDecision(
-                decision_version="tempo-arbitration-v1",
+                decision_version="tempo-arbitration-v2",
                 fallback_source="librosa+onset-grid",
                 selected_source="librosa+onset-grid",
                 estimated_bpm=120,

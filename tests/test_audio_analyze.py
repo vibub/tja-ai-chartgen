@@ -162,6 +162,158 @@ def test_arbitration_keeps_fallback_for_close_speed_alias_candidates():
     assert decision.runner_up_source == "beatnet"
 
 
+def test_apply_arbitration_preserves_bpm_and_adopts_reliable_beatnet_meter():
+    baseline = _arbitration_candidate(
+        "librosa+onset-grid",
+        bpm=120,
+        onset_support=0.95,
+    )
+    beatnet = _arbitration_candidate(
+        "beatnet",
+        bpm=120,
+        time_signature="3/4",
+        onset_support=0.7,
+        downbeat_support=0.8,
+    )
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=baseline.beat_times,
+        onset_times=[],
+        onset_strengths=[],
+        duration=8.0,
+        offset=baseline.offset,
+        tempo_candidates=[baseline],
+    )
+
+    updated = audio_analyze._apply_tempo_arbitration(
+        raw,
+        [baseline, beatnet],
+        fallback_source="librosa+onset-grid",
+    )
+
+    assert updated.bpm == 120
+    assert updated.time_signature == "3/4"
+    assert updated.offset == 0.2
+    assert updated.beat_numbers[:4] == [1, 2, 3, 1]
+    assert updated.downbeat_times[:2] == [0.2, 1.7]
+    assert updated.analyzer == "librosa+onset-grid+beatnet-meter"
+    assert updated.tempo_analysis is not None
+    assert updated.tempo_analysis.decision_version == "tempo-arbitration-v2"
+    assert updated.tempo_analysis.selected_source == "librosa+onset-grid"
+    assert updated.tempo_analysis.tempo_source == "librosa+onset-grid"
+    assert updated.tempo_analysis.meter_source == "beatnet"
+    assert updated.tempo_analysis.partial_adoption is True
+    assert updated.tempo_analysis.accepted is True
+    assert updated.tempo_analysis.reason == "adopted-beatnet-meter-downbeat"
+    assert updated.tempo_analysis.candidate_rejections == {
+        "beatnet": "onset-support-below-baseline"
+    }
+
+
+def test_apply_arbitration_does_not_partially_adopt_disagreeing_beatnet_bpm():
+    baseline = _arbitration_candidate(
+        "librosa+onset-grid",
+        bpm=120,
+        onset_support=0.95,
+    )
+    beatnet = _arbitration_candidate(
+        "beatnet",
+        bpm=132,
+        time_signature="3/4",
+        onset_support=0.7,
+        downbeat_support=0.8,
+    )
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=baseline.beat_times,
+        onset_times=[],
+        onset_strengths=[],
+        duration=8.0,
+        offset=baseline.offset,
+    )
+
+    updated = audio_analyze._apply_tempo_arbitration(
+        raw,
+        [baseline, beatnet],
+        fallback_source="librosa+onset-grid",
+    )
+
+    assert updated.bpm == 120
+    assert updated.time_signature == "4/4"
+    assert updated.analyzer == "librosa+onset-grid"
+    assert updated.tempo_analysis is not None
+    assert updated.tempo_analysis.partial_adoption is False
+    assert updated.tempo_analysis.accepted is False
+
+
+def test_apply_arbitration_does_not_partially_adopt_weak_downbeats():
+    baseline = _arbitration_candidate(
+        "librosa+onset-grid",
+        bpm=120,
+        onset_support=0.95,
+    )
+    beatnet = _arbitration_candidate(
+        "beatnet",
+        bpm=120,
+        time_signature="3/4",
+        onset_support=0.7,
+        downbeat_support=0.3,
+    )
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=baseline.beat_times,
+        onset_times=[],
+        onset_strengths=[],
+        duration=8.0,
+        offset=baseline.offset,
+    )
+
+    updated = audio_analyze._apply_tempo_arbitration(
+        raw,
+        [baseline, beatnet],
+        fallback_source="librosa+onset-grid",
+    )
+
+    assert updated.time_signature == "4/4"
+    assert updated.analyzer == "librosa+onset-grid"
+    assert updated.tempo_analysis is not None
+    assert updated.tempo_analysis.partial_adoption is False
+
+
+def test_apply_arbitration_does_not_partially_adopt_short_beatnet_coverage():
+    baseline = _arbitration_candidate(
+        "librosa+onset-grid",
+        bpm=120,
+        onset_support=0.95,
+    )
+    beatnet = _arbitration_candidate(
+        "beatnet",
+        bpm=120,
+        time_signature="3/4",
+        onset_support=0.7,
+        downbeat_support=0.8,
+    ).model_copy(update={"time_coverage": 0.4})
+    raw = AudioAnalysisRaw(
+        bpm=120,
+        beat_times=baseline.beat_times,
+        onset_times=[],
+        onset_strengths=[],
+        duration=8.0,
+        offset=baseline.offset,
+    )
+
+    updated = audio_analyze._apply_tempo_arbitration(
+        raw,
+        [baseline, beatnet],
+        fallback_source="librosa+onset-grid",
+    )
+
+    assert updated.time_signature == "4/4"
+    assert updated.analyzer == "librosa+onset-grid"
+    assert updated.tempo_analysis is not None
+    assert updated.tempo_analysis.partial_adoption is False
+
+
 def test_estimate_tempo_and_offset_from_onsets_selects_periodic_grid():
     onset_times = [0.2 + i * 0.5 for i in range(24)]
     weights = [1.0 for _ in onset_times]
@@ -632,6 +784,9 @@ def test_merge_beatnet_output_updates_downbeats_meter_and_offset():
     assert updated.tempo_analysis.accepted is True
     assert updated.tempo_analysis.reason == "selected-by-score"
     assert updated.tempo_analysis.selected_source == "beatnet"
+    assert updated.tempo_analysis.tempo_source == "beatnet"
+    assert updated.tempo_analysis.meter_source == "beatnet"
+    assert updated.tempo_analysis.partial_adoption is False
     assert [candidate.source for candidate in updated.tempo_candidates] == [
         "librosa",
         "beatnet",
@@ -944,7 +1099,7 @@ def test_merge_beatnet_output_refines_timing_with_onset_grid():
     assert updated.tempo_analysis is not None
     assert updated.tempo_analysis.accepted is True
     assert updated.tempo_analysis.selected_source == "beatnet+onset-grid"
-    assert updated.tempo_analysis.decision_version == "tempo-arbitration-v1"
+    assert updated.tempo_analysis.decision_version == "tempo-arbitration-v2"
     assert [candidate.source for candidate in updated.tempo_candidates] == [
         "librosa",
         "librosa+onset-grid",

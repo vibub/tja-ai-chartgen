@@ -69,7 +69,7 @@ def test_real_audio_pipeline(
     assert raw.tempo_analysis.accepted is True
     assert raw.tempo_analysis.reason == "selected-by-score"
     assert raw.tempo_analysis.selected_source == "librosa+onset-grid"
-    assert raw.tempo_analysis.decision_version == "tempo-arbitration-v1"
+    assert raw.tempo_analysis.decision_version == "tempo-arbitration-v2"
     assert raw.tempo_analysis.selected_score > 0.0
     assert raw.tempo_analysis.normalized_support >= 0.85
     assert raw.tempo_analysis.onset_count >= 12
@@ -121,7 +121,7 @@ def test_real_audio_pipeline(
     assert serialized_analysis["tempo_analysis"]["accepted"] is True
     assert serialized_analysis["tempo_analysis"]["fallback_source"] == "librosa"
     assert serialized_analysis["tempo_analysis"]["decision_version"] == (
-        "tempo-arbitration-v1"
+        "tempo-arbitration-v2"
     )
     assert serialized_analysis["tempo_analysis"]["selected_score"] > 0.0
     assert serialized_analysis["tempo_analysis"]["ambiguous"] is False
@@ -283,7 +283,7 @@ def test_missing_instrument_models_fall_back_without_blocking_real_audio_generat
         instrument_model_dir=tmp_path / "missing-models",
     )
 
-    assert analysis.analysis_schema_version == 9
+    assert analysis.analysis_schema_version == 10
     assert analysis.instrument_feature_version == "instrument-v1"
     assert analysis.instrument_analysis_status == "fallback"
     assert analysis.instrument_analysis_reason == "missing-model:manifest"

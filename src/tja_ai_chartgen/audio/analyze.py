@@ -37,12 +37,14 @@ FULL_ONSET_GRID_EVIDENCE_COVERAGE = 0.9
 MAX_ONSET_GRID_RUNNER_UP_RATIO = 0.9
 MIN_DISTINCT_BPM_DISTANCE = 3.0
 MIN_DISTINCT_BPM_RATIO = 0.03
-TEMPO_ARBITRATION_VERSION = "tempo-arbitration-v1"
+TEMPO_ARBITRATION_VERSION = "tempo-arbitration-v2"
 MIN_TEMPO_CANDIDATE_SCORE = 0.45
 MIN_BEATNET_INTERVAL_STABILITY = 0.8
 MIN_BEATNET_NUMBER_COMPLETENESS = 0.7
 MIN_BEATNET_METER_STABILITY = 0.5
 MIN_BEATNET_METER_LENGTH_SCORE = 0.65
+MIN_PARTIAL_BEATNET_DOWNBEAT_SUPPORT = 0.45
+MIN_PARTIAL_BEATNET_TIME_COVERAGE = 0.5
 MAX_BEATNET_ONSET_SUPPORT_DEFICIT = 0.08
 TEMPO_AMBIGUITY_MARGIN = 0.04
 TEMPO_ALIAS_AMBIGUITY_MARGIN = 0.08
@@ -1133,6 +1135,8 @@ def arbitrate_tempo_candidates(
         decision_version=TEMPO_ARBITRATION_VERSION,
         fallback_source=fallback_source,
         selected_source=selected.source,
+        tempo_source=selected.source,
+        meter_source=selected.source,
         estimated_bpm=selected.bpm,
         estimated_offset=selected.offset,
         normalized_support=selected.onset_support,
@@ -1184,6 +1188,78 @@ def _raw_baseline_candidate(raw: AudioAnalysisRaw) -> TempoMeterCandidate:
     )
 
 
+def _beatnet_meter_is_reliable(
+    candidate: TempoMeterCandidate,
+    *,
+    tempo_candidate: TempoMeterCandidate,
+) -> bool:
+    if candidate.source != "beatnet" or not candidate.downbeat_times:
+        return False
+    bpm_ratio = abs(candidate.bpm - tempo_candidate.bpm) / max(
+        candidate.bpm,
+        tempo_candidate.bpm,
+    )
+    if bpm_ratio > TEMPO_AGREEMENT_RATIO:
+        return False
+
+    evidence = candidate.evidence
+    expected_size = {"3/4": 3, "4/4": 4, "6/8": 6}[candidate.time_signature]
+    if evidence.interval_count < max(2, expected_size - 1):
+        return False
+    if candidate.interval_stability < MIN_BEATNET_INTERVAL_STABILITY:
+        return False
+    if evidence.beat_number_completeness < MIN_BEATNET_NUMBER_COMPLETENESS:
+        return False
+    if evidence.meter_stability < MIN_BEATNET_METER_STABILITY:
+        return False
+    if (
+        len(candidate.downbeat_times) >= 2
+        and evidence.meter_length_score < MIN_BEATNET_METER_LENGTH_SCORE
+    ):
+        return False
+    if candidate.time_coverage < MIN_PARTIAL_BEATNET_TIME_COVERAGE:
+        return False
+    if evidence.downbeat_support < MIN_PARTIAL_BEATNET_DOWNBEAT_SUPPORT:
+        return False
+
+    interval = 60.0 / tempo_candidate.bpm
+    phase_delta = abs((candidate.downbeat_times[0] - tempo_candidate.offset) % interval)
+    phase_delta = min(phase_delta, interval - phase_delta)
+    return (
+        candidate.time_signature != tempo_candidate.time_signature
+        or phase_delta > OFFSET_AGREEMENT_SECONDS
+    )
+
+
+def _partial_beatnet_meter_candidate(
+    candidates: list[TempoMeterCandidate],
+    decision: TempoAnalysisDecision,
+    *,
+    fallback_source: str,
+) -> TempoMeterCandidate | None:
+    if decision.ambiguous or decision.selected_source != fallback_source:
+        return None
+    tempo_candidate = next(
+        candidate for candidate in candidates if candidate.source == decision.selected_source
+    )
+    reliable = [
+        candidate
+        for candidate in candidates
+        if _beatnet_meter_is_reliable(candidate, tempo_candidate=tempo_candidate)
+    ]
+    if not reliable:
+        return None
+    return max(
+        reliable,
+        key=lambda candidate: (
+            candidate.evidence.downbeat_support,
+            candidate.evidence.meter_stability,
+            candidate.evidence.beat_number_completeness,
+            candidate.confidence,
+        ),
+    )
+
+
 def _apply_tempo_arbitration(
     raw: AudioAnalysisRaw,
     candidates: list[TempoMeterCandidate],
@@ -1195,8 +1271,18 @@ def _apply_tempo_arbitration(
         fallback_source=fallback_source,
     )
     selected = next(candidate for candidate in updated_candidates if candidate.selected)
-    uses_meter = selected.source.startswith("beatnet")
-    offset = selected.downbeat_times[0] if selected.downbeat_times else selected.offset
+    partial_meter = _partial_beatnet_meter_candidate(
+        updated_candidates,
+        decision,
+        fallback_source=fallback_source,
+    )
+    meter_candidate = partial_meter or selected
+    uses_meter = meter_candidate.source.startswith("beatnet")
+    offset = (
+        meter_candidate.downbeat_times[0]
+        if uses_meter and meter_candidate.downbeat_times
+        else selected.offset
+    )
     beat_times = (
         _regular_beat_times(offset, selected.bpm, raw.duration)
         if uses_meter
@@ -1206,14 +1292,15 @@ def _apply_tempo_arbitration(
         return raw.model_copy(
             update={"tempo_candidates": updated_candidates, "tempo_analysis": decision}
         )
+    time_signature = meter_candidate.time_signature if uses_meter else selected.time_signature
     beat_numbers = (
-        _regular_beat_numbers(len(beat_times), selected.time_signature)
+        _regular_beat_numbers(len(beat_times), time_signature)
         if uses_meter
         else []
     )
     downbeat_times = (
         _project_downbeats_to_regular_grid(
-            selected.downbeat_times,
+            meter_candidate.downbeat_times,
             beat_times,
             offset,
             selected.bpm,
@@ -1227,6 +1314,19 @@ def _apply_tempo_arbitration(
             for time, number in zip(beat_times, beat_numbers, strict=True)
             if number == 1
         ]
+    analyzer = selected.source
+    if partial_meter is not None:
+        analyzer = f"{selected.source}+beatnet-meter"
+        decision = decision.model_copy(
+            update={
+                "tempo_source": selected.source,
+                "meter_source": partial_meter.source,
+                "partial_adoption": True,
+                "estimated_offset": downbeat_times[0] if downbeat_times else offset,
+                "accepted": True,
+                "reason": "adopted-beatnet-meter-downbeat",
+            }
+        )
     return raw.model_copy(
         update={
             "bpm": selected.bpm,
@@ -1234,8 +1334,8 @@ def _apply_tempo_arbitration(
             "beat_times": beat_times,
             "beat_numbers": beat_numbers,
             "downbeat_times": downbeat_times,
-            "time_signature": selected.time_signature,
-            "analyzer": selected.source,
+            "time_signature": time_signature,
+            "analyzer": analyzer,
             "tempo_candidates": updated_candidates,
             "tempo_analysis": decision,
         }
