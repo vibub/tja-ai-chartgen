@@ -25,8 +25,9 @@
     },
     "accent_playability": {
       "passed": true,
-      "big_note_count": 18,
+      "big_note_count": 11,
       "adjacent_big_note_violation_count": 0,
+      "big_note_isolation_violation_count": 0,
       "course_limit_violations": []
     },
     "don_ka_balance": {
@@ -204,9 +205,10 @@
       "accent_candidate_count": 12,
       "accent_hit_count": 48,
       "accent_response_rate": 1.0,
-      "big_note_count": 18,
+      "big_note_count": 11,
       "cadence_response_count": 16,
       "adjacent_big_note_violation_count": 0,
+      "big_note_isolation_violation_count": 0,
       "course_limit_violations": []
     },
     "color": {

@@ -399,7 +399,7 @@ def test_generate_fallback_chart_bars_applies_style_coloring():
     performance = generate_fallback_chart_bars([bar], style="performance", density="high")[0].notes
 
     assert len({technical, stamina, hybrid, performance}) == 4
-    assert set(performance) & {"3", "4"}
+    assert not set(performance) & {"3", "4"}
 
 
 def test_fallback_reuses_full_salience_for_hit_accent_and_color(monkeypatch):
@@ -454,6 +454,62 @@ def test_performance_style_uses_unified_accent_salience_with_easy_budget():
 
     assert notes[0] in "34"
     assert sum(note in "34" for note in notes) == 1
+
+
+@pytest.mark.parametrize(
+    ("bar_duration", "gap_grid", "expected_notes"),
+    [
+        (1.0, 2, "1020000000000000"),
+        (1.0, 3, "1002000000000000"),
+        (2.0, 2, "1020000000000000"),
+    ],
+)
+def test_performance_style_keeps_close_alternating_pairs_normal(
+    bar_duration: float,
+    gap_grid: int,
+    expected_notes: str,
+):
+    bar = _feature(
+        0,
+        energy=0.8,
+        end_time=bar_duration,
+        onsets=[0, gap_grid],
+        strengths={0: 1.0, gap_grid: 1.0},
+        beats=[0],
+        downbeat=0,
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar],
+        style="performance",
+        density="low",
+        course="Easy",
+        level=3,
+    )[0].notes
+
+    assert notes == expected_notes
+    assert not set(notes) & {"3", "4"}
+
+
+def test_performance_style_allows_big_note_when_pair_is_slow_enough():
+    bar = _feature(
+        0,
+        energy=0.8,
+        onsets=[0, 3],
+        strengths={0: 1.0, 3: 1.0},
+        beats=[0],
+        downbeat=0,
+    )
+
+    notes = generate_fallback_chart_bars(
+        [bar],
+        style="performance",
+        density="low",
+        course="Easy",
+        level=3,
+    )[0].notes
+
+    assert notes == "3002000000000000"
 
 
 def test_performance_style_prefers_section_change_accent_over_plain_onset():
@@ -520,7 +576,7 @@ def test_performance_peak_caps_and_separates_big_notes():
     )
 
 
-def test_performance_style_avoids_adjacent_big_notes_across_bar_boundary():
+def test_performance_style_downgrades_unisolated_big_note_across_bar_boundary():
     bars = [
         _feature(
             0,
@@ -547,8 +603,9 @@ def test_performance_style_avoids_adjacent_big_notes_across_bar_boundary():
         level=10,
     )
 
-    assert chart_bars[0].notes[-1] in "34"
+    assert chart_bars[0].notes[-1] in "12"
     assert chart_bars[1].notes[0] in "12"
+    assert not any(note in "34" for bar in chart_bars for note in bar.notes)
 
 
 def test_generate_fallback_chart_bars_keeps_edge_silence_empty():

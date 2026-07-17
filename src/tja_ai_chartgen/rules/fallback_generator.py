@@ -32,6 +32,10 @@ from tja_ai_chartgen.tja.model import (
     ResolutionPlan,
     SpectralGridFeature,
 )
+from tja_ai_chartgen.tja.playability import (
+    BIG_NOTE_ISOLATION_SECONDS,
+    find_big_note_isolation_violations,
+)
 
 MAX_HITS_PER_SECOND = 12.0
 BALLOON_HITS_PER_SECOND = {
@@ -189,7 +193,7 @@ def generate_fallback_chart_bars(
         previous_ended_with_big_note = bool(
             chart_bar.notes and chart_bar.notes[-1] in {"3", "4"}
         )
-    return chart_bars
+    return _downgrade_unisolated_big_notes(chart_bars, bars)
 
 
 def validate_density(density: str) -> None:
@@ -677,11 +681,22 @@ def _select_big_note_grids(
         return set()
 
     step = bar.grids_per_bar // output_resolution
+    duration = bar.end_time - bar.start_time
+    if not isfinite(duration) or duration <= 0 or bar.grids_per_bar <= 0:
+        return set()
+
     chosen: set[int] = set()
     for candidate in rank_accent_candidates(salience_candidates):
         if candidate.grid not in selected:
             continue
         if forbid_initial_big_note and candidate.grid == 0:
+            continue
+        if any(
+            grid != candidate.grid
+            and duration * abs(candidate.grid - grid) / bar.grids_per_bar
+            <= BIG_NOTE_ISOLATION_SECONDS
+            for grid in selected
+        ):
             continue
         if any(abs(candidate.grid - grid) <= step for grid in chosen):
             continue
@@ -689,6 +704,31 @@ def _select_big_note_grids(
         if len(chosen) >= limit:
             break
     return chosen
+
+
+def _downgrade_unisolated_big_notes(
+    chart_bars: list[ChartBar],
+    feature_bars: list[BarFeature],
+) -> list[ChartBar]:
+    violations = find_big_note_isolation_violations(chart_bars, feature_bars)
+    if not violations:
+        return chart_bars
+
+    grids_by_bar: dict[int, set[int]] = {}
+    for violation in violations:
+        grids_by_bar.setdefault(violation.bar_position, set()).add(violation.grid)
+
+    resolved: list[ChartBar] = []
+    for position, chart_bar in enumerate(chart_bars):
+        grids = grids_by_bar.get(position)
+        if not grids:
+            resolved.append(chart_bar)
+            continue
+        notes = list(chart_bar.notes)
+        for grid in grids:
+            notes[grid] = "1" if notes[grid] == "3" else "2"
+        resolved.append(chart_bar.model_copy(update={"notes": "".join(notes)}))
+    return resolved
 
 
 def _weak_fill_limit(

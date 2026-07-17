@@ -37,6 +37,10 @@ from tja_ai_chartgen.tja.model import (
     ResolutionPlan,
     SongAnalysis,
 )
+from tja_ai_chartgen.tja.playability import (
+    BIG_NOTE_ISOLATION_SECONDS,
+    find_big_note_isolation_violations,
+)
 from tja_ai_chartgen.tja.quality import (
     chart_activity_count,
     density_hit_count,
@@ -639,6 +643,8 @@ def _validate_ai_data(
             bars.append(chart_bar)
 
     if not issues:
+        issues.extend(_validate_big_note_isolation(bars, analysis.bars))
+    if not issues:
         issues.extend(_validate_edge_silence(bars, analysis.bars))
     if not issues:
         issues.extend(
@@ -805,6 +811,22 @@ def _validate_ai_long_notes(
                 f"{MIN_AI_SPECIAL_NOTE_DURATION_SECONDS:.2f} seconds"
             )
     return issues
+
+
+def _validate_big_note_isolation(
+    bars: list[ChartBar],
+    expected_bars: list[BarFeature],
+) -> list[str]:
+    return [
+        (
+            f"bars[{violation.bar_position}].hits has big note {violation.note} at "
+            f"canonical tick {violation.canonical_tick} only "
+            f"{violation.nearest_hit_distance_seconds:.3f}s from another playable hit; "
+            f"big notes require more than {BIG_NOTE_ISOLATION_SECONDS:.2f}s isolation "
+            "on both sides, so use normal note 1/2 instead"
+        )
+        for violation in find_big_note_isolation_violations(bars, expected_bars)
+    ]
 
 
 def _validate_edge_silence(bars: list[ChartBar], expected_bars: list[BarFeature]) -> list[str]:
@@ -1035,6 +1057,8 @@ Rules:
 - Prioritize reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight salience points. Keep unsupported hits rare and use only short supported connectors when density requires them.
 - Use only hits and long_notes; never return legacy notes or balloon_counts fields.
 - Normal hit notes are 1, 2, 3, or 4.
+- Big notes 3/4 require more than 0.25 seconds of real-time isolation from every other playable hit before and after them, including across bar boundaries. Otherwise keep the same color as normal note 1/2.
+- Rapid alternating-hand cells equivalent to 102 or 1002 must use only normal 1/2 notes when the real-time gap between their hits is 0.25 seconds or less; never upgrade either hit to 3/4.
 - long_notes must be empty unless special_notes is true. Use at most one per bar, require reliable burst salience, and keep its ticks inside the projected burst range. Structural fill_candidate may strengthen the choice but cannot replace the burst gate. Balloons require a positive balloon_count.
 - Course/difficulty request: {course} level {level}, density {density}.
 - Forced silent bars: {forced_silent_bars}. These song-start/song-end silence bars must have empty hits and long_notes.

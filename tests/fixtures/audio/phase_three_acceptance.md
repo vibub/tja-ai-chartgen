@@ -10,7 +10,7 @@
 | Exit condition | Result | Evidence |
 | --- | :---: | --- |
 | Strong-onset, downbeat, and cadence response is preserved or improved | PASS | strong 0.973077 → 0.973077; downbeat 0.982456 → 0.982456; accent response 1.000000 |
-| Big-note accents remain sparse and playable | PASS | 18 big notes, 0 adjacency violations |
+| Big-note accents remain sparse and playable | PASS | 11 big notes, 0 real-time isolation violations |
 | Don/ka response remains driven by frequency evidence | PASS | low→don 0.750000, high→ka 1.000000, ka ratio 0.653846, longest run 6 (report-only) |
 | Known fill-burst fixture hits only the expected late-bar bursts | PASS | expected [3, 7], detected [3, 7], special [3, 7] |
 | Phrase ends without burst evidence do not create mechanical fills | PASS | 0 special notes |

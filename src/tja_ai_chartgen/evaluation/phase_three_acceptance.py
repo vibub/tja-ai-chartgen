@@ -21,6 +21,7 @@ from tja_ai_chartgen.tja.model import (
     ResolutionPlan,
     SpectralGridFeature,
 )
+from tja_ai_chartgen.tja.playability import find_big_note_isolation_violations
 from tja_ai_chartgen.tja.quality import note_color_metrics
 
 PHASE_THREE_ACCEPTANCE_SCHEMA_VERSION = 1
@@ -44,7 +45,7 @@ def build_phase_three_behavior_matrix() -> dict[str, Any]:
         "passed": (
             accent["accent_response_rate"] >= 0.9
             and accent["big_note_count"] > 0
-            and accent["adjacent_big_note_violation_count"] == 0
+            and accent["big_note_isolation_violation_count"] == 0
             and accent["cadence_response_count"] > 0
             and color["low_attack_don_response_rate"] >= 0.75
             and color["high_attack_ka_response_rate"] >= 0.75
@@ -174,12 +175,15 @@ def build_phase_three_acceptance_report(
         "accent_playability": {
             "passed": (
                 _int(accent.get("big_note_count")) > 0
-                and _int(accent.get("adjacent_big_note_violation_count")) == 0
+                and _int(accent.get("big_note_isolation_violation_count")) == 0
                 and not accent.get("course_limit_violations")
             ),
             "big_note_count": accent.get("big_note_count"),
             "adjacent_big_note_violation_count": accent.get(
                 "adjacent_big_note_violation_count"
+            ),
+            "big_note_isolation_violation_count": accent.get(
+                "big_note_isolation_violation_count"
             ),
             "course_limit_violations": accent.get("course_limit_violations", []),
         },
@@ -268,7 +272,8 @@ def render_phase_three_acceptance_markdown(report: dict[str, Any]) -> str:
             "Big-note accents remain sparse and playable",
             checks["accent_playability"]["passed"],
             f"{checks['accent_playability']['big_note_count']} big notes, "
-            f"{checks['accent_playability']['adjacent_big_note_violation_count']} adjacency violations",
+            f"{checks['accent_playability']['big_note_isolation_violation_count']} "
+            "real-time isolation violations",
         ),
         _check_row(
             "Don/ka response remains driven by frequency evidence",
@@ -339,6 +344,7 @@ def _build_accent_metrics() -> dict[str, Any]:
     big_note_count = 0
     cadence_response_count = 0
     adjacent_violations = 0
+    isolation_violations = 0
     course_limit_violations: list[str] = []
     for course, level in COURSE_LEVELS:
         chart_bars = generate_fallback_chart_bars(
@@ -349,6 +355,9 @@ def _build_accent_metrics() -> dict[str, Any]:
             level=level,
         )
         course_big_count = 0
+        isolation_violations += len(
+            find_big_note_isolation_violations(chart_bars, bars)
+        )
         previous_ended_with_big = False
         for position, chart_bar in enumerate(chart_bars):
             if previous_ended_with_big and chart_bar.notes.startswith(("3", "4")):
@@ -380,6 +389,7 @@ def _build_accent_metrics() -> dict[str, Any]:
         "big_note_count": big_note_count,
         "cadence_response_count": cadence_response_count,
         "adjacent_big_note_violation_count": adjacent_violations,
+        "big_note_isolation_violation_count": isolation_violations,
         "course_limit_violations": course_limit_violations,
     }
 

@@ -599,8 +599,12 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "Do not create a fill merely because a bar number is divisible by 4 or 8" in prompt
     assert "prefer starting the bar with a 1/2 note on grid 0" in prompt
     assert "Big notes 3/4 require both hands hitting together" in prompt
-    assert "Do not place big notes 3/4 inside dense streams" in prompt
+    assert "more than 0.25 seconds from every other playable" in prompt
+    assert "including across bar boundaries" in prompt
+    assert "Do not place big notes 3/4 inside dense or rapid alternating-hand passages" in prompt
     assert "3 or more consecutive playable hits" in prompt
+    assert "equivalent to 102 or 1002" in prompt
+    assert "both hits must remain normal 1/2 notes" in prompt
     assert "without overusing big notes" in prompt
     assert "Density and difficulty targets" in prompt
     assert "bar_density_hints" in prompt
@@ -794,6 +798,45 @@ def test_generate_chart_bars_with_ai_repairs_unrepresentable_event_tick(monkeypa
     assert bars == [ChartBar(index=0, notes="1000200000000000")]
     assert [attempt["status"] for attempt in output["attempts"]] == ["invalid", "ok"]
     assert "tick-not-representable" in output["attempts"][0]["issues"][0]
+
+
+def test_generate_chart_bars_with_ai_repairs_unisolated_big_note_in_fast_pair(
+    monkeypatch,
+):
+    analysis = _analysis()
+    fast_bar = analysis.bars[0].model_copy(
+        update={
+            "end_time": 1.0,
+            "onset_grids": [0, 6],
+            "beat_grids": [0, 12, 24, 36],
+        }
+    )
+    analysis = analysis.model_copy(update={"bars": [fast_bar]})
+    responses = [
+        {"bars": [{"bar": 1, "hits": [[0, "3"], [6, "2"]], "long_notes": []}]},
+        {"bars": [{"bar": 1, "hits": [[0, "1"], [6, "2"]], "long_notes": []}]},
+    ]
+
+    monkeypatch.setattr(
+        "tja_ai_chartgen.ai.client.completion",
+        lambda **_kwargs: {
+            "choices": [{"message": {"content": json.dumps(responses.pop(0))}}]
+        },
+    )
+
+    bars, output = generate_chart_bars_with_ai(
+        analysis,
+        "Easy",
+        3,
+        "performance",
+        density="low",
+        model="fake/model",
+        max_repair_attempts=1,
+    )
+
+    assert bars == [ChartBar(index=0, notes="1020000000000000")]
+    assert [attempt["status"] for attempt in output["attempts"]] == ["invalid", "ok"]
+    assert "big notes require more than 0.25s isolation" in output["attempts"][0]["issues"][0]
 
 
 def test_generate_chart_bars_with_ai_passes_openai_compatible_connection_options(monkeypatch):

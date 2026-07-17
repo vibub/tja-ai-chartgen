@@ -78,6 +78,7 @@ def test_phase_three_behavior_matrix_covers_accent_color_and_special_notes():
     assert matrix["passed"] is True
     assert matrix["accent"]["accent_response_rate"] == 1.0
     assert matrix["accent"]["adjacent_big_note_violation_count"] == 0
+    assert matrix["accent"]["big_note_isolation_violation_count"] == 0
     assert matrix["color"]["low_attack_don_response_rate"] >= 0.75
     assert matrix["color"]["high_attack_ka_response_rate"] >= 0.75
     assert matrix["special_notes"]["configuration_count"] == 72
@@ -124,6 +125,7 @@ def test_render_phase_three_acceptance_markdown_lists_exit_conditions():
     assert "# Phase 3 acceptance report" in markdown
     assert "Result: **PASS**" in markdown
     assert "Strong-onset, downbeat, and cadence response" in markdown
+    assert "real-time isolation violations" in markdown
     assert "Don/ka response remains driven by frequency evidence" in markdown
     assert "Phrase ends without burst evidence" in markdown
     assert "deterministic and offline" in markdown
@@ -197,6 +199,13 @@ def test_committed_phase_three_acceptance_report_passes_all_checks():
     assert acceptance["fixture_count"] == 17
     assert acceptance["chart_count"] == 68
     assert all(check["passed"] for check in acceptance["checks"].values())
+    assert acceptance["behavior_matrix"]["accent"]["big_note_count"] == 11
+    assert (
+        acceptance["behavior_matrix"]["accent"][
+            "big_note_isolation_violation_count"
+        ]
+        == 0
+    )
     assert acceptance["behavior_matrix"]["special_notes"]["configuration_count"] == 72
     assert acceptance["behavior_matrix"]["special_notes"]["violation_count"] == 0
     assert acceptance["fill_fixture_evidence"]["reliable_burst_indexes"] == [3, 7]
