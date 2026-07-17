@@ -38,10 +38,10 @@
       "high_attack_note_count": 32,
       "high_attack_ka_count": 32,
       "high_attack_ka_response_rate": 1.0,
-      "don_count": 40,
-      "ka_count": 64,
-      "ka_ratio": 0.615385,
-      "longest_monochrome_run": 4
+      "don_count": 36,
+      "ka_count": 68,
+      "ka_ratio": 0.653846,
+      "longest_monochrome_run": 6
     },
     "fill_burst_fixture_alignment": {
       "passed": true,
@@ -217,10 +217,10 @@
       "high_attack_note_count": 32,
       "high_attack_ka_count": 32,
       "high_attack_ka_response_rate": 1.0,
-      "don_count": 40,
-      "ka_count": 64,
-      "ka_ratio": 0.615385,
-      "longest_monochrome_run": 4
+      "don_count": 36,
+      "ka_count": 68,
+      "ka_ratio": 0.653846,
+      "longest_monochrome_run": 6
     },
     "special_notes": {
       "passed": true,

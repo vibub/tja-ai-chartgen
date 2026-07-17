@@ -698,10 +698,10 @@ AI payload 建议发送：
 | 小目标 | 状态 | 完成详情 | 验证记录 |
 | --- | --- | --- | --- |
 | 9.1 重音候选升级 | 已完成 | accent salience 统一融合 downbeat、强 onset 局部峰值和 section/phrase/energy/transition 结构变化；downbeat 与强 onset 重合时显式加权。fallback 的 performance 风格只从统一候选中选择大音符，并按 course 限制每小节数量，并禁止小节内及跨小节边界的相邻大音符；QualityReport 的 accent coverage 同步改用统一候选，并按拍号限制每小节只评估最高优先级候选。 | `pytest tests/test_rhythmic_salience.py tests/test_salience_candidates.py tests/test_fallback_generator.py tests/test_chart_quality.py -q` 覆盖强弱 onset、downbeat 协同、结构起点、Easy 上限、peak 上限与候选覆盖。 |
-| 9.2 咚咔软映射 | 已完成 | don/ka salience 对频带攻击增加绝对门槛：高置信低频攻击提高咚倾向，高频攻击先给基础咔倾向，再由 percussive ratio 和受限 brightness 证据校准；全曲 brightness 不再能单独制造强咔偏好。fallback 已移除频带到字符的直接硬映射，改为 style 基础票、统一 salience 偏好和弱 bass 证据的确定性软评分，并将最终普通咚咔单色串限制为最多 4 个且跨小节生效。 | `pytest tests/test_rhythmic_salience.py tests/test_fallback_generator.py tests/test_chart_quality.py -q` 覆盖频带门槛、混合频带中性、percussive 增益、brightness 门控、style 回退、统一偏好消费和跨小节单色串。 |
+| 9.2 咚咔软映射 | 已完成 | don/ka salience 对频带攻击增加绝对门槛：高置信低频攻击提高咚倾向，高频攻击先给基础咔倾向，再由 percussive ratio 和受限 brightness 证据校准；全曲 brightness 不再能单独制造强咔偏好。fallback 已移除频带到字符的直接硬映射，改为 style 基础票、统一 salience 偏好和弱 bass 证据的确定性软评分；连续同色证据和最终普通 note 不再按串长被软化或强制翻转。 | `pytest tests/test_rhythmic_salience.py tests/test_fallback_generator.py tests/test_chart_quality.py -q` 覆盖频带门槛、混合频带中性、percussive 增益、brightness 门控、style 回退、统一偏好消费和长同色串原样保留。 |
 | 9.3 Fill burst 检测 | 已完成 | `BarRhythmicSalience` 新增 bar-level burst score/confidence/range/reasons 契约；`build_burst_salience()` 在完整 hit/accent/don-ka salience 后检测后半小节 onset 密度跃升、spectral flux 爆发、percussive ratio 上升和前段稳定对比，phrase end/cadence 与后继 section/peak/drop 只能增强已存在的节奏 burst，不能单独制造候选。检测兼容 4/4、3/4、6/8 canonical grid，并在真实 `fill_burst_120.wav` 上只命中第 4、8 小节的后半 burst。特殊音符消费留给 9.4。 | `pytest tests/test_rhythmic_salience.py tests/test_audio_pipeline_integration.py::test_fill_burst_fixture_detects_only_expected_late_bar_bursts -q` 覆盖契约、可靠性门控、结构增强、无 burst phrase end、复拍号与真实 fixture。 |
 | 9.4 特殊音符响应 | 已完成 | fallback 与 AI 统一要求可靠 burst salience 才能生成 long note，并把 burst canonical range 精确投影到当前输出 resolution；滚奏/气球的起止 tick 被限制在该范围内，过短范围、低/中 density、静音和不可表达格点均保持普通 note。结构 fill candidate 只能增强类型选择，不能替代纯节奏 burst 门控；AI compact payload 升级为 v6，并由内容校验拒绝范围外、过短或同小节多个 long note。 | `pytest tests/test_rhythmic_salience.py tests/test_fallback_generator.py tests/test_ai_client.py tests/test_audio_pipeline_integration.py::test_fill_burst_fixture_detects_only_expected_late_bar_bursts tests/test_cli_generate.py::test_generate_with_special_notes_outputs_balloon_header -q` 覆盖范围投影、无 burst 拒绝、无结构 fill 候选的纯节奏 burst、滚奏/气球、AI repair、真实 fixture 与 TJA 输出。 |
-| 9.5 阶段退出条件 | 已完成 | 新增 `phase-three-acceptance-v1` 禁网双跑验收：对 17 个 fixture/68 张规则谱面锁定 Phase 2 强 onset/downbeat 响应不退化，并执行 accent、don/ka、burst 和特殊音符行为矩阵；真实 `fill_burst_120.wav` 只在第 4、8 小节检测并消费可靠 burst。Windows smoke 同时改用固定提交的 `setup-ffmpeg` action，避免 Chocolatey 源临时 499 导致与代码无关的构建失败。 | `python tools/verify_phase_three.py`，PASS；accent response 1.0，18 个大音符且 0 相邻违规；低频→咚 0.75、高频→咔 1.0、ka ratio 0.615385、最长单色串 4；72 个特殊音符配置产生 36 个滚奏/36 个气球、最短 0.583333 秒、0 违规；禁网双跑稳定。 |
+| 9.5 阶段退出条件 | 已完成 | `phase-three-acceptance-v1` 禁网双跑验收对 17 个 fixture/68 张规则谱面锁定 Phase 2 强 onset/downbeat 响应不退化，并执行 accent、don/ka、burst 和特殊音符行为矩阵；don/ka 只校验低/高频证据响应，最长单色串保留为 report-only 诊断，不再限制生成结果。真实 `fill_burst_120.wav` 只在第 4、8 小节检测并消费可靠 burst。 | `python tools/verify_phase_three.py`，PASS；accent response 1.0，18 个大音符且 0 相邻违规；低频→咚和高频→咔均达到证据响应门槛；72 个特殊音符配置产生 36 个滚奏/36 个气球、最短 0.583333 秒、0 违规；禁网双跑稳定。 |
 
 ## 9.1 重音
 
@@ -750,7 +750,7 @@ AI payload 建议发送：
 ## 9.5 退出条件
 
 - 强 onset、downbeat 和 cadence 的响应率提高；
-- ka ratio 和最长单色串不退化；
+- 低/高频 don/ka 证据响应不退化；最长单色串只记录为 report-only 诊断，不限制或修改 note；
 - fill burst fixture 能命中合理后半小节；
 - 无 burst 的 phrase end 不机械生成 fill；
 - 特殊音符数量和持续时间保持可解释。
@@ -1281,9 +1281,9 @@ fallback 使用：
 - burst salience 支持 fill；
 - course、level、style、density 继续决定最终负荷和可玩性。
 
-当前实现先按是否启用特殊音符构建一次 `build_don_ka_salience()` 或完整 `build_burst_salience()`，再把同一批 `BarRhythmicSalience` 传给候选层和特殊音符层，避免普通落点与 burst 重新分析后得到不同上下文。候选层支持接收预计算 salience，并严格验证 bar 数一致；所有候选继续按逐小节 `ResolutionPlan` 过滤不可精确表达的 canonical 点。
+当前实现先按是否启用特殊音符构建一次 `build_don_ka_salience()` 或完整 `build_burst_salience()`，再把同一批 `BarRhythmicSalience` 传给候选层和特殊音符层，避免普通落点与 burst 重新分析后得到不同上下文。候选层支持接收预计算 salience，并严格验证 bar 数一致；所有候选继续按逐小节 `ResolutionPlan` 过滤不可精确表达的 canonical 点。don/ka salience 不再因连续同色倾向而软化，生成器也不再根据单色串长度强制翻转普通 note。
 
-普通 hit 优先消费 reliable strong transient、transient、rhythmic skeleton 和 structure highlight；候选不足时，sustained activity、beat/downbeat、spectral 与受限 stem evidence 只在 course 相关弱补点预算内连接可靠节奏，无证据 style 骨架使用更小预算，sparse/breakdown 不允许无证据补点。performance 大音符只来自统一 accent 排序并遵守 course 上限与跨小节相邻约束；最终咚咔以 style 为基础票，只有 don/ka preference 超过明确差距才覆盖，并继续限制跨小节最长单色串。
+普通 hit 优先消费 reliable strong transient、transient、rhythmic skeleton 和 structure highlight；候选不足时，sustained activity、beat/downbeat、spectral 与受限 stem evidence 只在 course 相关弱补点预算内连接可靠节奏，无证据 style 骨架使用更小预算，sparse/breakdown 不允许无证据补点。performance 大音符只来自统一 accent 排序并遵守 course 上限与跨小节相邻约束；最终咚咔以 style 为基础票，只有 don/ka preference 超过明确差距才覆盖，不再根据跨小节连续同色次数强制修改 note。
 
 特殊音符只消费同一完整 salience 上通过 score/confidence 门控且可投影的 burst span；结构 fill、phrase end 或高 energy 只能影响滚奏/气球类型选择，不能替代纯节奏 burst。这样 hit、accent、don/ka 与 burst 共享同一证据解释，而 course、level、style、density、NPS、occupancy 和特殊音符时长仍负责最终负荷与可玩性边界。
 

@@ -207,7 +207,7 @@ level 在各 course 的范围内线性插值。最终 hit 数还会受到小节�
 
 - `repeated_bar_rate`：非空小节中，按“小节相对位置 + 音符字符”归一化后完全相同 pattern 的重复比例。
 - `ka_ratio`：普通咚咔音符中咔音符的比例。
-- `longest_monochrome_run`：跨小节连续同色普通音符的最长长度。
+- `longest_monochrome_run`：跨小节连续同色普通音符的最长长度，仅用于 report-only 诊断；生成器不再根据该长度软化颜色倾向或强制翻转 note。
 
 相对位置使用 `index / len(notes)` 表达，因此等价的 16/24/48 格 pattern 会得到同一签名。该指标只能发现机械重复，不能衡量节奏主题的合理复现。
 

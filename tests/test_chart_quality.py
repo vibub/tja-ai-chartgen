@@ -799,7 +799,6 @@ def test_feature_driven_fallback_quality_avoids_silence_and_exact_repetition():
     assert report.density_compliance_rate == 1.0
     assert report.silent_bar_note_count == 0
     assert report.repeated_bar_count == 0
-    assert report.longest_monochrome_run <= 4
 
 
 def test_quality_report_policy_prioritizes_rhythm_alignment_metrics():

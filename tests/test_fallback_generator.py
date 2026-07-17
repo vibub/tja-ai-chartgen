@@ -137,7 +137,7 @@ def test_percussive_high_attack_can_softly_override_don_style_color():
     assert percussive_notes[3] == "2"
 
 
-def test_final_coloring_limits_percussive_ka_runs_across_bars():
+def test_final_coloring_preserves_percussive_ka_runs_across_bars():
     bars = [
         _feature(
             index,
@@ -170,9 +170,14 @@ def test_final_coloring_limits_percussive_ka_runs_across_bars():
         level=10,
     )
     report = build_quality_report(chart_bars, bars)
+    normal_notes = "".join(
+        note for chart_bar in chart_bars for note in chart_bar.notes if note in {"1", "2"}
+    )
 
-    assert 0.5 < report.ka_ratio < 1.0
-    assert report.longest_monochrome_run <= 4
+    assert normal_notes
+    assert set(normal_notes) == {"2"}
+    assert report.ka_ratio == 1.0
+    assert report.longest_monochrome_run == len(normal_notes)
 
 
 def test_reliable_salience_precedes_weaker_legacy_onset_score():

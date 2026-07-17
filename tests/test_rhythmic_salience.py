@@ -889,7 +889,7 @@ def test_don_ka_salience_does_not_use_global_brightness_without_percussive_suppo
     assert "color:bright-percussive" not in point.reasons
 
 
-def test_don_ka_salience_breaks_long_strong_monochrome_runs():
+def test_don_ka_salience_preserves_long_strong_monochrome_preferences():
     bars = [
         BarFeature(
             index=1,
@@ -906,14 +906,8 @@ def test_don_ka_salience_breaks_long_strong_monochrome_runs():
 
     salience = build_don_ka_salience(bars)[0]
 
-    assert [point.don_preference for point in salience.points] == [
-        0.585,
-        0.585,
-        0.585,
-        0.32,
-        0.585,
-    ]
-    assert "color:balance" in salience.points[3].reasons
+    assert [point.don_preference for point in salience.points] == [0.585] * 5
+    assert all("color:balance" not in point.reasons for point in salience.points)
     assert all(point.don_preference <= 0.75 for point in salience.points)
 
 

@@ -78,7 +78,6 @@ BIG_NOTE_LIMITS = {
 }
 STYLE_COLOR_BIAS = 0.30
 COLOR_OVERRIDE_MARGIN = 0.05
-MAX_GENERATED_MONOCHROME_RUN = 4
 MIN_SPECIAL_NOTE_DURATION_SECONDS = 0.25
 
 
@@ -148,8 +147,6 @@ def generate_fallback_chart_bars(
     chart_bars: list[ChartBar] = []
     previous_was_special = False
     previous_ended_with_big_note = False
-    previous_normal_color: str | None = None
-    previous_normal_color_run = 0
     for position, bar in enumerate(bars):
         hint = density_hints[position]
         salience_candidates = salience_candidate_bars[position]
@@ -180,8 +177,6 @@ def generate_fallback_chart_bars(
                 output_resolution=output_resolution,
                 salience_candidates=salience_candidates,
                 forbid_initial_big_note=previous_ended_with_big_note,
-                previous_normal_color=previous_normal_color,
-                previous_normal_color_run=previous_normal_color_run,
             )
             previous_was_special = False
         chart_bar = encode_chart_bar_events(
@@ -193,11 +188,6 @@ def generate_fallback_chart_bars(
         chart_bars.append(chart_bar)
         previous_ended_with_big_note = bool(
             chart_bar.notes and chart_bar.notes[-1] in {"3", "4"}
-        )
-        previous_normal_color, previous_normal_color_run = _ending_color_run(
-            chart_bar.notes,
-            previous_color=previous_normal_color,
-            previous_run=previous_normal_color_run,
         )
     return chart_bars
 
@@ -247,8 +237,6 @@ def _feature_driven_events(
     output_resolution: int,
     salience_candidates: list[SalienceCandidate],
     forbid_initial_big_note: bool = False,
-    previous_normal_color: str | None = None,
-    previous_normal_color_run: int = 0,
 ) -> ChartBarEvents:
     grid_features = _project_grid_features(
         bar,
@@ -301,8 +289,6 @@ def _feature_driven_events(
         else set()
     )
     candidates_by_grid = {candidate.grid: candidate for candidate in salience_candidates}
-    current_color = previous_normal_color
-    current_run = previous_normal_color_run
     hits: list[ChartHitEvent] = []
     for sequence_index, grid in enumerate(sorted(selected)):
         color = colors[sequence_index % len(colors)]
@@ -314,14 +300,6 @@ def _feature_driven_events(
             color = "1" if color in {"1", "3"} else "2"
         if grid in big_note_grids:
             color = "3" if color in {"1", "3"} else "4"
-            current_color = None
-            current_run = 0
-        else:
-            color, current_color, current_run = _balance_generated_color(
-                color,
-                previous_color=current_color,
-                previous_run=current_run,
-            )
         hits.append(ChartHitEvent(tick=grid, note=color))
     return ChartBarEvents(index=bar.index, hits=hits)
 
@@ -896,45 +874,6 @@ def _salience_color(
     if resolved == "don":
         return "3" if is_big else "1"
     return "4" if is_big else "2"
-
-
-def _balance_generated_color(
-    color: str,
-    *,
-    previous_color: str | None,
-    previous_run: int,
-) -> tuple[str, str | None, int]:
-    if color not in {"1", "2"}:
-        return color, None, 0
-    if color == previous_color and previous_run >= MAX_GENERATED_MONOCHROME_RUN:
-        color = "2" if color == "1" else "1"
-        return color, color, 1
-    if color == previous_color:
-        return color, color, previous_run + 1
-    return color, color, 1
-
-
-def _ending_color_run(
-    notes: str,
-    *,
-    previous_color: str | None,
-    previous_run: int,
-) -> tuple[str | None, int]:
-    color = previous_color
-    run = previous_run
-    for note in notes:
-        if note == "0":
-            continue
-        if note not in {"1", "2"}:
-            color = None
-            run = 0
-            continue
-        if note == color:
-            run += 1
-        else:
-            color = note
-            run = 1
-    return color, run
 
 
 def _effective_density(density: str, hint: BarDensityHint) -> str:

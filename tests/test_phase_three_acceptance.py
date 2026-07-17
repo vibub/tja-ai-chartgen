@@ -80,7 +80,6 @@ def test_phase_three_behavior_matrix_covers_accent_color_and_special_notes():
     assert matrix["accent"]["adjacent_big_note_violation_count"] == 0
     assert matrix["color"]["low_attack_don_response_rate"] >= 0.75
     assert matrix["color"]["high_attack_ka_response_rate"] >= 0.75
-    assert matrix["color"]["longest_monochrome_run"] <= 4
     assert matrix["special_notes"]["configuration_count"] == 72
     assert matrix["special_notes"]["drumroll_count"] == 36
     assert matrix["special_notes"]["balloon_count"] == 36
@@ -125,7 +124,7 @@ def test_render_phase_three_acceptance_markdown_lists_exit_conditions():
     assert "# Phase 3 acceptance report" in markdown
     assert "Result: **PASS**" in markdown
     assert "Strong-onset, downbeat, and cadence response" in markdown
-    assert "Don/ka response and monochrome-run limits" in markdown
+    assert "Don/ka response remains driven by frequency evidence" in markdown
     assert "Phrase ends without burst evidence" in markdown
     assert "deterministic and offline" in markdown
 
