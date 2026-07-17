@@ -139,6 +139,28 @@ tja-ai-chartgen generate song.mp3 \
 
 `--instrument-device` accepts `auto`, `cpu`, `cuda`, or `mps`; `--instrument-model-dir` can point to a prepared local directory. New CLI/Web jobs default to `stem-role`, while an older saved config without `instrument_profile` still resolves to `full` for compatibility. Missing dependencies, models, devices, or model failures do not stop base generation. If only AST fails in legacy full mode, analysis degrades to complete `stem-role-v1` and the notice explicitly states that core generation remains available.
 
+### Resolving `reason=missing-model:manifest`
+
+This notice means that the model directory for the selected profile does not contain `instrument_models.json`. The most common case is an existing legacy `full` model directory while a new CLI/Web job selects the default `stem-role` profile. Prepare the profile that the job will use:
+
+```bash
+# Recommended: prepare only htdemucs stem-role rhythm enhancement
+pip install -e ".[dev,instrument]"
+tja-ai-chartgen prepare-instrument-models --profile stem-role
+
+# Prepare this only for legacy AST taxonomy compatibility diagnostics
+tja-ai-chartgen prepare-instrument-models --profile full
+```
+
+The default directories and manifests are:
+
+```text
+stem-role → models/stem-role-v1/instrument_models.json
+full      → models/instrument-v1/instrument_models.json
+```
+
+If `models/instrument-v1/` already exists, either explicitly select `full` in the CLI/Web UI or run `--profile stem-role` once to prepare the recommended path. Restart the Web server and create a new analysis job after preparation. Do not copy a manifest between profile directories because it records the profile, feature version, and file SHA-256 values. If the notice remains, check whether `TJA_AI_CHARTGEN_MODEL_DIR` overrides the profile directory. In PowerShell, use `Get-Item Env:TJA_AI_CHARTGEN_MODEL_DIR` to inspect it and `Remove-Item Env:TJA_AI_CHARTGEN_MODEL_DIR` to clear the current-session override when it is not needed. If stem enhancement is unnecessary, disable it in the Web UI; the base librosa, spectral, and salience pipeline will continue normally.
+
 Try optional BeatNet analysis for downbeat, meter, and bar-start enhancement:
 
 ```bash

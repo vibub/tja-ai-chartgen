@@ -139,6 +139,28 @@ tja-ai-chartgen generate song.mp3 \
 
 `--instrument-device` 支持 `auto`、`cpu`、`cuda` 和 `mps`；也可用 `--instrument-model-dir` 指定已经准备好的本地模型目录。新 CLI/Web 任务默认选择 `stem-role`，旧保存配置缺少 profile 时仍按兼容规则解释为 `full`。缺少依赖、模型或设备时基础生成继续使用节奏与频谱特征；旧 full 模式只有 AST 失败时会自动降级为完整 `stem-role-v1`，notice 会明确说明核心生成能力未受影响。
 
+### 处理 `reason=missing-model:manifest`
+
+该提示表示当前所选 profile 的模型目录中缺少 `instrument_models.json`，通常是只准备了旧 `full` 模型，但新 CLI/Web 任务默认选择了 `stem-role`。根据实际选择准备对应 profile：
+
+```bash
+# 推荐：仅准备 htdemucs 声部节奏增强
+pip install -e ".[dev,instrument]"
+tja-ai-chartgen prepare-instrument-models --profile stem-role
+
+# 仅在需要旧 AST taxonomy 兼容诊断时准备
+tja-ai-chartgen prepare-instrument-models --profile full
+```
+
+默认目录与 manifest 应分别为：
+
+```text
+stem-role → models/stem-role-v1/instrument_models.json
+full      → models/instrument-v1/instrument_models.json
+```
+
+如果已经存在旧 `models/instrument-v1/`，可以在 CLI/Web 中显式选择 `full`，也可以再执行一次 `--profile stem-role` 准备推荐路径。准备完成后应重新启动 Web，并新建分析任务；不要手动在两个目录之间复制 manifest，因为其中记录了 profile、feature version 和文件 SHA-256。若仍然报错，检查 `TJA_AI_CHARTGEN_MODEL_DIR` 是否覆盖到了错误目录；PowerShell 可使用 `Get-Item Env:TJA_AI_CHARTGEN_MODEL_DIR` 查看，并在不需要覆盖时用 `Remove-Item Env:TJA_AI_CHARTGEN_MODEL_DIR` 清除当前会话设置。不需要声部增强时，可以直接取消勾选 Web 中的声部节奏增强，基础 librosa、频谱和 salience 流水线仍会继续生成。
+
 尝试使用可选 BeatNet 增强 downbeat、meter 和小节起点分析：
 
 ```bash
