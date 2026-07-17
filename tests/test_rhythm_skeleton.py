@@ -76,13 +76,13 @@ def test_build_rhythm_skeleton_is_deterministic_and_uses_canonical_ticks():
         density="auto",
     )
 
-    assert RHYTHM_SKELETON_VERSION == "rhythm-skeleton-v2"
+    assert RHYTHM_SKELETON_VERSION == "rhythm-skeleton-v3"
     assert first == second
     assert len(first) == len(analysis.bars)
     assert all(tick % 3 == 0 for bar in first for tick in bar)
 
 
-def test_build_rhythm_skeleton_stabilizes_high_resolution_microtiming():
+def test_build_rhythm_skeleton_preserves_high_resolution_audio_timing():
     analysis = _analysis().model_copy(
         update={
             "resolution_plan": ResolutionPlan(
@@ -110,21 +110,31 @@ def test_build_rhythm_skeleton_stabilizes_high_resolution_microtiming():
         density="auto",
     )
 
-    assert all(
-        is_stable_rhythmic_grid(tick, analysis.bars[position].grids_per_bar)
+    assert any(
+        not is_stable_rhythmic_grid(tick, analysis.bars[position].grids_per_bar)
         for position, ticks in enumerate(skeleton)
         for tick in ticks
     )
+    assert {1, 13, 25, 37}.issubset(skeleton[0])
 
 
 def test_conform_chart_to_rhythm_skeleton_handles_short_high_resolution_regeneration():
-    analysis = _analysis(bar_count=1).model_copy(
+    base = _analysis(bar_count=1)
+    analysis = base.model_copy(
         update={
             "resolution_plan": ResolutionPlan(
                 canonical_grids_per_bar=48,
                 base_resolution=48,
                 bar_resolutions=[48],
             ),
+            "bars": [
+                base.bars[0].model_copy(
+                    update={
+                        "onset_grids": [1, 13, 25, 37],
+                        "beat_grids": [0, 12, 24, 36],
+                    }
+                )
+            ],
         }
     )
     notes = ["0"] * 48
@@ -140,11 +150,22 @@ def test_conform_chart_to_rhythm_skeleton_handles_short_high_resolution_regenera
         density="auto",
     )
 
-    assert all(
-        is_stable_rhythmic_grid(position, 48)
-        for position, note in enumerate(conformed[0].notes)
-        if note in "1234"
+    skeleton = build_rhythm_skeleton(
+        analysis,
+        course="Oni",
+        level=9,
+        style="technical",
+        density="auto",
     )
+    comparison = compare_chart_to_rhythm_skeleton(
+        conformed,
+        analysis.bars,
+        skeleton,
+    )
+
+    assert comparison.coverage == 1.0
+    assert comparison.extra_rate == 0.0
+    assert {1, 13, 25, 37}.issubset(skeleton[0])
 
 
 def test_rhythm_skeleton_comparison_accepts_color_changes_without_moving_hits():

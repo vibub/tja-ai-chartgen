@@ -1,10 +1,9 @@
 from dataclasses import dataclass
 
-from tja_ai_chartgen.features.rhythm_grid import is_stable_rhythmic_grid
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 
-RHYTHM_SKELETON_VERSION = "rhythm-skeleton-v2"
+RHYTHM_SKELETON_VERSION = "rhythm-skeleton-v3"
 AI_SKELETON_MIN_BARS = 16
 AI_SKELETON_MIN_HITS = 32
 AI_SKELETON_MIN_COVERAGE = 0.85
@@ -49,10 +48,7 @@ def build_rhythm_skeleton(
         density=density,
     )
     return [
-        _stabilize_ticks(
-            _regular_hit_ticks(chart_bar, feature_bar),
-            canonical_grids=feature_bar.grids_per_bar,
-        )
+        sorted(_regular_hit_ticks(chart_bar, feature_bar))
         for chart_bar, feature_bar in zip(
             skeleton_bars,
             analysis.bars,
@@ -69,9 +65,10 @@ def conform_chart_to_rhythm_skeleton(
     level: int,
     style: str,
     density: str,
+    skeleton: list[list[int]] | None = None,
 ) -> list[ChartBar]:
     """固定 AI 普通击打时间，并保留其配色和已校验的长音。"""
-    skeleton = build_rhythm_skeleton(
+    resolved_skeleton = skeleton or build_rhythm_skeleton(
         analysis,
         course=course,
         level=level,
@@ -93,7 +90,7 @@ def conform_chart_to_rhythm_skeleton(
     )
     if not uses_highest_resolution and (
         len(chart_bars) < AI_SKELETON_MIN_BARS
-        or sum(map(len, skeleton)) < AI_SKELETON_MIN_HITS
+        or sum(map(len, resolved_skeleton)) < AI_SKELETON_MIN_HITS
     ):
         return chart_bars
     fallback_bars = _build_skeleton_chart_bars(
@@ -108,7 +105,7 @@ def conform_chart_to_rhythm_skeleton(
         chart_bars,
         fallback_bars,
         analysis.bars,
-        skeleton,
+        resolved_skeleton,
         strict=True,
     ):
         notes = ["0"] * len(chart_bar.notes)
@@ -188,10 +185,11 @@ def rhythm_skeleton_issues(
     level: int,
     style: str,
     density: str,
+    skeleton: list[list[int]] | None = None,
 ) -> list[str]:
     if len(chart_bars) < AI_SKELETON_MIN_BARS:
         return []
-    skeleton = build_rhythm_skeleton(
+    resolved_skeleton = skeleton or build_rhythm_skeleton(
         analysis,
         course=course,
         level=level,
@@ -201,7 +199,7 @@ def rhythm_skeleton_issues(
     comparison = compare_chart_to_rhythm_skeleton(
         chart_bars,
         analysis.bars[: len(chart_bars)],
-        skeleton[: len(chart_bars)],
+        resolved_skeleton[: len(chart_bars)],
     )
     if comparison.expected_count < AI_SKELETON_MIN_HITS:
         return []
@@ -249,29 +247,6 @@ def _build_skeleton_chart_bars(
         level=level,
         resolution_plan=analysis.resolution_plan,
     )
-
-
-def _stabilize_ticks(
-    ticks: set[int],
-    *,
-    canonical_grids: int,
-) -> list[int]:
-    selected = {
-        tick
-        for tick in ticks
-        if is_stable_rhythmic_grid(tick, canonical_grids)
-    }
-    for tick in sorted(ticks - selected):
-        alternatives = [
-            candidate
-            for candidate in (tick - 1, tick + 1)
-            if 0 <= candidate < canonical_grids
-            and is_stable_rhythmic_grid(candidate, canonical_grids)
-        ]
-        available = [candidate for candidate in alternatives if candidate not in selected]
-        if available:
-            selected.add(min(available, key=lambda candidate: (abs(candidate - tick), candidate)))
-    return sorted(selected)
 
 
 def _copy_long_notes(chart_bar: ChartBar, target: list[str]) -> set[int]:

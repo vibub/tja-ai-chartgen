@@ -33,6 +33,7 @@ from tja_ai_chartgen.features.salience import (
 from tja_ai_chartgen.features.salience_candidates import build_salience_candidate_bars
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.rules.rhythm_skeleton import (
+    build_rhythm_skeleton,
     conform_chart_to_rhythm_skeleton,
     rhythm_skeleton_issues,
 )
@@ -654,7 +655,15 @@ def _validate_ai_data(
         if chart_bar is not None:
             bars.append(chart_bar)
 
+    rhythm_skeleton: list[list[int]] | None = None
     if not issues:
+        rhythm_skeleton = build_rhythm_skeleton(
+            analysis,
+            course=course,
+            level=level,
+            style=style,
+            density=density,
+        )
         bars = conform_chart_to_rhythm_skeleton(
             bars,
             analysis,
@@ -662,11 +671,18 @@ def _validate_ai_data(
             level=level,
             style=style,
             density=density,
+            skeleton=rhythm_skeleton,
         )
     if not issues:
         issues.extend(_validate_big_note_isolation(bars, analysis.bars))
     if not issues:
-        issues.extend(_validate_rhythmic_grid_stability(bars, analysis.bars))
+        issues.extend(
+            _validate_rhythmic_grid_stability(
+                bars,
+                analysis.bars,
+                allowed_arbitrary_ticks=rhythm_skeleton,
+            )
+        )
     if not issues:
         issues.extend(
             rhythm_skeleton_issues(
@@ -676,6 +692,7 @@ def _validate_ai_data(
                 level=level,
                 style=style,
                 density=density,
+                skeleton=rhythm_skeleton,
             )
         )
     if not issues:
@@ -866,8 +883,17 @@ def _validate_big_note_isolation(
 def _validate_rhythmic_grid_stability(
     bars: list[ChartBar],
     expected_bars: list[BarFeature],
+    *,
+    allowed_arbitrary_ticks: list[list[int]] | None = None,
 ) -> list[str]:
     evaluated, arbitrary = chart_arbitrary_grid_positions(bars, expected_bars)
+    if allowed_arbitrary_ticks is not None:
+        allowed = [set(ticks) for ticks in allowed_arbitrary_ticks]
+        arbitrary = [
+            item
+            for item in arbitrary
+            if item[0] >= len(allowed) or item[2] not in allowed[item[0]]
+        ]
     if evaluated < AI_ARBITRARY_GRID_MIN_HITS:
         return []
     rate = len(arbitrary) / evaluated
@@ -1115,7 +1141,7 @@ Rules:
 - Use the canonical ticks, per-bar resolution, timing, density, structure, and bar_salience from the original input, plus its rhythm_skeleton. Do not output a resolution.
 - rhythm_skeleton is the deterministic timing authority. Ordinary hits are reconciled to it automatically before validation, so keep your don/ka sequence and isolated accent choices aligned with its order instead of inventing alternative timing. A reliable long note may replace only skeleton hits inside its own span.
 - Prioritize reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight salience points. Keep unsupported hits rare and use only short supported connectors when density requires them.
-- Keep a stable rhythmic lattice. On 48/36 canonical grids, ordinary straight notes normally use ticks divisible by 3 and triplet/24th passages use ticks divisible by 2. Remove detector microtiming jitter such as alternating 5/7 gaps, and keep ticks outside both subgrids below 10% of playable hits.
+- Keep a stable rhythmic lattice. On 48/36 canonical grids, ordinary straight notes normally use ticks divisible by 3 and triplet/24th passages use ticks divisible by 2. Remove detector microtiming jitter such as alternating 5/7 gaps outside rhythm_skeleton; exact ticks present in rhythm_skeleton are audio-backed exceptions and must not be shifted merely to satisfy divisibility.
 - Stem onset timing is supporting evidence, not permission to copy separation latency or adjacent onset smearing. Merge nearby stem peaks such as 12/13 into the stable phrase grid.
 - Use only hits and long_notes; never return legacy notes or balloon_counts fields.
 - Normal hit notes are 1, 2, 3, or 4.

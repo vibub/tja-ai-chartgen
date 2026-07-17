@@ -177,6 +177,12 @@ def test_validate_rhythmic_grid_stability_rejects_widespread_microtiming_jitter(
     assert "4/16 (25.0%)" in issues[0]
     assert "maximum 10%" in issues[0]
 
+    assert _validate_rhythmic_grid_stability(
+        [chart_bar(0, jittered_grids), chart_bar(1, jittered_grids)],
+        analysis.bars,
+        allowed_arbitrary_ticks=[jittered_grids, jittered_grids],
+    ) == []
+
 
 def test_build_chart_generation_payload_includes_density():
     analysis = _analysis(energy=0.5)
@@ -197,7 +203,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["style"] == "technical"
     assert payload["schema"] == "tja-ai-chartgen-compact-v7"
     assert payload["rhythmic_salience_feature_version"] == "rhythmic-salience-v1"
-    assert payload["rhythm_skeleton_version"] == "rhythm-skeleton-v2"
+    assert payload["rhythm_skeleton_version"] == "rhythm-skeleton-v3"
     assert len(payload["rhythm_skeleton"]) == len(analysis.bars)
     assert payload["rhythm_skeleton"][0]
     salience_bar_columns = payload["legend"]["salience_bar_columns"]
