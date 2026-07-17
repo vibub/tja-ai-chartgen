@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 
+from tja_ai_chartgen.features.rhythm_grid import is_stable_rhythmic_grid
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
 from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
 
-RHYTHM_SKELETON_VERSION = "rhythm-skeleton-v1"
+RHYTHM_SKELETON_VERSION = "rhythm-skeleton-v2"
 AI_SKELETON_MIN_BARS = 16
 AI_SKELETON_MIN_HITS = 32
 AI_SKELETON_MIN_COVERAGE = 0.85
@@ -40,23 +41,105 @@ def build_rhythm_skeleton(
     density: str,
 ) -> list[list[int]]:
     """用规则生成器确定 AI 不应随意改写的普通击打时间骨架。"""
-    skeleton_bars = generate_fallback_chart_bars(
-        analysis.bars,
-        style=style,
-        density=density,
-        special_notes=False,
+    skeleton_bars = _build_skeleton_chart_bars(
+        analysis,
         course=course,
         level=level,
-        resolution_plan=analysis.resolution_plan,
+        style=style,
+        density=density,
     )
     return [
-        sorted(_regular_hit_ticks(chart_bar, feature_bar))
+        _stabilize_ticks(
+            _regular_hit_ticks(chart_bar, feature_bar),
+            canonical_grids=feature_bar.grids_per_bar,
+        )
         for chart_bar, feature_bar in zip(
             skeleton_bars,
             analysis.bars,
             strict=True,
         )
     ]
+
+
+def conform_chart_to_rhythm_skeleton(
+    chart_bars: list[ChartBar],
+    analysis: SongAnalysis,
+    *,
+    course: str,
+    level: int,
+    style: str,
+    density: str,
+) -> list[ChartBar]:
+    """固定 AI 普通击打时间，并保留其配色和已校验的长音。"""
+    skeleton = build_rhythm_skeleton(
+        analysis,
+        course=course,
+        level=level,
+        style=style,
+        density=density,
+    )
+    plan = analysis.resolution_plan
+    selected_resolutions = (
+        plan.bar_resolutions[: len(chart_bars)] or [plan.base_resolution]
+        if plan is not None
+        else []
+    )
+    uses_highest_resolution = bool(
+        plan is not None
+        and any(
+            resolution == plan.canonical_grids_per_bar
+            for resolution in selected_resolutions
+        )
+    )
+    if not uses_highest_resolution and (
+        len(chart_bars) < AI_SKELETON_MIN_BARS
+        or sum(map(len, skeleton)) < AI_SKELETON_MIN_HITS
+    ):
+        return chart_bars
+    fallback_bars = _build_skeleton_chart_bars(
+        analysis,
+        course=course,
+        level=level,
+        style=style,
+        density=density,
+    )
+    conformed: list[ChartBar] = []
+    for chart_bar, fallback_bar, feature_bar, required_ticks in zip(
+        chart_bars,
+        fallback_bars,
+        analysis.bars,
+        skeleton,
+        strict=True,
+    ):
+        notes = ["0"] * len(chart_bar.notes)
+        long_positions = _copy_long_notes(chart_bar, notes)
+        blocked_ticks = {
+            _canonical_tick(position, len(notes), feature_bar.grids_per_bar)
+            for position in long_positions
+        }
+        ai_hits = _regular_hits_with_notes(chart_bar, feature_bar)
+        fallback_hits = _regular_hits_with_notes(fallback_bar, feature_bar)
+        for tick in required_ticks:
+            if tick in blocked_ticks:
+                continue
+            position = round(tick / feature_bar.grids_per_bar * len(notes))
+            position = min(len(notes) - 1, max(0, position))
+            source_tick, note = _nearest_hit(ai_hits, tick) or _nearest_hit(
+                fallback_hits,
+                tick,
+            ) or (tick, "1")
+            if note in "34" and source_tick != tick:
+                note = "1" if note == "3" else "2"
+            notes[position] = note
+        conformed.append(
+            chart_bar.model_copy(
+                update={
+                    "notes": "".join(notes),
+                    "balloon_counts": chart_bar.balloon_counts,
+                }
+            )
+        )
+    return conformed
 
 
 def compare_chart_to_rhythm_skeleton(
@@ -147,6 +230,87 @@ def rhythm_skeleton_issues(
             f"remove unsupported timing changes ({examples})"
         )
     return issues
+
+
+def _build_skeleton_chart_bars(
+    analysis: SongAnalysis,
+    *,
+    course: str,
+    level: int,
+    style: str,
+    density: str,
+) -> list[ChartBar]:
+    return generate_fallback_chart_bars(
+        analysis.bars,
+        style=style,
+        density=density,
+        special_notes=False,
+        course=course,
+        level=level,
+        resolution_plan=analysis.resolution_plan,
+    )
+
+
+def _stabilize_ticks(
+    ticks: set[int],
+    *,
+    canonical_grids: int,
+) -> list[int]:
+    selected = {
+        tick
+        for tick in ticks
+        if is_stable_rhythmic_grid(tick, canonical_grids)
+    }
+    for tick in sorted(ticks - selected):
+        alternatives = [
+            candidate
+            for candidate in (tick - 1, tick + 1)
+            if 0 <= candidate < canonical_grids
+            and is_stable_rhythmic_grid(candidate, canonical_grids)
+        ]
+        available = [candidate for candidate in alternatives if candidate not in selected]
+        if available:
+            selected.add(min(available, key=lambda candidate: (abs(candidate - tick), candidate)))
+    return sorted(selected)
+
+
+def _copy_long_notes(chart_bar: ChartBar, target: list[str]) -> set[int]:
+    blocked: set[int] = set()
+    start: int | None = None
+    for position, note in enumerate(chart_bar.notes):
+        if note in "57":
+            start = position
+            target[position] = note
+        elif note == "8" and start is not None:
+            target[position] = note
+            blocked.update(range(start, position + 1))
+            start = None
+    return blocked
+
+
+def _regular_hits_with_notes(
+    chart_bar: ChartBar,
+    feature_bar: BarFeature,
+) -> list[tuple[int, str]]:
+    if not chart_bar.notes:
+        return []
+    return [
+        (
+            _canonical_tick(position, len(chart_bar.notes), feature_bar.grids_per_bar),
+            note,
+        )
+        for position, note in enumerate(chart_bar.notes)
+        if note in "1234"
+    ]
+
+
+def _nearest_hit(
+    hits: list[tuple[int, str]],
+    tick: int,
+) -> tuple[int, str] | None:
+    if not hits:
+        return None
+    return min(hits, key=lambda item: (abs(item[0] - tick), item[0]))
 
 
 def _regular_hit_ticks(chart_bar: ChartBar, feature_bar: BarFeature) -> set[int]:

@@ -32,7 +32,10 @@ from tja_ai_chartgen.features.salience import (
 )
 from tja_ai_chartgen.features.salience_candidates import build_salience_candidate_bars
 from tja_ai_chartgen.features.silence import edge_silence_indexes
-from tja_ai_chartgen.rules.rhythm_skeleton import rhythm_skeleton_issues
+from tja_ai_chartgen.rules.rhythm_skeleton import (
+    conform_chart_to_rhythm_skeleton,
+    rhythm_skeleton_issues,
+)
 from tja_ai_chartgen.tja.event_encoder import EventEncodingError, encode_chart_bar_events
 from tja_ai_chartgen.tja.model import (
     BarFeature,
@@ -652,6 +655,15 @@ def _validate_ai_data(
             bars.append(chart_bar)
 
     if not issues:
+        bars = conform_chart_to_rhythm_skeleton(
+            bars,
+            analysis,
+            course=course,
+            level=level,
+            style=style,
+            density=density,
+        )
+    if not issues:
         issues.extend(_validate_big_note_isolation(bars, analysis.bars))
     if not issues:
         issues.extend(_validate_rhythmic_grid_stability(bars, analysis.bars))
@@ -1101,7 +1113,7 @@ Required schema:
 Rules:
 - bars must contain exactly {len(analysis.bars)} item(s).
 - Use the canonical ticks, per-bar resolution, timing, density, structure, and bar_salience from the original input, plus its rhythm_skeleton. Do not output a resolution.
-- rhythm_skeleton is the deterministic timing authority. Restore its missing ordinary-hit positions and remove hits outside it when validation reports skeleton coverage or extra-hit errors. A reliable long note may replace only skeleton hits inside its own span; color and accent changes must not move timing positions.
+- rhythm_skeleton is the deterministic timing authority. Ordinary hits are reconciled to it automatically before validation, so keep your don/ka sequence and isolated accent choices aligned with its order instead of inventing alternative timing. A reliable long note may replace only skeleton hits inside its own span.
 - Prioritize reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight salience points. Keep unsupported hits rare and use only short supported connectors when density requires them.
 - Keep a stable rhythmic lattice. On 48/36 canonical grids, ordinary straight notes normally use ticks divisible by 3 and triplet/24th passages use ticks divisible by 2. Remove detector microtiming jitter such as alternating 5/7 gaps, and keep ticks outside both subgrids below 10% of playable hits.
 - Stem onset timing is supporting evidence, not permission to copy separation latency or adjacent onset smearing. Merge nearby stem peaks such as 12/13 into the stable phrase grid.

@@ -197,7 +197,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["style"] == "technical"
     assert payload["schema"] == "tja-ai-chartgen-compact-v7"
     assert payload["rhythmic_salience_feature_version"] == "rhythmic-salience-v1"
-    assert payload["rhythm_skeleton_version"] == "rhythm-skeleton-v1"
+    assert payload["rhythm_skeleton_version"] == "rhythm-skeleton-v2"
     assert len(payload["rhythm_skeleton"]) == len(analysis.bars)
     assert payload["rhythm_skeleton"][0]
     salience_bar_columns = payload["legend"]["salience_bar_columns"]
@@ -695,8 +695,8 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "density_policy.quality_average_min_per_16_grid_bar" in prompt
     assert "Prefer reliable strong-transient, transient, rhythmic-skeleton" in prompt
     assert "rhythm_skeleton is the deterministic audio-driven timing authority" in prompt
-    assert "preserve at least 85%" in prompt
-    assert "keep hits outside it below 15%" in prompt
+    assert "ordinary AI hits are deterministically reconciled to it" in prompt
+    assert "instead of being discarded during reconciliation" in prompt
     assert "only when bar_salience burst_reliable is 1" in prompt
     assert "inside burst_start_grid..burst_end_grid" in prompt
     assert "Keep unsupported hits rare" in prompt

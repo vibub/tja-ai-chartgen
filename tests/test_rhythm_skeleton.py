@@ -1,9 +1,11 @@
+from tja_ai_chartgen.features.rhythm_grid import is_stable_rhythmic_grid
 from tja_ai_chartgen.rules.rhythm_skeleton import (
     AI_SKELETON_MAX_EXTRA_RATE,
     AI_SKELETON_MIN_COVERAGE,
     RHYTHM_SKELETON_VERSION,
     build_rhythm_skeleton,
     compare_chart_to_rhythm_skeleton,
+    conform_chart_to_rhythm_skeleton,
     rhythm_skeleton_issues,
 )
 from tja_ai_chartgen.tja.model import (
@@ -74,10 +76,75 @@ def test_build_rhythm_skeleton_is_deterministic_and_uses_canonical_ticks():
         density="auto",
     )
 
-    assert RHYTHM_SKELETON_VERSION == "rhythm-skeleton-v1"
+    assert RHYTHM_SKELETON_VERSION == "rhythm-skeleton-v2"
     assert first == second
     assert len(first) == len(analysis.bars)
     assert all(tick % 3 == 0 for bar in first for tick in bar)
+
+
+def test_build_rhythm_skeleton_stabilizes_high_resolution_microtiming():
+    analysis = _analysis().model_copy(
+        update={
+            "resolution_plan": ResolutionPlan(
+                canonical_grids_per_bar=48,
+                base_resolution=48,
+                bar_resolutions=[48] * 16,
+            ),
+            "bars": [
+                bar.model_copy(
+                    update={
+                        "onset_grids": [1, 13, 25, 37],
+                        "beat_grids": [0, 12, 24, 36],
+                    }
+                )
+                for bar in _analysis().bars
+            ],
+        }
+    )
+
+    skeleton = build_rhythm_skeleton(
+        analysis,
+        course="Oni",
+        level=9,
+        style="technical",
+        density="auto",
+    )
+
+    assert all(
+        is_stable_rhythmic_grid(tick, analysis.bars[position].grids_per_bar)
+        for position, ticks in enumerate(skeleton)
+        for tick in ticks
+    )
+
+
+def test_conform_chart_to_rhythm_skeleton_handles_short_high_resolution_regeneration():
+    analysis = _analysis(bar_count=1).model_copy(
+        update={
+            "resolution_plan": ResolutionPlan(
+                canonical_grids_per_bar=48,
+                base_resolution=48,
+                bar_resolutions=[48],
+            ),
+        }
+    )
+    notes = ["0"] * 48
+    for tick, note in ((1, "1"), (13, "2"), (25, "1"), (37, "2")):
+        notes[tick] = note
+
+    conformed = conform_chart_to_rhythm_skeleton(
+        [ChartBar(index=0, notes="".join(notes))],
+        analysis,
+        course="Oni",
+        level=9,
+        style="technical",
+        density="auto",
+    )
+
+    assert all(
+        is_stable_rhythmic_grid(position, 48)
+        for position, note in enumerate(conformed[0].notes)
+        if note in "1234"
+    )
 
 
 def test_rhythm_skeleton_comparison_accepts_color_changes_without_moving_hits():
@@ -139,3 +206,41 @@ def test_rhythm_skeleton_issues_reject_widespread_timing_rewrite():
     assert len(issues) == 2
     assert f"minimum {AI_SKELETON_MIN_COVERAGE:.0%}" in issues[0]
     assert f"maximum {AI_SKELETON_MAX_EXTRA_RATE:.0%}" in issues[1]
+
+
+def test_conform_chart_to_rhythm_skeleton_repairs_timing_without_rejecting_colors():
+    analysis = _analysis()
+    skeleton = build_rhythm_skeleton(
+        analysis,
+        course="Oni",
+        level=9,
+        style="technical",
+        density="auto",
+    )
+    chart = _chart_from_skeleton(skeleton)
+    shifted = [
+        bar.model_copy(
+            update={
+                "notes": bar.notes[-1] + bar.notes[:-1],
+            }
+        )
+        for bar in chart
+    ]
+
+    conformed = conform_chart_to_rhythm_skeleton(
+        shifted,
+        analysis,
+        course="Oni",
+        level=9,
+        style="technical",
+        density="auto",
+    )
+    comparison = compare_chart_to_rhythm_skeleton(
+        conformed,
+        analysis.bars,
+        skeleton,
+    )
+
+    assert comparison.coverage == 1.0
+    assert comparison.extra_rate == 0.0
+    assert any("2" in bar.notes for bar in conformed)
