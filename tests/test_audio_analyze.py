@@ -131,6 +131,34 @@ def test_fixed_bpm_fit_metrics_are_zero_for_regular_grid():
     assert diagnostic.reason == "fixed-bpm-fit-stable"
 
 
+def test_fixed_bpm_fit_metrics_tolerate_missing_tracker_beats():
+    beat_times = [0.2, 0.7, 1.2, 2.2, 2.7, 3.2]
+
+    metrics = audio_analyze._fixed_bpm_fit_metrics(
+        beat_times,
+        fixed_interval_seconds=0.5,
+    )
+
+    assert metrics["fixed_bpm_mean_error_seconds"] == 0.0
+    assert metrics["fixed_bpm_p95_error_seconds"] == 0.0
+    assert metrics["fixed_bpm_max_error_seconds"] == 0.0
+
+
+def test_tempo_variation_diagnostic_ignores_isolated_tracker_jump():
+    candidate = _variation_candidate(
+        ([0.5] * 8) + [0.56, 0.44] + ([0.5] * 8)
+    )
+
+    diagnostic = audio_analyze._tempo_variation_diagnostic(
+        [candidate],
+        selected_source="beatnet",
+    )
+
+    assert diagnostic.suspected is False
+    assert diagnostic.classification == "stable"
+    assert diagnostic.reason == "fixed-bpm-fit-stable"
+
+
 def test_tempo_variation_diagnostic_detects_abrupt_tempo_change():
     candidate = _variation_candidate(([0.5] * 8) + ([0.65] * 8))
 
@@ -144,7 +172,7 @@ def test_tempo_variation_diagnostic_detects_abrupt_tempo_change():
     assert diagnostic.fixed_bpm_constrained is True
     assert diagnostic.reason == "adjacent-interval-jump"
     assert diagnostic.fixed_bpm_mean_error_seconds is not None
-    assert diagnostic.fixed_bpm_mean_error_seconds > 0.1
+    assert diagnostic.fixed_bpm_mean_error_seconds > 0.05
 
 
 def test_tempo_variation_diagnostic_detects_gradual_rubato():

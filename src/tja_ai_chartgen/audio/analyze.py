@@ -658,7 +658,8 @@ def _fixed_bpm_fit_metrics(
     if times.size < 2 or np.any(np.diff(times) <= 0):
         return empty
 
-    expected = times[0] + np.arange(times.size, dtype=float) * fixed_interval_seconds
+    beat_indexes = np.rint((times - times[0]) / fixed_interval_seconds)
+    expected = times[0] + beat_indexes * fixed_interval_seconds
     errors = np.abs(times - expected)[1:]
     intervals = np.diff(times)
     relative_interval_errors = np.abs(intervals - fixed_interval_seconds) / fixed_interval_seconds
@@ -1155,6 +1156,7 @@ def _tempo_variation_diagnostic(
     if (
         fit_error >= TEMPO_VARIATION_FIT_ERROR_RATIO
         and adjacent_change >= TEMPO_VARIATION_ADJACENT_CHANGE_RATIO
+        and outlier_ratio >= TEMPO_VARIATION_OUTLIER_RATIO * 0.5
     ):
         suspected = True
         classification = "possible-tempo-change"

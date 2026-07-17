@@ -1369,6 +1369,8 @@ CLI help、准备命令输出和分析阶段输出把 `stem-role` 描述为推�
 
 Web 进度会按实际 profile 区分 Demucs 声部 activity/onset 与旧 full 的 AST 分类诊断。结果页对 `stem-role-v1` 只显示 vocals/drums/bass/other 粗粒度汇总，并明确不运行具体乐器分类；仅旧 `instrument-v1` 才展示具体乐器兼容诊断，同时注明 taxonomy 不决定当前谱面落点或 QualityReport 主线。analysis notice 同样把 stem-role 成功、full 成功、classifier-only 降级、旧 partial 和基础 fallback 分开说明，其中 AST 失败但 stem-role 完整时明确不会损失核心生成能力。
 
+后续节奏收敛在不恢复具体乐器 taxonomy 的前提下新增 `rhythm-skeleton-v1`：规则生成器先按统一 salience、ResolutionPlan、course/level/style/density 确定普通击打时间骨架，compact-v7 payload 将该骨架交给 AI，长谱 AI 结果至少覆盖 85% 骨架且骨架外 hit 不超过 15%。AI 因此主要负责咚咔配色、重音与受控 motif 变化，而不是重新发明 note 时间；可靠 long note 仍可替代自身 burst 范围内的骨架点。
+
 ## 13.7 退出条件
 
 - 未准备任何重型模型时，完整节奏优先路径可运行；

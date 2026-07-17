@@ -17,6 +17,12 @@ from tja_ai_chartgen.features.salience_candidates import (
     rank_bar_salience_candidates,
 )
 from tja_ai_chartgen.features.silence import edge_silence_indexes
+from tja_ai_chartgen.rules.rhythm_skeleton import (
+    AI_SKELETON_MAX_EXTRA_RATE,
+    AI_SKELETON_MIN_COVERAGE,
+    RHYTHM_SKELETON_VERSION,
+    build_rhythm_skeleton,
+)
 from tja_ai_chartgen.rules.styles import get_style_template
 from tja_ai_chartgen.tja.model import BarFeature, InstrumentBarFeature, SongAnalysis
 
@@ -183,6 +189,13 @@ def build_chart_generation_payload(
         density_target = _auto_density_target(level)
     forced_silent_bars = [index + 1 for index in sorted(edge_silence_indexes(analysis.bars))]
     compact_salience = _compact_salience_bars(analysis)
+    rhythm_skeleton = build_rhythm_skeleton(
+        analysis,
+        course=course,
+        level=level,
+        style=style,
+        density=density,
+    )
 
     payload = {
         "schema": "tja-ai-chartgen-compact-v7",
@@ -196,6 +209,11 @@ def build_chart_generation_payload(
             "salience_bar_columns": SALIENCE_BAR_COLUMNS,
             "salience_point_columns": SALIENCE_POINT_COLUMNS,
             "salience_scale": "0..1000=normalized strength/confidence; kind is the ranked evidence class",
+            "rhythm_skeleton_semantics": (
+                "one canonical-tick list per bar; deterministic audio-driven ordinary-hit "
+                "timing authority; AI may change note colors and limited accents but should "
+                "preserve these positions"
+            ),
             "instrument_bar_columns": INSTRUMENT_BAR_COLUMNS,
             "instrument_bar_semantics": (
                 "coarse stem roles only; dominant_source and confidence are derived from "
@@ -229,6 +247,8 @@ def build_chart_generation_payload(
         "special_notes": special_notes,
         "rhythmic_salience_feature_version": RHYTHMIC_SALIENCE_FEATURE_VERSION,
         "bar_salience": compact_salience,
+        "rhythm_skeleton_version": RHYTHM_SKELETON_VERSION,
+        "rhythm_skeleton": rhythm_skeleton,
         "spectral_feature_version": analysis.spectral_feature_version,
         "spectral_analysis_status": analysis.spectral_analysis_status,
         "instrument_feature_version": analysis.instrument_feature_version,
@@ -312,7 +332,7 @@ Rules:
 19. Let the chart's style and music decide the don/ka mix, but avoid outputs where nearly all normal 1/2 notes are 1. Use some 2 notes for offbeat responses, back-half answers, syncopated hits, or phrase-end fills.
 20. When translated to four equal positions, useful rhythmic cells include 1020, 1200, 1012, 1210, 1122, 1221, 1022, and 2012, but do not force a fixed ratio.
 21. Avoid long all-don streams such as 1010101010101010 unless the input clearly describes a very plain stamina passage; even then, vary later bars with occasional 2 notes.
-22. Decode bar_salience with legend.salience_bar_columns and legend.salience_point_columns. Its sparse points and burst range are already filtered to ticks exactly representable at the bar's output_resolution. Prefer reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight points before weak-evidence points or unsupported style connectors.
+22. Decode bar_salience with legend.salience_bar_columns and legend.salience_point_columns. Its sparse points and burst range are already filtered to ticks exactly representable at the bar's output_resolution. Prefer reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight points before weak-evidence points or unsupported style connectors. rhythm_skeleton is the deterministic audio-driven timing authority: preserve at least {AI_SKELETON_MIN_COVERAGE:.0%} of its ordinary-hit ticks across a full chart and keep hits outside it below {AI_SKELETON_MAX_EXTRA_RATE:.0%}. A reliable long_note may replace skeleton hits inside its own span, but color, big-note, and motif changes must not move the underlying timing positions.
 23. hit is the primary placement score. confidence and bar_confidence determine how strongly to trust it. Use accent only as soft emphasis evidence, and don_preference/ka_preference only as soft color evidence; style and playability still decide the final 1/2/3/4 note.
 24. Meet density targets by adding supported connections around salience points, not by filling arbitrary empty ticks. Keep unsupported hits rare, avoid long unsupported streams, and leave weak empty grids as 0. Preserve a stable phrase-level rhythmic lattice: on 48/36 canonical grids, ordinary straight notes should normally use ticks divisible by 3, while triplet or 24th-note passages use ticks divisible by 2. Do not alternate nearby gaps such as 5/7 merely to follow detector microtiming. Ticks outside both stable subgrids must remain rare, repeated musical exceptions rather than per-hit timing corrections. Stem onset microtiming only reinforces rhythm context and must not pull an otherwise regular motif by ±1 tick. High sustained_activity without transient points may justify only a simple beat/downbeat skeleton. Grid 0 is the barline and primary downbeat candidate; in normal phrase bars, prefer starting the bar with a 1/2 note on grid 0 only when salience or a justified skeleton supports it.
 25. Big notes 3/4 require both hands hitting together. Use them sparingly as isolated accents on very strong downbeats or accents. A 3/4 note must be more than 0.25 seconds from every other playable 1/2/3/4 hit before and after it, including across bar boundaries; otherwise use the same-color normal note 1/2.
