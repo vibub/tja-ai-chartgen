@@ -1251,7 +1251,7 @@ JSON/Markdown 默认写入 `output/instrument_benchmark_<profile>.json` 和 `.md
 | 13.4 QualityReport 收敛 | 已完成 | 以 `quality-report-rhythm-alignment-v1` 固定七类 rhythm alignment 主指标；AI repair 只消费三个已校准极端指标，其余主指标与 density coverage 保持 report-only，具体乐器指标仅保留兼容诊断。 | `tests/test_chart_quality.py` 锁定指标策略、instrument 诊断隔离与既有计算；`tests/test_ai_client.py` 锁定 sidecar gate 对统一策略版本和主指标的引用。 |
 | 13.5 旧 instrument-v1 兼容 | 已完成 | 固定旧 `instrument-v1 partial`、`analysis_schema_version=5`、无版本 GenerationConfig、compact-v4 AI input 与旧 AI output 快照；读取时保留历史字段和值，不静默迁移。 | `tests/test_legacy_compatibility.py`、`tests/fixtures/compatibility/`。 |
 | 13.6 UI 与 notice 调整 | 已完成 | CLI/Web 新任务默认推荐 `stem-role`，`full` 明确标记为旧具体乐器分类兼容诊断；进度、结果摘要、远程权限提示与 notices 均区分基础节奏、BeatNet、声部增强和旧 taxonomy。 | `tests/test_cli_instruments.py`、`tests/test_cli_generate.py`、`tests/test_generation.py`、`tests/test_web.py` 覆盖默认 profile、帮助语义、动态进度、notice 与结果摘要。 |
-| 13.7 阶段退出条件 | 未开始 | 尚未达成。 | 尚未执行阶段验收。 |
+| 13.7 阶段退出条件 | 已完成 | 新增 `phase-seven-acceptance-v1`，以禁网双跑的消费者收敛矩阵、旧格式快照、compact payload 对比和 CLI/Web 能力证据验证全部退出条件。 | `python tools/verify_phase_seven.py`；报告写入 `phase_seven_acceptance.json` / `.md`，当前 3 个行为场景和 8 项退出检查全部通过。 |
 
 ## 13.1 Structure
 
@@ -1378,6 +1378,10 @@ Web 进度会按实际 profile 区分 Demucs 声部 activity/onset 与旧 full �
 - 旧 analysis/config/sidecar 继续兼容读取；
 - CLI/Web notice 与实际启用能力一致。
 
+阶段验收入口为 `python tools/verify_phase_seven.py`。`phase-seven-acceptance-v1` 在阻断 `socket.connect` / `connect_ex` 的环境中执行两轮完整验证：真实 `click_4_4.wav` 必须在不启用 instrument analysis 时完成 OGG 转换、音频分析、4 小节 structure、fallback 和 QualityReport，且不得新增加载 torch、demucs 或 transformers；同一组无模型消费者场景还必须完成 compact-v7 payload；Demucs drum role 只能增强已有 canonical 瞬态；仅改变具体乐器 taxonomy 和旧混合 confidence 时，structure 决策、fallback 谱面、整个 AI payload 与 QualityReport 七类主指标必须完全一致。
+
+验收同时读取 `tests/fixtures/compatibility/` 的旧 `instrument-v1 partial`、analysis v5、无版本 config、compact-v4 input 和旧 output/attempt sidecar；当前 instrument projection 必须从旧 9 列缩减为 7 列并保留 compact salience。CLI/Web 证据锁定 stem-role 推荐默认、full 兼容标签、动态进度、结果摘要、classifier-only 降级 notice 与远程管理员权限。结果原子写入 `tests/fixtures/audio/phase_seven_acceptance.json` 和 `.md`；当前 3 个消费者场景、8 项退出检查与禁网双跑稳定性全部通过。
+
 ## Phase 7 任务划分列表
 
 - [x] 13.5 先锁定旧 instrument-v1、analysis、config 和 sidecar 兼容行为
@@ -1386,7 +1390,7 @@ Web 进度会按实际 profile 区分 Demucs 声部 activity/onset 与旧 full �
 - [x] 13.3 让 AI payload 使用紧凑 salience，并移除具体乐器依赖
 - [x] 13.4 将 QualityReport 主线收敛到节奏对齐指标
 - [x] 13.6 调整 CLI/Web 开关、进度、notice 和文档
-- [ ] 13.7 执行 Phase 7 阶段验收
+- [x] 13.7 执行 Phase 7 阶段验收
 
 ---
 

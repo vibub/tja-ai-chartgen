@@ -1,0 +1,338 @@
+{
+  "schema_version": 1,
+  "acceptance_version": "phase-seven-acceptance-v1",
+  "phase": "Phase 7",
+  "passed": true,
+  "scenario_count": 3,
+  "checks": {
+    "no_heavy_model_rhythm_path": {
+      "passed": true,
+      "consumer_evidence": {
+        "passed": true,
+        "bar_count": 4,
+        "chart_bar_count": 4,
+        "payload_schema": "tja-ai-chartgen-compact-v7",
+        "quality_policy_version": "quality-report-rhythm-alignment-v1"
+      },
+      "audio_pipeline_evidence": {
+        "schema_version": 1,
+        "passed": true,
+        "audio_fixture": "click_4_4.wav",
+        "bar_count": 4,
+        "chart_bar_count": 4,
+        "quality_bar_count": 4,
+        "instrument_feature_version": null,
+        "instrument_analysis_status": "unavailable",
+        "used_rule_generator": true,
+        "ai_failure": null,
+        "new_heavy_modules": [],
+        "ogg_created": true
+      }
+    },
+    "stem_role_only_adds_bounded_evidence": {
+      "passed": true,
+      "baseline_hit": 0.4,
+      "stem_hit": 1.0,
+      "baseline_confidence": 0.72,
+      "stem_confidence": 1.0,
+      "point_grids": [
+        0,
+        12,
+        24,
+        36
+      ],
+      "instrument_bar_columns": [
+        "vocal_activity",
+        "vocal_presence_ratio",
+        "drum_activity",
+        "bass_activity",
+        "other_activity",
+        "dominant_source",
+        "confidence"
+      ]
+    },
+    "taxonomy_independent_core_generation": {
+      "passed": true,
+      "structure_equal": true,
+      "fallback_equal": true,
+      "payload_equal": true,
+      "quality_core_equal": true,
+      "quality_primary_metrics": [
+        "note_onset_alignment",
+        "strong_onset_response",
+        "unsupported_note_rate",
+        "downbeat_response",
+        "fill_burst_alignment",
+        "rhythmic_quantization_error",
+        "silent_range_violation"
+      ]
+    },
+    "compact_ai_payload": {
+      "passed": true,
+      "schema": "tja-ai-chartgen-compact-v7",
+      "legacy_column_count": 9,
+      "current_column_count": 7,
+      "legacy_row_bytes": 73,
+      "current_row_bytes": 34,
+      "current_columns": [
+        "vocal_activity",
+        "vocal_presence_ratio",
+        "drum_activity",
+        "bass_activity",
+        "other_activity",
+        "dominant_source",
+        "confidence"
+      ],
+      "has_compact_salience": true
+    },
+    "legacy_persistence_compatibility": {
+      "passed": true,
+      "instrument_feature_version": "instrument-v1",
+      "instrument_status": "partial",
+      "analysis_schema_version": 5,
+      "config_schema_version": 1,
+      "config_default_profile": "full",
+      "input_schema": "tja-ai-chartgen-compact-v4",
+      "output_notes_preserved": "1000100010001000",
+      "attempt_fallback_preserved": "content_repair_exhausted"
+    },
+    "quality_report_rhythm_mainline": {
+      "passed": true,
+      "version": "quality-report-rhythm-alignment-v1",
+      "primary_metrics": [
+        "note_onset_alignment",
+        "strong_onset_response",
+        "unsupported_note_rate",
+        "downbeat_response",
+        "fill_burst_alignment",
+        "rhythmic_quantization_error",
+        "silent_range_violation"
+      ],
+      "ai_repair_metrics": [
+        "silent_range_violation",
+        "unsupported_note_rate",
+        "strong_onset_response"
+      ],
+      "report_only_primary_metrics": [
+        "note_onset_alignment",
+        "downbeat_response",
+        "fill_burst_alignment",
+        "rhythmic_quantization_error"
+      ],
+      "supporting_report_only_metrics": [
+        "salience_coverage_by_density"
+      ],
+      "instrument_diagnostic_fields": [
+        "drum_onset_hit_coverage",
+        "bass_downbeat_alignment",
+        "vocal_phrase_response",
+        "instrument_transition_response",
+        "instrument_confident_bar_ratio",
+        "instrument_fill_support"
+      ],
+      "instrument_metrics_policy": "diagnostic-only",
+      "has_unified_quality_score": false
+    },
+    "cli_web_notice_capability_alignment": {
+      "passed": true,
+      "schema_version": 1,
+      "cli": {
+        "prepare_default_profile": "stem-role",
+        "generate_default_profile": "stem-role",
+        "generate_analysis_enabled_by_default": false
+      },
+      "web": {
+        "recommended_option_selected": true,
+        "legacy_option_labeled": true,
+        "stem_progress": "正在使用本地 Demucs 提取人声、鼓、贝斯和伴奏的声部活动与 onset。",
+        "full_progress": "正在运行旧 full 兼容模式：Demucs 声部分离与 AST 具体乐器分类诊断。",
+        "stem_summary_excludes_taxonomy": true,
+        "full_summary_marks_diagnostic": true,
+        "local_allowed": true,
+        "remote_default_allowed": false,
+        "remote_explicit_allowed": true
+      },
+      "notices": {
+        "stem_success": {
+          "code": "instrument-analysis-succeeded",
+          "level": "info",
+          "stage": "analysis",
+          "message": "推荐的声部节奏增强已完成，已提取人声、鼓、贝斯和伴奏活动/onset。",
+          "detail": "feature_version=stem-role-v1",
+          "scope": null
+        },
+        "full_success": {
+          "code": "instrument-analysis-succeeded",
+          "level": "info",
+          "stage": "analysis",
+          "message": "旧 full 兼容分析已完成；具体乐器 taxonomy 仅保留为诊断，核心生成继续使用声部与 salience。",
+          "detail": "feature_version=instrument-v1",
+          "scope": null
+        },
+        "classifier_fallback": {
+          "code": "instrument-classifier-fallback",
+          "level": "warning",
+          "stage": "analysis",
+          "message": "推荐的声部节奏增强已完整生效；旧具体乐器分类未生效，核心生成仍继续使用 stem activity/onset 与统一 salience。",
+          "detail": "feature_version=stem-role-v1; reason=classifier-load-error:OSError",
+          "scope": null
+        }
+      }
+    },
+    "deterministic_offline_acceptance": {
+      "passed": true,
+      "network_blocked": true,
+      "behavior_runs_stable": true,
+      "pipeline_runs_stable": true,
+      "compatibility_runs_stable": true,
+      "interface_runs_stable": true,
+      "run_count": 2
+    }
+  },
+  "behavior_matrix": {
+    "schema_version": 1,
+    "matrix_version": "phase-seven-consumer-convergence-matrix-v1",
+    "passed": true,
+    "scenario_count": 3,
+    "scenarios": {
+      "no_heavy_model_rhythm_path": {
+        "passed": true,
+        "bar_count": 4,
+        "chart_bar_count": 4,
+        "payload_schema": "tja-ai-chartgen-compact-v7",
+        "quality_policy_version": "quality-report-rhythm-alignment-v1"
+      },
+      "stem_role_adds_bounded_activity_onset_evidence": {
+        "passed": true,
+        "baseline_hit": 0.4,
+        "stem_hit": 1.0,
+        "baseline_confidence": 0.72,
+        "stem_confidence": 1.0,
+        "point_grids": [
+          0,
+          12,
+          24,
+          36
+        ],
+        "instrument_bar_columns": [
+          "vocal_activity",
+          "vocal_presence_ratio",
+          "drum_activity",
+          "bass_activity",
+          "other_activity",
+          "dominant_source",
+          "confidence"
+        ]
+      },
+      "concrete_taxonomy_does_not_change_core_consumers": {
+        "passed": true,
+        "structure_equal": true,
+        "fallback_equal": true,
+        "payload_equal": true,
+        "quality_core_equal": true,
+        "quality_primary_metrics": [
+          "note_onset_alignment",
+          "strong_onset_response",
+          "unsupported_note_rate",
+          "downbeat_response",
+          "fill_burst_alignment",
+          "rhythmic_quantization_error",
+          "silent_range_violation"
+        ]
+      }
+    }
+  },
+  "no_model_pipeline_evidence": {
+    "schema_version": 1,
+    "passed": true,
+    "audio_fixture": "click_4_4.wav",
+    "bar_count": 4,
+    "chart_bar_count": 4,
+    "quality_bar_count": 4,
+    "instrument_feature_version": null,
+    "instrument_analysis_status": "unavailable",
+    "used_rule_generator": true,
+    "ai_failure": null,
+    "new_heavy_modules": [],
+    "ogg_created": true
+  },
+  "compatibility_evidence": {
+    "schema_version": 1,
+    "passed": true,
+    "legacy_read_compatibility": {
+      "passed": true,
+      "instrument_feature_version": "instrument-v1",
+      "instrument_status": "partial",
+      "analysis_schema_version": 5,
+      "config_schema_version": 1,
+      "config_default_profile": "full",
+      "input_schema": "tja-ai-chartgen-compact-v4",
+      "output_notes_preserved": "1000100010001000",
+      "attempt_fallback_preserved": "content_repair_exhausted"
+    },
+    "compact_payload": {
+      "passed": true,
+      "schema": "tja-ai-chartgen-compact-v7",
+      "legacy_column_count": 9,
+      "current_column_count": 7,
+      "legacy_row_bytes": 73,
+      "current_row_bytes": 34,
+      "current_columns": [
+        "vocal_activity",
+        "vocal_presence_ratio",
+        "drum_activity",
+        "bass_activity",
+        "other_activity",
+        "dominant_source",
+        "confidence"
+      ],
+      "has_compact_salience": true
+    }
+  },
+  "interface_evidence": {
+    "schema_version": 1,
+    "passed": true,
+    "cli": {
+      "prepare_default_profile": "stem-role",
+      "generate_default_profile": "stem-role",
+      "generate_analysis_enabled_by_default": false
+    },
+    "web": {
+      "recommended_option_selected": true,
+      "legacy_option_labeled": true,
+      "stem_progress": "正在使用本地 Demucs 提取人声、鼓、贝斯和伴奏的声部活动与 onset。",
+      "full_progress": "正在运行旧 full 兼容模式：Demucs 声部分离与 AST 具体乐器分类诊断。",
+      "stem_summary_excludes_taxonomy": true,
+      "full_summary_marks_diagnostic": true,
+      "local_allowed": true,
+      "remote_default_allowed": false,
+      "remote_explicit_allowed": true
+    },
+    "notices": {
+      "stem_success": {
+        "code": "instrument-analysis-succeeded",
+        "level": "info",
+        "stage": "analysis",
+        "message": "推荐的声部节奏增强已完成，已提取人声、鼓、贝斯和伴奏活动/onset。",
+        "detail": "feature_version=stem-role-v1",
+        "scope": null
+      },
+      "full_success": {
+        "code": "instrument-analysis-succeeded",
+        "level": "info",
+        "stage": "analysis",
+        "message": "旧 full 兼容分析已完成；具体乐器 taxonomy 仅保留为诊断，核心生成继续使用声部与 salience。",
+        "detail": "feature_version=instrument-v1",
+        "scope": null
+      },
+      "classifier_fallback": {
+        "code": "instrument-classifier-fallback",
+        "level": "warning",
+        "stage": "analysis",
+        "message": "推荐的声部节奏增强已完整生效；旧具体乐器分类未生效，核心生成仍继续使用 stem activity/onset 与统一 salience。",
+        "detail": "feature_version=stem-role-v1; reason=classifier-load-error:OSError",
+        "scope": null
+      }
+    }
+  }
+}
