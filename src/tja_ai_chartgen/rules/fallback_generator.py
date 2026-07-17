@@ -135,12 +135,13 @@ def generate_fallback_chart_bars(
     course: str = "Oni",
     level: int = 10,
     resolution_plan: ResolutionPlan | None = None,
+    precomputed_salience: list[BarRhythmicSalience] | None = None,
 ) -> list[ChartBar]:
     validate_density(density)
     profile = _course_load_profile(course)
     template = get_style_template(style)
     density_hints = build_density_hints(bars)
-    salience_bars = (
+    salience_bars = precomputed_salience or (
         build_burst_salience(bars) if special_notes else build_don_ka_salience(bars)
     )
     salience_candidate_bars = build_salience_candidate_bars(

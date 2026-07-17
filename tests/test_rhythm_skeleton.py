@@ -76,7 +76,7 @@ def test_build_rhythm_skeleton_is_deterministic_and_uses_canonical_ticks():
         density="auto",
     )
 
-    assert RHYTHM_SKELETON_VERSION == "rhythm-skeleton-v3"
+    assert RHYTHM_SKELETON_VERSION == "rhythm-skeleton-v4"
     assert first == second
     assert len(first) == len(analysis.bars)
     assert all(tick % 3 == 0 for bar in first for tick in bar)
@@ -116,6 +116,38 @@ def test_build_rhythm_skeleton_preserves_high_resolution_audio_timing():
         for tick in ticks
     )
     assert {1, 13, 25, 37}.issubset(skeleton[0])
+
+
+def test_build_rhythm_skeleton_drops_isolated_off_lattice_jitter_without_moving_it():
+    base = _analysis(bar_count=4)
+    bars = [bar.model_copy(update={"energy": 0.2}) for bar in base.bars]
+    bars[1] = bars[1].model_copy(
+        update={
+            "onset_grids": [0, 13, 24, 36],
+            "beat_grids": [0, 12, 24, 36],
+        }
+    )
+    analysis = base.model_copy(
+        update={
+            "resolution_plan": ResolutionPlan(
+                canonical_grids_per_bar=48,
+                base_resolution=48,
+                bar_resolutions=[48] * 4,
+            ),
+            "bars": bars,
+        }
+    )
+
+    skeleton = build_rhythm_skeleton(
+        analysis,
+        course="Oni",
+        level=9,
+        style="technical",
+        density="auto",
+    )
+
+    assert 13 not in skeleton[1]
+    assert 12 in skeleton[1]
 
 
 def test_conform_chart_to_rhythm_skeleton_handles_short_high_resolution_regeneration():

@@ -1,13 +1,40 @@
+from collections import Counter
 from dataclasses import dataclass
 
+from tja_ai_chartgen.features.density import build_density_hints
+from tja_ai_chartgen.features.salience import build_don_ka_salience
+from tja_ai_chartgen.features.salience_candidates import (
+    SalienceCandidate,
+    build_salience_candidate_bars,
+)
 from tja_ai_chartgen.rules.fallback_generator import generate_fallback_chart_bars
-from tja_ai_chartgen.tja.model import BarFeature, ChartBar, SongAnalysis
+from tja_ai_chartgen.tja.model import (
+    BarFeature,
+    BarRhythmicSalience,
+    ChartBar,
+    SongAnalysis,
+)
 
-RHYTHM_SKELETON_VERSION = "rhythm-skeleton-v3"
+RHYTHM_SKELETON_VERSION = "rhythm-skeleton-v4"
+LATTICE_MIXED_MIN_GAIN = 0.25
+LATTICE_MIXED_MIN_UNIQUE = 0.18
+LATTICE_EXCEPTION_MIN_CONFIDENCE = 0.95
+LATTICE_EXCEPTION_MIN_REPETITIONS = 3
+LATTICE_EXCEPTION_MAX_RATE = 0.10
 AI_SKELETON_MIN_BARS = 16
 AI_SKELETON_MIN_HITS = 32
 AI_SKELETON_MIN_COVERAGE = 0.85
 AI_SKELETON_MAX_EXTRA_RATE = 0.15
+
+
+@dataclass(frozen=True)
+class RhythmLattice:
+    kind: str
+    steps: tuple[tuple[int, int], ...]
+    coverage: float
+
+    def contains(self, tick: int) -> bool:
+        return any(tick % step == phase for step, phase in self.steps)
 
 
 @dataclass(frozen=True)
@@ -40,14 +67,16 @@ def build_rhythm_skeleton(
     density: str,
 ) -> list[list[int]]:
     """用规则生成器确定 AI 不应随意改写的普通击打时间骨架。"""
+    salience_bars = build_don_ka_salience(analysis.bars)
     skeleton_bars = _build_skeleton_chart_bars(
         analysis,
         course=course,
         level=level,
         style=style,
         density=density,
+        precomputed_salience=salience_bars,
     )
-    return [
+    raw_skeleton = [
         sorted(_regular_hit_ticks(chart_bar, feature_bar))
         for chart_bar, feature_bar in zip(
             skeleton_bars,
@@ -55,6 +84,16 @@ def build_rhythm_skeleton(
             strict=True,
         )
     ]
+    candidate_bars = build_salience_candidate_bars(
+        analysis.bars,
+        resolution_plan=analysis.resolution_plan,
+        salience_bars=salience_bars,
+    )
+    return _infer_musical_skeleton(
+        raw_skeleton,
+        analysis.bars,
+        candidate_bars,
+    )
 
 
 def conform_chart_to_rhythm_skeleton(
@@ -93,17 +132,9 @@ def conform_chart_to_rhythm_skeleton(
         or sum(map(len, resolved_skeleton)) < AI_SKELETON_MIN_HITS
     ):
         return chart_bars
-    fallback_bars = _build_skeleton_chart_bars(
-        analysis,
-        course=course,
-        level=level,
-        style=style,
-        density=density,
-    )
     conformed: list[ChartBar] = []
-    for chart_bar, fallback_bar, feature_bar, required_ticks in zip(
+    for chart_bar, feature_bar, required_ticks in zip(
         chart_bars,
-        fallback_bars,
         analysis.bars,
         resolved_skeleton,
         strict=True,
@@ -115,16 +146,15 @@ def conform_chart_to_rhythm_skeleton(
             for position in long_positions
         }
         ai_hits = _regular_hits_with_notes(chart_bar, feature_bar)
-        fallback_hits = _regular_hits_with_notes(fallback_bar, feature_bar)
-        for tick in required_ticks:
+        for sequence_index, tick in enumerate(required_ticks):
             if tick in blocked_ticks:
                 continue
             position = round(tick / feature_bar.grids_per_bar * len(notes))
             position = min(len(notes) - 1, max(0, position))
-            source_tick, note = _nearest_hit(ai_hits, tick) or _nearest_hit(
-                fallback_hits,
+            source_tick, note = _nearest_hit(ai_hits, tick) or (
                 tick,
-            ) or (tick, "1")
+                "1" if (feature_bar.index + sequence_index) % 2 == 0 else "2",
+            )
             if note in "34" and source_tick != tick:
                 note = "1" if note == "3" else "2"
             notes[position] = note
@@ -230,6 +260,228 @@ def rhythm_skeleton_issues(
     return issues
 
 
+def _infer_musical_skeleton(
+    raw_skeleton: list[list[int]],
+    bars: list[BarFeature],
+    candidate_bars: list[list[SalienceCandidate]],
+) -> list[list[int]]:
+    resolved: list[list[int]] = [[] for _ in raw_skeleton]
+    candidate_maps = [
+        {candidate.grid: candidate for candidate in candidates}
+        for candidates in candidate_bars
+    ]
+    for start, end in _phrase_ranges(bars):
+        lattice = _select_phrase_lattice(
+            raw_skeleton,
+            candidate_maps,
+            start=start,
+            end=end,
+        )
+        tick_counts = Counter(
+            tick
+            for position in range(start, end)
+            for tick in raw_skeleton[position]
+        )
+        exception_groups: dict[int, list[tuple[int, SalienceCandidate]]] = {}
+        base_count = 0
+        for position in range(start, end):
+            for tick in raw_skeleton[position]:
+                candidate = candidate_maps[position].get(tick)
+                if lattice.contains(tick):
+                    resolved[position].append(tick)
+                    base_count += 1
+                elif _keep_lattice_exception(
+                    candidate,
+                    exact_recurrence=tick_counts[tick],
+                ):
+                    exception_groups.setdefault(tick, []).append((position, candidate))
+
+        exception_budget = max(1, round(base_count * LATTICE_EXCEPTION_MAX_RATE))
+        used_exceptions = 0
+        ranked_groups = sorted(
+            exception_groups.items(),
+            key=lambda item: (
+                -sum(_lattice_weight(candidate) for _position, candidate in item[1]),
+                -len(item[1]),
+                item[0],
+            ),
+        )
+        for tick, group in ranked_groups:
+            if used_exceptions + len(group) > exception_budget:
+                continue
+            for position, _candidate in group:
+                resolved[position].append(tick)
+            used_exceptions += len(group)
+        for position in range(start, end):
+            resolved[position].sort()
+
+    density_hints = build_density_hints(bars)
+    for position, hint in enumerate(density_hints):
+        required = min(hint.min_hits, len(raw_skeleton[position]))
+        if len(resolved[position]) >= required:
+            continue
+        selected = set(resolved[position])
+        missing = [
+            tick
+            for tick in raw_skeleton[position]
+            if tick not in selected
+        ]
+        missing.sort(
+            key=lambda tick: (
+                candidate_maps[position].get(tick).priority
+                if candidate_maps[position].get(tick) is not None
+                else 99,
+                -_lattice_weight(candidate_maps[position].get(tick)),
+                tick,
+            )
+        )
+        resolved[position].extend(missing[: required - len(resolved[position])])
+        resolved[position].sort()
+    return resolved
+
+
+def _select_phrase_lattice(
+    raw_skeleton: list[list[int]],
+    candidate_maps: list[dict[int, SalienceCandidate]],
+    *,
+    start: int,
+    end: int,
+) -> RhythmLattice:
+    weighted_ticks = [
+        (tick, _lattice_weight(candidate_maps[position].get(tick)))
+        for position in range(start, end)
+        for tick in raw_skeleton[position]
+    ]
+    total_weight = sum(weight for _tick, weight in weighted_ticks)
+    if total_weight <= 0 or len(weighted_ticks) < 4:
+        return RhythmLattice(kind="straight", steps=((3, 0),), coverage=1.0)
+
+    straight = max(
+        (
+            _lattice_for_phase(weighted_ticks, step=3, phase=phase, kind="straight")
+            for phase in range(3)
+        ),
+        key=lambda item: (item.coverage, -item.steps[0][1]),
+    )
+    triplet = max(
+        (
+            _lattice_for_phase(weighted_ticks, step=2, phase=phase, kind="triplet")
+            for phase in range(2)
+        ),
+        key=lambda item: (item.coverage, -item.steps[0][1]),
+    )
+    single = max(
+        (straight, triplet),
+        key=lambda item: (
+            item.coverage,
+            item.kind == "straight",
+            -item.steps[0][1],
+        ),
+    )
+    union_weight = sum(
+        weight
+        for tick, weight in weighted_ticks
+        if straight.contains(tick) or triplet.contains(tick)
+    )
+    straight_unique = sum(
+        weight
+        for tick, weight in weighted_ticks
+        if straight.contains(tick) and not triplet.contains(tick)
+    )
+    triplet_unique = sum(
+        weight
+        for tick, weight in weighted_ticks
+        if triplet.contains(tick) and not straight.contains(tick)
+    )
+    union_coverage = union_weight / total_weight
+    if (
+        union_coverage - single.coverage >= LATTICE_MIXED_MIN_GAIN
+        and straight_unique / total_weight >= LATTICE_MIXED_MIN_UNIQUE
+        and triplet_unique / total_weight >= LATTICE_MIXED_MIN_UNIQUE
+    ):
+        return RhythmLattice(
+            kind="mixed",
+            steps=straight.steps + triplet.steps,
+            coverage=union_coverage,
+        )
+    return single
+
+
+def _lattice_for_phase(
+    weighted_ticks: list[tuple[int, float]],
+    *,
+    step: int,
+    phase: int,
+    kind: str,
+) -> RhythmLattice:
+    total_weight = sum(weight for _tick, weight in weighted_ticks)
+    matched_weight = sum(
+        weight
+        for tick, weight in weighted_ticks
+        if tick % step == phase
+    )
+    return RhythmLattice(
+        kind=kind,
+        steps=((step, phase),),
+        coverage=matched_weight / total_weight if total_weight > 0 else 0.0,
+    )
+
+
+def _lattice_weight(candidate: SalienceCandidate | None) -> float:
+    if candidate is None:
+        return 0.25
+    kind_bonus = {
+        "strong-transient": 0.75,
+        "transient": 0.40,
+        "rhythmic-skeleton": 0.20,
+        "structure-highlight": 0.10,
+        "weak-evidence": 0.0,
+    }[candidate.kind]
+    return 0.25 + candidate.score + candidate.point.confidence * 0.5 + kind_bonus
+
+
+def _keep_lattice_exception(
+    candidate: SalienceCandidate | None,
+    *,
+    exact_recurrence: int,
+) -> bool:
+    if candidate is None or candidate.kind != "strong-transient":
+        return False
+    reasons = set(candidate.point.reasons)
+    explicit_onset = "onset" in reasons or "stem:drum-agreement" in reasons
+    return bool(
+        candidate.point.confidence >= LATTICE_EXCEPTION_MIN_CONFIDENCE
+        and exact_recurrence >= LATTICE_EXCEPTION_MIN_REPETITIONS
+        and explicit_onset
+    )
+
+
+def _phrase_ranges(bars: list[BarFeature]) -> list[tuple[int, int]]:
+    if not bars:
+        return []
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    for position in range(1, len(bars)):
+        current = bars[position]
+        previous = bars[position - 1]
+        phrase_changed = (
+            current.phrase_id is not None
+            and previous.phrase_id is not None
+            and current.phrase_id != previous.phrase_id
+        )
+        explicit_start = current.phrase_position == "phrase_start"
+        if phrase_changed or explicit_start:
+            ranges.append((start, position))
+            start = position
+    ranges.append((start, len(bars)))
+    if len(ranges) == 1 and len(bars) > 4:
+        return [
+            (position, min(len(bars), position + 4))
+            for position in range(0, len(bars), 4)
+        ]
+    return ranges
+
+
 def _build_skeleton_chart_bars(
     analysis: SongAnalysis,
     *,
@@ -237,6 +489,7 @@ def _build_skeleton_chart_bars(
     level: int,
     style: str,
     density: str,
+    precomputed_salience: list[BarRhythmicSalience] | None = None,
 ) -> list[ChartBar]:
     return generate_fallback_chart_bars(
         analysis.bars,
@@ -246,6 +499,7 @@ def _build_skeleton_chart_bars(
         course=course,
         level=level,
         resolution_plan=analysis.resolution_plan,
+        precomputed_salience=precomputed_salience,
     )
 
 

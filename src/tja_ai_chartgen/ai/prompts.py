@@ -208,9 +208,9 @@ def build_chart_generation_payload(
             "salience_point_columns": SALIENCE_POINT_COLUMNS,
             "salience_scale": "0..1000=normalized strength/confidence; kind is the ranked evidence class",
             "rhythm_skeleton_semantics": (
-                "one canonical-tick list per bar; deterministic audio-driven ordinary-hit "
-                "timing authority; AI may change note colors and limited accents but should "
-                "preserve these positions"
+                "one canonical-tick list per bar; phrase-inferred straight/triplet/mixed "
+                "musical timing authority with limited repeated high-confidence exceptions; "
+                "AI may change note colors and limited accents but should preserve positions"
             ),
             "instrument_bar_columns": INSTRUMENT_BAR_COLUMNS,
             "instrument_bar_semantics": (

@@ -203,7 +203,8 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["style"] == "technical"
     assert payload["schema"] == "tja-ai-chartgen-compact-v7"
     assert payload["rhythmic_salience_feature_version"] == "rhythmic-salience-v1"
-    assert payload["rhythm_skeleton_version"] == "rhythm-skeleton-v3"
+    assert payload["rhythm_skeleton_version"] == "rhythm-skeleton-v4"
+    assert "phrase-inferred" in payload["legend"]["rhythm_skeleton_semantics"]
     assert len(payload["rhythm_skeleton"]) == len(analysis.bars)
     assert payload["rhythm_skeleton"][0]
     salience_bar_columns = payload["legend"]["salience_bar_columns"]

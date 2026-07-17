@@ -1369,7 +1369,7 @@ CLI help、准备命令输出和分析阶段输出把 `stem-role` 描述为推�
 
 Web 进度会按实际 profile 区分 Demucs 声部 activity/onset 与旧 full 的 AST 分类诊断。结果页对 `stem-role-v1` 只显示 vocals/drums/bass/other 粗粒度汇总，并明确不运行具体乐器分类；仅旧 `instrument-v1` 才展示具体乐器兼容诊断，同时注明 taxonomy 不决定当前谱面落点或 QualityReport 主线。analysis notice 同样把 stem-role 成功、full 成功、classifier-only 降级、旧 partial 和基础 fallback 分开说明，其中 AST 失败但 stem-role 完整时明确不会损失核心生成能力。
 
-后续节奏收敛在不恢复具体乐器 taxonomy 的前提下新增 `rhythm-skeleton-v3`：规则生成器先按统一 salience、ResolutionPlan、course/level/style/density 确定普通击打时间骨架，并原样保留规则层选择的 canonical tick，不把音频支持的 48/36 格位置强制移动到邻近稳定格点；compact-v7 payload 将该骨架交给 AI，长谱及任何直接使用最高 canonical resolution 的局部重生成都会在内容校验前把 AI 普通 hit 确定性对齐到骨架，而不要求模型逐点复制长数组。稳定格点校验只阻止骨架以外的任意 finest-grid hit；AI 主要负责咚咔顺序、同位置重音与受控 motif 变化，可靠 long note 仍可替代自身 burst 范围内的骨架点，85%/15% 只作为对齐后的内部不变量检查。
+后续节奏收敛在不恢复具体乐器 taxonomy 的前提下新增 `rhythm-skeleton-v4`：规则生成器先按统一 salience、ResolutionPlan、course/level/style/density 得到 raw skeleton，再按完整 phrase 选择带相位的直拍、三连音/24 分或保守 mixed lattice；lattice 内 tick 原样保留，lattice 外 tick 不做邻近投影，只有高置信强瞬态在同一精确位置重复出现时才作为受 10% 预算限制的例外，其余孤立微时差移除，并按 density hint 恢复最低 hit 数。compact-v7 payload 将推断后的 musical skeleton 交给 AI，长谱及最高 canonical resolution 的局部重生成会在校验前把 AI 普通 hit 确定性对齐到骨架；稳定格点校验只阻止骨架以外的任意 finest-grid hit，AI 主要负责咚咔顺序、同位置重音与受控 motif 变化。
 
 ## 13.7 退出条件
 
