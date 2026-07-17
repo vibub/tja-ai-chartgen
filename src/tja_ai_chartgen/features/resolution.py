@@ -14,6 +14,7 @@ from tja_ai_chartgen.tja.model import (
 
 MIN_ONSET_WEIGHT = 0.15
 RESOLUTION_ERROR_TOLERANCE_TICKS = 0.2
+LOW_CONFIDENCE_ERROR_MARGIN_TICKS = 0.05
 
 
 def output_resolution_for_bar(
@@ -71,11 +72,27 @@ def build_resolution_plan(
         )
         for resolution in candidates
     }
-    selected = candidates[-1]
-    for resolution in candidates:
-        if errors[resolution] <= RESOLUTION_ERROR_TOLERANCE_TICKS:
-            selected = resolution
-            break
+    qualified = [
+        resolution
+        for resolution in candidates
+        if errors[resolution] <= RESOLUTION_ERROR_TOLERANCE_TICKS
+    ]
+    if qualified:
+        selected = qualified[0]
+        selection_reason = "met the quantization error tolerance"
+    else:
+        best_error = min(errors.values())
+        selected = next(
+            resolution
+            for resolution in candidates
+            if errors[resolution]
+            <= best_error + LOW_CONFIDENCE_ERROR_MARGIN_TICKS
+        )
+        selection_reason = (
+            "no candidate met the quantization error tolerance; selected the lowest "
+            f"stable resolution within {LOW_CONFIDENCE_ERROR_MARGIN_TICKS:.2f} tick(s) "
+            "of the best error"
+        )
 
     selected_position = candidates.index(selected)
     selected_error = errors[selected]
@@ -90,7 +107,7 @@ def build_resolution_plan(
         )
     reason = (
         f"selected {selected} grids because its weighted quantization error "
-        f"is {selected_error:.3f} canonical tick(s)"
+        f"is {selected_error:.3f} canonical tick(s); {selection_reason}"
     )
     decision = ResolutionDecision(
         selected_resolution=selected,

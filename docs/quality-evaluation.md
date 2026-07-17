@@ -104,7 +104,7 @@ python tools/build_reference_windows.py <reference-dir> \
 - `3/4` 和 `6/8`：12、18、36；
 - 无可靠 onset 时回退到 16/12 的基础分辨率，并产生 `resolution-evidence-fallback` notice。
 
-`ResolutionDecision.candidate_errors` 记录每个候选相对 canonical tick 的 onset 强度加权平均量化误差。算法选择第一个误差不高于 0.2 canonical tick 的候选；如果较低候选无法表达三连音或混合细分，则升级到 24/48 或 18/36。`evidence_count`、`confidence` 和 `reason` 用于解释选择，不作为谱面难度分数。
+`ResolutionDecision.candidate_errors` 记录每个候选相对 canonical tick 的 onset 强度加权平均量化误差。算法选择第一个误差不高于 0.2 canonical tick 的候选；如果所有候选都不达标，则不再默认选择最高 resolution，而是在最佳误差 0.05 tick 范围内选择最低稳定 resolution，避免低置信微时差把整首歌升级到 48/36 格。如果较低候选确实无法表达高置信三连音或混合细分，仍可升级到 24/48 或 18/36。`evidence_count`、`confidence` 和 `reason` 用于解释选择，不作为谱面难度分数。
 
 `phrase-stable-v2` 只在满足以下条件时替代默认 `song-global-v1`：结构分析得到至少两个完整乐句、乐句至少 2 小节、局部有足够可靠 onset、基础 resolution 的局部误差至少 0.35，并且切换发生在边界置信度不低于 0.4 的乐句边界。同一 `section_id` 的回归段落复用不低于首次出现的 resolution。切换数超过 `max(2, bar_count // 8)` 时，改用全曲稳定的最高所需 resolution；因此不会逐小节抖动。
 
@@ -268,9 +268,11 @@ level 在各 course 的范围内线性插值。最终 hit 数还会受到小节�
 - `fill_burst_alignment`、`rhythmic_quantization_error`：实际 fill/特殊音符对可靠 burst 的响应，以及普通 note 到最近可靠 salience 的平均 canonical tick 误差。
 - `salience_coverage_by_density`：按 silent/rest/sparse/normal/dense/fill 汇总可靠 salience 的普通 note 响应数、评估数和 coverage。
 
-`chart-alignment-v1` 会在全部 17 个 fixture、68 张四难度规则谱面上聚合上述指标，按 course 与 density hint 分组，并与独立 fixture ground truth 做方向性对比；差值不作为通过门槛。首轮校准后的 `ai-rhythm-repair-gate-v1` 只阻断三类极端 AI 内容错误：可靠静音范围存在任意活动起点；至少 8 个普通 note 中有至少 4 个无支持且比例不低于 0.5；至少 4 小节、8 个可靠 strong onset 的范围内响应数为 0。门槛版本和阈值会写入 AI sidecar，全部 68 张规则基线均不触发。
+`chart-alignment-v1` 会在全部 17 个 fixture、68 张四难度规则谱面上聚合上述指标，按 course 与 density hint 分组，并与独立 fixture ground truth 做方向性对比；差值不作为通过门槛。首轮校准后的 `ai-rhythm-repair-gate-v1` 只从 QualityReport 中阻断三类极端 AI 内容错误：可靠静音范围存在任意活动起点；至少 8 个普通 note 中有至少 4 个无支持且比例不低于 0.5；至少 4 小节、8 个可靠 strong onset 的范围内响应数为 0。门槛版本和阈值会写入 AI sidecar，全部 68 张规则基线均不触发。
 
-`note_onset_alignment`、`downbeat_response`、`fill_burst_alignment`、`rhythmic_quantization_error`、`salience_coverage_by_density` 及其他结构、instrument、resolution 指标继续只写入报告，不参与 AI repair、CI 统一总分或阻断输出。所选三项也只用于 AI 内容 repair，不改变规则生成、不进入统一总分；阈值仍需结合更多真实歌曲和人工游玩继续校准。
+AI 事件内容校验另行维护可玩性硬边界：大音符必须与前后击打保持超过 0.25 秒；至少 16 个普通 hit 的输出中，既不属于 3-tick 直拍子网格、也不属于 2-tick 三连音/24 分子网格的 finest-grid 位置不得同时达到 4 个且超过 10%。该门槛用于阻止 stem 分离时延、相邻 onset 拖尾和固定 BPM 漂移被逐点复制成 `5/7` 等微时差抖动，不纳入统一质量总分。
+
+`note_onset_alignment`、`downbeat_response`、`fill_burst_alignment`、`rhythmic_quantization_error`、`salience_coverage_by_density` 及其他结构、instrument、resolution 指标继续只写入报告，不参与 `ai-rhythm-repair-gate-v1`、CI 统一总分或加权评分。所选三项 QualityReport 门槛与独立事件可玩性校验都只用于 AI 内容 repair，不改变规则生成、不进入统一总分；阈值仍需结合更多真实歌曲和人工游玩继续校准。
 
 ## 可重复比较流程
 

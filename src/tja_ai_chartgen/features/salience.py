@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from tja_ai_chartgen.features.meter import get_meter_spec
+from tja_ai_chartgen.features.rhythm_grid import is_stable_rhythmic_grid
 from tja_ai_chartgen.features.silence import edge_silence_indexes, is_silent_bar
 from tja_ai_chartgen.tja.model import (
     BarFeature,
@@ -62,6 +63,7 @@ STRUCTURE_ACCENT_MULTIPLIERS = {
 @dataclass(frozen=True)
 class CanonicalRhythmicEvidencePoint:
     grid: int
+    canonical_grids_per_bar: int = 48
     onset: bool = False
     onset_strength: float = 0.0
     accent_hint: bool = False
@@ -163,6 +165,7 @@ def build_canonical_rhythmic_evidence(
     return [
         CanonicalRhythmicEvidencePoint(
             grid=grid,
+            canonical_grids_per_bar=grid_count,
             onset=onsets[grid],
             onset_strength=onset_strengths[grid],
             accent_hint=accent_hints[grid],
@@ -884,6 +887,8 @@ def _drum_onset_strength(
     )
     if item.onset or resolved_spectral >= ABSOLUTE_SPECTRAL_GATE:
         return _unit_value(strength + DRUM_AGREEMENT_BOOST)
+    if not is_stable_rhythmic_grid(item.grid, item.canonical_grids_per_bar):
+        return 0.0
     return min(DRUM_CONFLICT_CAP, strength * 0.75)
 
 

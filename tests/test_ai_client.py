@@ -16,6 +16,7 @@ from litellm import (
 from tja_ai_chartgen.ai.client import (
     AiOutputRepairError,
     _compact_repair_issues,
+    _validate_rhythmic_grid_stability,
     AiProviderError,
     build_ai_salience_validation_report,
     generate_chart_bars_with_ai,
@@ -39,6 +40,7 @@ from tja_ai_chartgen.tja.model import (
     InstrumentBarFeature,
     InstrumentGridFeature,
     PhraseFeature,
+    ResolutionDecision,
     ResolutionPlan,
     SongAnalysis,
     SpectralGridFeature,
@@ -146,6 +148,34 @@ def test_sanitize_ai_bars_forces_expected_edge_silence_to_empty():
         "1010101010101011",
         "0000000000000000",
     ]
+
+
+def test_validate_rhythmic_grid_stability_rejects_widespread_microtiming_jitter():
+    analysis = _analysis(bar_count=2)
+
+    def chart_bar(index: int, hit_grids: list[int]) -> ChartBar:
+        notes = ["0"] * 48
+        for offset, grid in enumerate(hit_grids):
+            notes[grid] = "1" if offset % 2 == 0 else "2"
+        return ChartBar(index=index, notes="".join(notes))
+
+    stable_grids = [0, 6, 12, 18, 24, 30, 36, 42]
+    jittered_grids = [0, 6, 12, 19, 24, 30, 36, 43]
+
+    assert _validate_rhythmic_grid_stability(
+        [chart_bar(0, stable_grids), chart_bar(1, stable_grids)],
+        analysis.bars,
+    ) == []
+
+    issues = _validate_rhythmic_grid_stability(
+        [chart_bar(0, jittered_grids), chart_bar(1, jittered_grids)],
+        analysis.bars,
+    )
+
+    assert len(issues) == 1
+    assert "arbitrary finest-grid positions" in issues[0]
+    assert "4/16 (25.0%)" in issues[0]
+    assert "maximum 10%" in issues[0]
 
 
 def test_build_chart_generation_payload_includes_density():
@@ -583,6 +613,50 @@ def test_build_chart_generation_payload_can_include_static_reference_prompt():
     assert payload["reference_examples_prompt"] == "static reference prompt"
 
 
+def test_build_chart_generation_payload_filters_low_confidence_arbitrary_salience_ticks():
+    analysis = _analysis()
+    bar = analysis.bars[0].model_copy(
+        update={
+            "onset_grids": [7],
+            "grid_features": [GridFeature(grid=7, onset=True, strength=1.0)],
+            "spectral_grid_features": [
+                SpectralGridFeature(
+                    grid=7,
+                    low_onset_strength=1.0,
+                    spectral_flux=1.0,
+                )
+            ],
+        }
+    )
+
+    def payload_grids(confidence: float) -> list[int]:
+        resolution_plan = ResolutionPlan(
+            canonical_grids_per_bar=48,
+            base_resolution=48,
+            bar_resolutions=[48],
+            decision=ResolutionDecision(
+                selected_resolution=48,
+                confidence=confidence,
+            ),
+        )
+        payload = build_chart_generation_payload(
+            analysis.model_copy(
+                update={"bars": [bar], "resolution_plan": resolution_plan}
+            ),
+            "Oni",
+            10,
+            "technical",
+        )
+        return [point[0] for point in payload["bar_salience"][0][-1]]
+
+    low_confidence_grids = payload_grids(0.1)
+    high_confidence_grids = payload_grids(0.9)
+
+    assert 7 not in low_confidence_grids
+    assert 7 in high_confidence_grids
+    assert len(high_confidence_grids) <= 16
+
+
 def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     prompt = build_chart_generation_prompt(
         _analysis(),
@@ -620,6 +694,10 @@ def test_build_chart_generation_prompt_constrains_big_notes_for_playability():
     assert "only when bar_salience burst_reliable is 1" in prompt
     assert "inside burst_start_grid..burst_end_grid" in prompt
     assert "Keep unsupported hits rare" in prompt
+    assert "Preserve a stable phrase-level rhythmic lattice" in prompt
+    assert "Do not alternate nearby gaps such as 5/7" in prompt
+    assert "Stem onset microtiming only reinforces rhythm context" in prompt
+    assert "adjacent stem peaks such as 12/13 or 24/25" in prompt
     assert "not to choose exact note ticks" in prompt
 
 

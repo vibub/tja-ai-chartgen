@@ -341,6 +341,31 @@ def test_hit_salience_uses_activity_gated_drum_onset_and_rewards_agreement():
     assert agreed.onset_evidence_count == 1
 
 
+def test_hit_salience_rejects_stem_only_microtiming_off_stable_grid():
+    stem_only_bar = BarFeature(
+        index=1,
+        start_time=2.0,
+        end_time=4.0,
+        energy=0.5,
+        grids_per_bar=48,
+        instrument=InstrumentBarFeature(drum_activity=0.8),
+        instrument_grid_features=[InstrumentGridFeature(grid=7, drum_onset=0.9)],
+    )
+    agreed_bar = stem_only_bar.model_copy(
+        update={
+            "grid_features": [GridFeature(grid=7, onset=True, strength=0.6)],
+        }
+    )
+
+    stem_only = build_bar_hit_salience(stem_only_bar)
+    agreed = build_bar_hit_salience(agreed_bar)
+
+    assert stem_only.points == []
+    assert stem_only.onset_evidence_count == 0
+    assert agreed.points[0].grid == 7
+    assert "stem:drum-agreement" in agreed.points[0].reasons
+
+
 def test_hit_salience_rejects_ungated_stem_artifacts_and_non_drum_onsets():
     bar = BarFeature(
         index=1,

@@ -20,6 +20,12 @@ from tja_ai_chartgen.features.resolution import (
     output_resolution_for_analysis_bar,
     output_resolution_for_bar,
 )
+from tja_ai_chartgen.features.rhythm_grid import (
+    AI_ARBITRARY_GRID_MAX_RATE,
+    AI_ARBITRARY_GRID_MIN_COUNT,
+    AI_ARBITRARY_GRID_MIN_HITS,
+    chart_arbitrary_grid_positions,
+)
 from tja_ai_chartgen.features.salience import (
     build_burst_salience,
     project_reliable_burst_span,
@@ -645,6 +651,8 @@ def _validate_ai_data(
     if not issues:
         issues.extend(_validate_big_note_isolation(bars, analysis.bars))
     if not issues:
+        issues.extend(_validate_rhythmic_grid_stability(bars, analysis.bars))
+    if not issues:
         issues.extend(_validate_edge_silence(bars, analysis.bars))
     if not issues:
         issues.extend(
@@ -826,6 +834,31 @@ def _validate_big_note_isolation(
             "on both sides, so use normal note 1/2 instead"
         )
         for violation in find_big_note_isolation_violations(bars, expected_bars)
+    ]
+
+
+def _validate_rhythmic_grid_stability(
+    bars: list[ChartBar],
+    expected_bars: list[BarFeature],
+) -> list[str]:
+    evaluated, arbitrary = chart_arbitrary_grid_positions(bars, expected_bars)
+    if evaluated < AI_ARBITRARY_GRID_MIN_HITS:
+        return []
+    rate = len(arbitrary) / evaluated
+    if len(arbitrary) < AI_ARBITRARY_GRID_MIN_COUNT or rate <= AI_ARBITRARY_GRID_MAX_RATE:
+        return []
+    examples = ", ".join(
+        f"bar {bar_position + 1} tick {canonical_tick}"
+        for bar_position, _grid, canonical_tick in arbitrary[:8]
+    )
+    return [
+        (
+            "chart rhythm uses too many arbitrary finest-grid positions: "
+            f"{len(arbitrary)}/{evaluated} ({rate:.1%}), maximum "
+            f"{AI_ARBITRARY_GRID_MAX_RATE:.0%}; prefer stable straight ticks divisible "
+            "by 3 or triplet/24th ticks divisible by 2, and reserve other ticks for "
+            f"rare explicit microtiming ({examples})"
+        )
     ]
 
 
@@ -1055,6 +1088,8 @@ Rules:
 - bars must contain exactly {len(analysis.bars)} item(s).
 - Use the canonical ticks, per-bar resolution, timing, density, structure, and bar_salience from the original input. Do not output a resolution.
 - Prioritize reliable strong-transient, transient, rhythmic-skeleton, and structure-highlight salience points. Keep unsupported hits rare and use only short supported connectors when density requires them.
+- Keep a stable rhythmic lattice. On 48/36 canonical grids, ordinary straight notes normally use ticks divisible by 3 and triplet/24th passages use ticks divisible by 2. Remove detector microtiming jitter such as alternating 5/7 gaps, and keep ticks outside both subgrids below 10% of playable hits.
+- Stem onset timing is supporting evidence, not permission to copy separation latency or adjacent onset smearing. Merge nearby stem peaks such as 12/13 into the stable phrase grid.
 - Use only hits and long_notes; never return legacy notes or balloon_counts fields.
 - Normal hit notes are 1, 2, 3, or 4.
 - Big notes 3/4 require more than 0.25 seconds of real-time isolation from every other playable hit before and after them, including across bar boundaries. Otherwise keep the same color as normal note 1/2.

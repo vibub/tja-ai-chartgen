@@ -91,10 +91,10 @@ def test_build_fixture_audio_metrics_derives_downbeats_from_offset_and_meter():
     assert metrics["beat"]["f1"] == 1.0
     assert metrics["downbeat"]["f1"] == 1.0
     assert metrics["silent_onset_false_positive_count"] == 0
-    assert metrics["resolution"]["base_resolution"] == 48
+    assert metrics["resolution"]["base_resolution"] == 16
     assert metrics["resolution"]["expressible_event_ratio"] == 1.0
     assert metrics["resolution"]["under_resolved_bar_count"] == 0
-    assert metrics["resolution"]["unnecessary_high_resolution_bar_count"] > 0
+    assert metrics["resolution"]["unnecessary_high_resolution_bar_count"] == 0
 
 
 def test_resolution_metrics_identify_minimum_grid_without_unnecessary_upgrade():

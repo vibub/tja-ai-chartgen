@@ -98,6 +98,19 @@ def test_build_resolution_plan_uses_legacy_resolution_without_reliable_onsets():
     assert "insufficient" in plan.decision.reason
 
 
+def test_build_resolution_plan_prefers_stable_low_resolution_when_all_candidates_are_uncertain():
+    raw = _raw_for_ticks([0.4, 12.4, 24.4, 36.4])
+    bars = build_bar_features(raw)
+
+    plan = build_resolution_plan(raw, bars)
+
+    assert plan.base_resolution == 16
+    assert plan.decision is not None
+    assert plan.decision.confidence == 0.0
+    assert "no candidate met" in plan.decision.reason
+    assert "lowest stable resolution" in plan.decision.reason
+
+
 def test_build_resolution_plan_ignores_weak_off_grid_noise():
     raw = _raw_for_ticks(
         [0, 12, 24, 36, 1],
