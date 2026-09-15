@@ -15,7 +15,7 @@ from tja_ai_chartgen.tja.model import (
     SongAnalysis,
 )
 
-RHYTHM_SKELETON_VERSION = "rhythm-skeleton-v4"
+RHYTHM_SKELETON_VERSION = "rhythm-skeleton-v5"
 LATTICE_MIXED_MIN_GAIN = 0.25
 LATTICE_MIXED_MIN_UNIQUE = 0.18
 LATTICE_EXCEPTION_MIN_CONFIDENCE = 0.95
@@ -270,9 +270,9 @@ def _infer_musical_skeleton(
         {candidate.grid: candidate for candidate in candidates}
         for candidates in candidate_bars
     ]
+    density_hints = build_density_hints(bars)
     for start, end in _phrase_ranges(bars):
         lattice = _select_phrase_lattice(
-            raw_skeleton,
             candidate_maps,
             start=start,
             end=end,
@@ -313,45 +313,46 @@ def _infer_musical_skeleton(
                 resolved[position].append(tick)
             used_exceptions += len(group)
         for position in range(start, end):
+            # Density must not reintroduce the off-lattice events just rejected.
+            # Unselected, reliable audio candidates may fill a deficit without
+            # exceeding the original course/level hit budget.
+            required = min(density_hints[position].min_hits, len(raw_skeleton[position]))
+            selected = set(resolved[position])
+            missing = [
+                candidate
+                for candidate in candidate_bars[position]
+                if candidate.reliable
+                and lattice.contains(candidate.grid)
+                and candidate.grid not in selected
+            ]
+            missing.sort(key=lambda candidate: (
+                candidate.priority, -_lattice_weight(candidate), candidate.grid,
+            ))
+            deficit = max(0, required - len(selected))
+            resolved[position].extend(candidate.grid for candidate in missing[:deficit])
             resolved[position].sort()
-
-    density_hints = build_density_hints(bars)
-    for position, hint in enumerate(density_hints):
-        required = min(hint.min_hits, len(raw_skeleton[position]))
-        if len(resolved[position]) >= required:
-            continue
-        selected = set(resolved[position])
-        missing = [
-            tick
-            for tick in raw_skeleton[position]
-            if tick not in selected
-        ]
-        missing.sort(
-            key=lambda tick: (
-                candidate_maps[position].get(tick).priority
-                if candidate_maps[position].get(tick) is not None
-                else 99,
-                -_lattice_weight(candidate_maps[position].get(tick)),
-                tick,
-            )
-        )
-        resolved[position].extend(missing[: required - len(resolved[position])])
-        resolved[position].sort()
     return resolved
 
 
 def _select_phrase_lattice(
-    raw_skeleton: list[list[int]],
     candidate_maps: list[dict[int, SalienceCandidate]],
     *,
     start: int,
     end: int,
 ) -> RhythmLattice:
     weighted_ticks = [
-        (tick, _lattice_weight(candidate_maps[position].get(tick)))
+        (candidate.grid, _lattice_weight(candidate))
         for position in range(start, end)
-        for tick in raw_skeleton[position]
+        for candidate in candidate_maps[position].values()
+        if candidate.kind in {"strong-transient", "transient"}
     ]
+    if not weighted_ticks:
+        weighted_ticks = [
+            (candidate.grid, _lattice_weight(candidate))
+            for position in range(start, end)
+            for candidate in candidate_maps[position].values()
+            if candidate.kind == "rhythmic-skeleton"
+        ]
     total_weight = sum(weight for _tick, weight in weighted_ticks)
     if total_weight <= 0 or len(weighted_ticks) < 4:
         return RhythmLattice(kind="straight", steps=((3, 0),), coverage=1.0)

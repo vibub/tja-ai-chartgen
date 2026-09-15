@@ -1,8 +1,10 @@
 from tja_ai_chartgen.features.rhythm_grid import is_stable_rhythmic_grid
+from tja_ai_chartgen.features.salience_candidates import SalienceCandidate
 from tja_ai_chartgen.rules.rhythm_skeleton import (
     AI_SKELETON_MAX_EXTRA_RATE,
     AI_SKELETON_MIN_COVERAGE,
     RHYTHM_SKELETON_VERSION,
+    _infer_musical_skeleton,
     build_rhythm_skeleton,
     compare_chart_to_rhythm_skeleton,
     conform_chart_to_rhythm_skeleton,
@@ -12,6 +14,7 @@ from tja_ai_chartgen.tja.model import (
     BarFeature,
     ChartBar,
     ResolutionPlan,
+    RhythmicSaliencePoint,
     SongAnalysis,
 )
 
@@ -58,6 +61,53 @@ def _chart_from_skeleton(skeleton: list[list[int]]) -> list[ChartBar]:
     return bars
 
 
+def _transients(ticks: list[int]) -> list[SalienceCandidate]:
+    return [
+        SalienceCandidate(
+            grid=tick, kind="strong-transient", priority=0, score=0.9,
+            point=RhythmicSaliencePoint(
+                grid=tick, hit=0.9, confidence=0.9, reasons=["onset"],
+            ),
+        )
+        for tick in ticks
+    ]
+
+
+def test_density_deficit_does_not_restore_rejected_jitter():
+    bars = _analysis(4).bars  # High energy asks for at least five hits.
+    raw = [[0, 12, 24, 36, 13]] + [[0, 12, 24, 36]] * 3
+    candidates = [_transients(ticks) for ticks in raw]
+
+    result = _infer_musical_skeleton(raw, bars, candidates)
+
+    assert result[0] == [0, 12, 24, 36]
+    assert 13 not in result[0]  # A missing fifth hit is preferable to jitter.
+
+
+def test_density_deficit_uses_unselected_supported_lattice_event():
+    bars = _analysis(4).bars
+    raw = [[0, 12, 24, 36, 13]] + [[0, 12, 24, 36]] * 3
+    candidates = [_transients(ticks) for ticks in raw]
+    candidates[0] += _transients([18])
+
+    result = _infer_musical_skeleton(raw, bars, candidates)
+
+    assert result[0] == [0, 12, 18, 24, 36]
+    assert len(result[0]) == len(raw[0])
+
+
+def test_lattice_follows_audio_even_when_draft_selected_straight_template():
+    bars = _analysis(4).bars
+    raw = [[0, 3, 6, 9, 12, 15]] * 4
+    candidates = [_transients(list(range(0, 48, 4))) for _ in bars]
+
+    result = _infer_musical_skeleton(raw, bars, candidates)
+
+    assert all(3 not in ticks and 9 not in ticks and 15 not in ticks for ticks in result)
+    assert all(4 in ticks and 8 in ticks for ticks in result)
+    assert all(len(ticks) <= len(raw[index]) for index, ticks in enumerate(result))
+
+
 def test_build_rhythm_skeleton_is_deterministic_and_uses_canonical_ticks():
     analysis = _analysis()
 
@@ -76,7 +126,7 @@ def test_build_rhythm_skeleton_is_deterministic_and_uses_canonical_ticks():
         density="auto",
     )
 
-    assert RHYTHM_SKELETON_VERSION == "rhythm-skeleton-v4"
+    assert RHYTHM_SKELETON_VERSION == "rhythm-skeleton-v5"
     assert first == second
     assert len(first) == len(analysis.bars)
     assert all(tick % 3 == 0 for bar in first for tick in bar)

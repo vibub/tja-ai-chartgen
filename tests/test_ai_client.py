@@ -17,6 +17,7 @@ from tja_ai_chartgen.ai.client import (
     AiOutputRepairError,
     _compact_repair_issues,
     _validate_rhythmic_grid_stability,
+    _validate_chart_quality,
     AiProviderError,
     build_ai_salience_validation_report,
     generate_chart_bars_with_ai,
@@ -50,6 +51,35 @@ from tja_ai_chartgen.tja.model import (
 CHART_ALIGNMENT_BASELINE_PATH = (
     Path(__file__).parent / "fixtures" / "audio" / "chart_alignment_baseline.json"
 )
+
+
+def test_exact_skeleton_is_not_forced_to_add_density_but_missing_hits_still_fail():
+    analysis = _analysis(bar_count=4)
+    analysis = analysis.model_copy(update={
+        "bars": [bar.model_copy(update={"energy": 0.8}) for bar in analysis.bars],
+    })
+    chart = [ChartBar(index=i, notes="1000200010002000") for i in range(4)]
+    skeleton = [[0, 12, 24, 36] for _ in chart]
+    kwargs = dict(analysis=analysis, course="Oni", level=10, density="max")
+
+    assert any("too sparse" in issue for issue in _validate_chart_quality(chart, **kwargs))
+    assert not any("too sparse" in issue for issue in _validate_chart_quality(
+        chart, rhythm_skeleton=skeleton, **kwargs,
+    ))
+    missing = [bar.model_copy(update={"notes": "1000200010000000"}) for bar in chart]
+    assert any("too sparse" in issue for issue in _validate_chart_quality(
+        missing, rhythm_skeleton=skeleton, **kwargs,
+    ))
+
+
+def test_exact_skeleton_keeps_density_upper_bound():
+    analysis = _analysis(bar_count=4)
+    chart = [ChartBar(index=i, notes="12" * 8) for i in range(4)]
+    issues = _validate_chart_quality(
+        chart, analysis=analysis, course="Oni", level=10, density="max",
+        rhythm_skeleton=[list(range(0, 48, 3)) for _ in chart],
+    )
+    assert any("too dense" in issue for issue in issues)
 
 
 def _event_bar(
@@ -203,7 +233,7 @@ def test_build_chart_generation_payload_includes_density():
     assert payload["style"] == "technical"
     assert payload["schema"] == "tja-ai-chartgen-compact-v7"
     assert payload["rhythmic_salience_feature_version"] == "rhythmic-salience-v1"
-    assert payload["rhythm_skeleton_version"] == "rhythm-skeleton-v4"
+    assert payload["rhythm_skeleton_version"] == "rhythm-skeleton-v5"
     assert "phrase-inferred" in payload["legend"]["rhythm_skeleton_semantics"]
     assert len(payload["rhythm_skeleton"]) == len(analysis.bars)
     assert payload["rhythm_skeleton"][0]

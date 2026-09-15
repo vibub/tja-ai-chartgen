@@ -34,6 +34,7 @@ from tja_ai_chartgen.features.salience_candidates import build_salience_candidat
 from tja_ai_chartgen.features.silence import edge_silence_indexes
 from tja_ai_chartgen.rules.rhythm_skeleton import (
     build_rhythm_skeleton,
+    compare_chart_to_rhythm_skeleton,
     conform_chart_to_rhythm_skeleton,
     rhythm_skeleton_issues,
 )
@@ -705,6 +706,7 @@ def _validate_ai_data(
                 course=course,
                 level=level,
                 density=density,
+                rhythm_skeleton=rhythm_skeleton,
             )
         )
 
@@ -935,12 +937,21 @@ def _validate_chart_quality(
     course: str,
     level: int,
     density: str,
+    rhythm_skeleton: list[list[int]] | None = None,
 ) -> list[str]:
     issues: list[str] = []
     expected_bars = analysis.bars[: len(bars)]
     density_hints = build_density_hints(expected_bars)
     hit_counts = [density_hit_count(bar.notes) for bar in bars]
-    issues.extend(_density_hint_issues(hit_counts, density_hints))
+    timing_locked = False
+    if rhythm_skeleton is not None:
+        comparison = compare_chart_to_rhythm_skeleton(bars, expected_bars, rhythm_skeleton)
+        timing_locked = comparison.coverage == 1.0 and comparison.extra_rate == 0.0
+    # An exact musical skeleton cannot be made denser without changing its timing.
+    # Keep upper bounds and independent audio/playability checks in force.
+    issues.extend(_density_hint_issues(
+        hit_counts, density_hints, enforce_minimum=not timing_locked,
+    ))
     issues.extend(
         _selected_rhythm_quality_issues(
             bars,
@@ -967,7 +978,7 @@ def _validate_chart_quality(
         if hint.kind not in {"silent", "rest"}
     ]
 
-    if quality_indexes and quality_density in {"high", "max"}:
+    if quality_indexes and quality_density in {"high", "max"} and not timing_locked:
         thresholds = _quality_thresholds(quality_density)
         average_hits = sum(normalized_hit_counts[index] for index in quality_indexes) / len(quality_indexes)
         if average_hits < thresholds["average"]:
@@ -1032,6 +1043,8 @@ def _quality_thresholds(density: str) -> dict[str, float]:
 def _density_hint_issues(
     hit_counts: list[int],
     density_hints: list[BarDensityHint],
+    *,
+    enforce_minimum: bool = True,
 ) -> list[str]:
     issues: list[str] = []
     for index, (hit_count, hint) in enumerate(zip(hit_counts, density_hints, strict=False)):
@@ -1040,7 +1053,7 @@ def _density_hint_issues(
                 f"bars[{index}].notes is too dense for {hint.kind} density hint: "
                 f"{hit_count} hit(s), expected at most {hint.max_hits}; reason: {hint.reason}"
             )
-        if not hint.allow_empty and hit_count < hint.min_hits:
+        if enforce_minimum and not hint.allow_empty and hit_count < hint.min_hits:
             issues.append(
                 f"bars[{index}].notes is too sparse for {hint.kind} density hint: "
                 f"{hit_count} hit(s), expected at least {hint.min_hits}; reason: {hint.reason}"

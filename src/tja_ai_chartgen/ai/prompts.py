@@ -210,6 +210,7 @@ def build_chart_generation_payload(
             "rhythm_skeleton_semantics": (
                 "one canonical-tick list per bar; phrase-inferred straight/triplet/mixed "
                 "musical timing authority with limited repeated high-confidence exceptions; "
+                "its hit count takes precedence over density minimums; "
                 "AI may change note colors and limited accents but should preserve positions"
             ),
             "instrument_bar_columns": INSTRUMENT_BAR_COLUMNS,
