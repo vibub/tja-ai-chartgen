@@ -62,6 +62,8 @@ tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --use-instrument-
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --use-instrument-analysis --instrument-profile stem-role
 tja-ai-chartgen generate path/to/song.mp3 --title "Song Title" --use-ai --model openai/custom-model --ai-base-url https://llm.example.com/v1 --ai-request-timeout 300 --ai-transport-retries 1
 tja-ai-chartgen generate-from-config output/generation_config.json
+tja-ai-chartgen diagnose-timing output/analysis.json --audio output/song.ogg
+tja-ai-chartgen diagnose-timing output/analysis.json --anchor 0:0.25 --anchor 64:32.25 --anchor 128:64.25 --config output/generation_config.json
 tja-ai-chartgen web
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote
 tja-ai-chartgen web --host 0.0.0.0 --allow-remote --allow-instrument-analysis
@@ -90,6 +92,8 @@ tja-ai-chartgen web --host 0.0.0.0 --allow-remote --allow-instrument-analysis
 骨架密度约束：AI 普通击打及长音替代范围与内部 musical skeleton 完全一致时，最低密度、平均密度与连续空小节的补点要求让位于骨架；密度上限、静音、可玩性和独立音频质量门控继续执行。不完全匹配的结果仍执行原有最低密度检查。该调整只影响 AI musical skeleton 路径，基础音频 BPM/OFFSET 分析和独立规则生成器不变。
 
 ## 工程约束
+
+`diagnose-timing` 是独立离线诊断入口，不改变生成流水线或 `analysis.json` schema。`audio/timing.py` 读取已有 `SongAnalysis` 中原始 librosa/BeatNet 候选，排除合成 onset-grid，对当前 BPM/OFFSET 输出 `timing-diagnostic-v1` 分段有符号拍位残差、覆盖范围、重复候选计数及速度歧义诊断，容忍 tracker 漏拍；原始 tracker 不是 ground truth，不自动修改 BPM，不以 beat 确认 downbeat。人工 `--anchor BEAT:SECONDS` 的 beat 0 表示谱面起点，单位统一为四分音符，可用两个或更多拍点拟合 BPM/OFFSET；多点最大误差超过 30 ms 时禁止导出校准配置，两个拍点必须提示尚无独立中段核验。`--config` 通过 `GenerationConfig` 导出新配置到诊断目录，解析原配置路径为绝对路径并把生成目录设为其 `calibrated/` 子目录，不覆盖原始配置或谱面。`audio/timing_preview.py` 经 ffmpeg 分段解码音频并输出最多三组 12 秒 WAV（提供校准拍点时每组包含前后两个版本），支持当前/人工校准时间轴 A/B 与可选 `chart_bars.json` 普通击打提示；预览只对既有落点重定时，不等于重新生成。结果默认写入分析目录的 `timing/`，可用 `--output-dir` 指定；运行验证产物放系统临时目录。
 
 - `.tja` 生成不要只依赖自由文本拼接；应尽早建立结构化谱面表示，再由导出器负责格式化。
 - 音频分析结果、AI 输入、AI 原始输出、校验结果和最终 `.tja` 应尽量可追踪，便于比较不同版本生成质量。

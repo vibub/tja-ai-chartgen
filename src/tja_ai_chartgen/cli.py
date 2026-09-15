@@ -1,3 +1,4 @@
+import json
 import os
 from ipaddress import ip_address
 from pathlib import Path
@@ -43,6 +44,83 @@ COURSE_PRESETS = {
 MULTI_COURSES = tuple(COURSE_PRESETS)
 DEFAULT_AI_REQUEST_TIMEOUT = 300.0
 DEFAULT_AI_TRANSPORT_RETRIES = 3
+
+
+@app.command("diagnose-timing")
+def diagnose_timing(
+    analysis_path: Path = typer.Argument(..., exists=True, dir_okay=False),
+    output_dir: Path | None = typer.Option(None, help="Diagnostic output; defaults to analysis-dir/timing."),
+    anchor: list[str] = typer.Option([], help="Repeat BEAT:SECONDS; beat 0 is chart origin, 1 beat is a quarter note."),
+    config: Path | None = typer.Option(None, exists=True, dir_okay=False, help="Export a calibrated copy of this generation config."),
+    audio: Path | None = typer.Option(None, exists=True, dir_okay=False, help="Local audio for short before/after listening clips."),
+    chart: Path | None = typer.Option(None, exists=True, dir_okay=False, help="Matching chart_bars.json to include note sounds in clips."),
+) -> None:
+    """Inspect tracker drift and optionally calibrate from manually confirmed beats."""
+    from tja_ai_chartgen.audio.timing import (
+        build_timing_diagnostic,
+        parse_timing_anchors,
+        render_timing_markdown,
+    )
+    from tja_ai_chartgen.audio.timing_preview import write_timing_previews
+    from tja_ai_chartgen.tja.model import ChartBar, SongAnalysis
+
+    target = (output_dir or analysis_path.parent / "timing").resolve()
+    try:
+        analysis = SongAnalysis.model_validate_json(analysis_path.read_text(encoding="utf-8"))
+        anchors = parse_timing_anchors(anchor)
+        report = build_timing_diagnostic(analysis, anchors=anchors)
+        if chart is not None and audio is None:
+            raise ValueError("--chart requires --audio.")
+        chart_bars = None
+        if chart is not None:
+            chart_bars = [ChartBar.model_validate(bar) for bar in json.loads(chart.read_text(encoding="utf-8"))]
+            if len(chart_bars) != len(analysis.bars):
+                raise ValueError("Preview chart must have the same bar count as analysis.")
+        calibrated_config = None
+        if config is not None:
+            fit = report["calibration"]
+            if fit is None or not fit["consistent"]:
+                raise ValueError("Config export requires at least two consistent manual anchors.")
+            original = load_generation_config(config)
+            calibrated_config = original.model_copy(update={
+                "bpm_override": fit["bpm"], "offset_override": fit["offset"],
+                "output_dir": target / "calibrated",
+                # Existing config paths follow the same working-directory semantics
+                # as generate-from-config. Resolve them before exporting elsewhere.
+                "input_audio": original.input_audio.resolve(),
+                "instrument_model_dir": original.instrument_model_dir.resolve()
+                if original.instrument_model_dir is not None else None,
+            })
+            if config.resolve() == target / "generation_config.calibrated.json":
+                raise ValueError("Calibrated output must not overwrite the source config.")
+        target.mkdir(parents=True, exist_ok=True)
+        if audio is not None:
+            report["previews"] = write_timing_previews(audio, target, analysis, report, chart_bars)
+        write_json(target / "timing_diagnostic.json", report)
+        markdown = render_timing_markdown(report)
+        if report.get("previews"):
+            markdown += "\n## 对照试听\n\n原音频叠加高音节拍点击声；提供谱面时另叠加低音咚/咔提示。"
+            markdown += "校准预览只改变现有落点的时间轴，不代表重新生成后的谱面。\n\n"
+            markdown += "\n".join(
+                f"- [{item['file']}]({item['file']})：{item['start_seconds']:.2f}–{item['end_seconds']:.2f} 秒"
+                for item in report["previews"]
+            ) + "\n"
+        (target / "timing_diagnostic.md").write_text(markdown, encoding="utf-8")
+        if calibrated_config is not None:
+            write_json(target / "generation_config.calibrated.json", calibrated_config)
+    except (OSError, ValueError, RuntimeError) as error:
+        _fail(str(error))
+    console.print(f"Timing diagnostic: {target / 'timing_diagnostic.md'}")
+    if report["calibration"] is not None:
+        fit = report["calibration"]
+        if fit["consistent"]:
+            console.print(f"Manual calibration: --bpm {fit['bpm']:.9f} --offset {fit['offset']:.9f}")
+            if not fit["independently_checked"]:
+                console.print("Two anchors only: add a middle anchor to check the fit.")
+        else:
+            console.print("Manual anchors disagree: check beat numbering or variable tempo before applying a fixed BPM.")
+    if calibrated_config is not None:
+        console.print(f'Generate separately: tja-ai-chartgen generate-from-config "{target / "generation_config.calibrated.json"}"')
 
 
 @app.command()

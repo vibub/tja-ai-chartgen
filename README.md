@@ -237,6 +237,23 @@ tja-ai-chartgen generate song.mp3 \
 tja-ai-chartgen generate-from-config output/generation_config.json
 ```
 
+生成后检查时间轴，并可导出叠加节拍声的开头、中段、结尾试听片段：
+
+```bash
+tja-ai-chartgen diagnose-timing output/analysis.json --audio output/song.ogg
+```
+
+Web 任务也可传入任务目录中的 `analysis.json` 和 `.ogg`，加上 `--chart <chart_bars.json>` 可叠加咚咔提示音。默认结果保存在分析目录的 `timing/`，包含 JSON、Markdown 和最多三组 12 秒 WAV（提供校准拍点时每组包含前后两个版本）。诊断只使用保存的原始 librosa/BeatNet tracker；缺少独立证据时明确报告不足，不把推导的等间隔网格当成真值。原始 tracker 也可能出错，诊断不能替代试听或确认小节首拍。
+
+用人工确认的拍点计算固定 BPM／offset，并导出独立生成配置：
+
+```bash
+tja-ai-chartgen diagnose-timing output/analysis.json --anchor 0:0.25 --anchor 64:32.25 --anchor 128:64.25 --config output/generation_config.json --audio output/song.ogg
+tja-ai-chartgen generate-from-config output/timing/generation_config.calibrated.json
+```
+
+以上拍点仅为示例，必须替换成歌曲的实际位置。`--anchor BEAT:SECONDS` 中 beat 0 是谱面起点，每 1 beat 始终为四分音符；4/4 的第 17 小节起点是 beat 64，6/8 每小节则是 3 个四分音符。两个拍点只能确定直线，推荐再加一个中段拍点核验。多点拟合最大误差超过 30 ms 时禁止导出固定 BPM 配置。内部 offset 表示谱面起点在音频中的秒数，写入 TJA 时取反。原始配置和谱面保持不变，校准配置输出到 `timing/calibrated/`；重新生成会按校准时间轴重新分析、选点。A/B 试听仅移动现有节拍及音符的时间轴，不等于重新生成结果。
+
 启动 Web UI MVP：
 
 ```bash

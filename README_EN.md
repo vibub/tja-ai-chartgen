@@ -237,6 +237,23 @@ Re-run a saved generation config:
 tja-ai-chartgen generate-from-config output/generation_config.json
 ```
 
+Inspect timing and optionally export short audio/beat overlays from the beginning, middle and end:
+
+```bash
+tja-ai-chartgen diagnose-timing output/analysis.json --audio output/song.ogg
+```
+
+Web job analysis files are supported too; add `--chart <chart_bars.json>` for note cues. Results go to `timing/` beside the analysis by default: JSON, Markdown and up to three 12-second WAV clips. Only saved raw librosa/BeatNet trackers are diagnostic evidence; generated regular grids cannot validate themselves. Trackers are not ground truth and cannot independently confirm the first downbeat.
+
+Fit manually identified quarter-note anchors and export a separate generation config:
+
+```bash
+tja-ai-chartgen diagnose-timing output/analysis.json --anchor 0:0.25 --anchor 64:32.25 --anchor 128:64.25 --config output/generation_config.json --audio output/song.ogg
+tja-ai-chartgen generate-from-config output/timing/generation_config.calibrated.json
+```
+
+Replace these example anchors with the actual song positions. In `BEAT:SECONDS`, beat 0 is the chart origin and one beat always means a quarter note, including 6/8 (three quarter notes per bar). Two anchors determine a line; use an additional middle anchor to check it. Config export is rejected when maximum anchor fit error exceeds 30 ms. Internal offset is negated when written as TJA OFFSET. Original files are preserved; the exported config generates into `timing/calibrated/`. A/B clips retime existing beat/note positions, while regeneration runs analysis and note selection again.
+
 Start the local Web UI MVP:
 
 ```bash
