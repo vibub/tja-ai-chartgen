@@ -58,7 +58,7 @@ Issues = "https://github.com/vibub/tja-ai-chartgen/issues"
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
-    "ruff>=0.6.0",
+    "ruff>=0.6.0,<=0.15.20",
 ]
 instrument = [
     "demucs>=4.0.1",
